@@ -1,0 +1,103 @@
+# Traefik dynamic configuration: routers, services, and shared security middleware.
+#
+# Static file-based routing rather than the Docker-labels provider — deliberately, not
+# just to route around a Windows Docker Desktop socket-mounting quirk found while testing
+# this stack: it also means Traefik needs no access to the Docker API/socket at all
+# (smaller attack surface, TRD-SEC least-privilege), and every route is explicit and
+# reviewable here rather than scattered across container labels. Revisit only if the
+# service fleet grows enough that editing this file per service becomes the bottleneck.
+#
+# Gateway rules mirror docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §6.3, with one
+# documented deviation: platform auth lives under /api/v1/admin/auth (not /api/v1/auth)
+# so routing can be decided by path prefix alone, since this repo merges the Identity
+# Service into each API rather than running it as a separate service — see
+# CLARIFICATIONS.md.
+#
+# Production deployment must replace the :80 entrypoint with TLS (:443) + cert resolver;
+# local dev intentionally runs plain HTTP behind Traefik on localhost only.
+#
+# NOTE (Windows/Docker Desktop): `--providers.file.watch=true` does not reliably fire on
+# bind-mounted files here, so after editing this file run:
+#     docker compose restart traefik
+# Otherwise Traefik keeps serving the previous routing table and you'll see stale
+# backends (e.g. a 502 pointing at an old port).
+http:
+  routers:
+    tenant-api:
+      # /api/v1/tenant/**, /api/v1/auth/** (customer identity), /ws/v1/tenant/**
+      rule: "PathPrefix(`/api/v1/tenant`) || PathPrefix(`/api/v1/auth`) || PathPrefix(`/ws/v1/tenant`)"
+      service: tenant-api
+      entryPoints: [web]
+      middlewares: [security-headers, tenant-cors, api-ratelimit]
+
+    admin-api:
+      # /api/v1/admin/** — includes platform auth at /api/v1/admin/auth/**
+      rule: "PathPrefix(`/api/v1/admin`)"
+      service: admin-api
+      entryPoints: [web]
+      middlewares: [security-headers, platform-cors, api-ratelimit]
+
+    customer-crm:
+      rule: "Host(`app.localhost`)"
+      service: customer-crm
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+    developer-console:
+      rule: "Host(`console.localhost`)"
+      service: developer-console
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+  services:
+    tenant-api:
+      loadBalancer:
+        servers:
+          - url: "http://tenant-api:8000"
+    admin-api:
+      loadBalancer:
+        servers:
+          - url: "http://admin-api:8000"
+    customer-crm:
+      loadBalancer:
+        servers:
+          - url: "http://customer-crm:8080"
+    developer-console:
+      loadBalancer:
+        servers:
+          - url: "http://developer-console:3000"
+
+  middlewares:
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"
+
+    tenant-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "http://localhost:5173"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    platform-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "http://localhost:3000"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    api-ratelimit:
+      rateLimit:
+        average: 50
+        burst: 100

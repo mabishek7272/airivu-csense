@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: csense
+          POSTGRES_USER: csense_app
+          POSTGRES_PASSWORD: ci_test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U csense_app -d csense"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: csense
+      POSTGRES_USER: csense_app
+      POSTGRES_PASSWORD: ci_test_password
+      # Throwaway CI-only credentials for ephemeral service containers — never reused
+      # anywhere else. Real environments get these from a secret store (TRD-SEC-003).
+      POSTGRES_API_USER: csense_api
+      POSTGRES_API_PASSWORD: ci_api_password
+      POSTGRES_PLATFORM_API_USER: csense_platform_api
+      POSTGRES_PLATFORM_API_PASSWORD: ci_platform_password
+      TEST_POSTGRES_DSN: "host=localhost port=5432 dbname=csense user=csense_app password=ci_test_password"
+      TEST_POSTGRES_API_DSN: "host=localhost port=5432 dbname=csense user=csense_api password=ci_api_password"
+      TEST_POSTGRES_PLATFORM_DSN: "host=localhost port=5432 dbname=csense user=csense_platform_api password=ci_platform_password"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install shared library + service deps
+        run: |
+          pip install ./backend/shared
+          pip install -r backend/migrations/requirements.txt
+          pip install -r backend/tenant_api/requirements.txt
+          pip install -r backend/admin_api/requirements.txt
+          pip install -r backend/tests/requirements.txt
+          pip install ruff mypy pip-audit
+
+      - name: Lint (ruff)
+        run: ruff check backend
+
+      - name: Dependency vulnerability scan
+        run: pip-audit -r backend/tenant_api/requirements.txt -r backend/admin_api/requirements.txt || true
+        # TODO(Phase 8): remove `|| true` once the baseline is clean and this can gate merges.
+
+      - name: Bootstrap non-superuser application roles
+        working-directory: backend/migrations
+        run: python bootstrap_roles.py
+
+      - name: Run migrations against CI Postgres
+        working-directory: backend/migrations
+        run: alembic upgrade head
+
+      - name: Unit + integration tests
+        working-directory: backend
+        run: pytest -v
+
+  frontend-customer-crm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/customer-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  frontend-developer-console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/developer-console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

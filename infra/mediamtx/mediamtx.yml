@@ -1,0 +1,13 @@
+# Minimal local-dev MediaMTX config (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §14).
+# Paths are created dynamically once the Media Session Service (Phase 3) issues
+# short-lived signed sessions; this file only sets safe transport defaults for now.
+logLevel: info
+
+rtspAddress: :8554
+webrtcAddress: :8889
+hlsAddress: :8888
+
+# Authentication is delegated to the Media Session Service once it exists (Phase 3).
+# Until then, no paths are defined, so nothing is publishable/playable by default —
+# fail-safe per architecture principle 9 (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §2).
+paths: {}

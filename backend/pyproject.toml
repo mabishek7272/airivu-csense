@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008: `Depends(...)`/`Header(...)` in argument defaults is the standard FastAPI
+# dependency-injection idiom, not the mutable-default bug this rule targets.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.isort]
+# csense_shared is pip-installed into the image, but it's our code — group it with the
+# service's own `app` package rather than with third-party dependencies.
+known-first-party = ["csense_shared", "app"]

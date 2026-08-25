@@ -1,0 +1,231 @@
+name: csense
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-local}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-csense}
+  # APIs connect as the restricted, NOBYPASSRLS role — never the superuser/owner, which
+  # would silently bypass every row-level-security policy (SCH §15). The `migrate`
+  # service overrides these back to the owner, since DDL needs ownership.
+  POSTGRES_USER: ${POSTGRES_API_USER:-csense_api}
+  POSTGRES_PASSWORD: ${POSTGRES_API_PASSWORD}
+  MONGO_HOST: mongo
+  MONGO_PORT: 27017
+  MONGO_DB: ${MONGO_DB:-csense}
+  MONGO_USER: ${MONGO_USER:-csense_app}
+  MONGO_PASSWORD: ${MONGO_PASSWORD}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  MINIO_USE_TLS: "false"
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-RS256}
+  JWT_PRIVATE_KEY_PATH: /run/secrets/jwt_private.pem
+  JWT_PUBLIC_KEY_PATH: /run/secrets/jwt_public.pem
+  JWT_ISSUER: ${JWT_ISSUER:-csense-local}
+  JWT_ACCESS_TOKEN_TTL_SECONDS: ${JWT_ACCESS_TOKEN_TTL_SECONDS:-600}
+  JWT_REFRESH_TOKEN_TTL_SECONDS: ${JWT_REFRESH_TOKEN_TTL_SECONDS:-1209600}
+  ARGON2_TIME_COST: ${ARGON2_TIME_COST:-3}
+  ARGON2_MEMORY_COST_KB: ${ARGON2_MEMORY_COST_KB:-65536}
+  ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-2}
+  CUSTOMER_CRM_ORIGIN: ${CUSTOMER_CRM_ORIGIN:-http://localhost:5173}
+  DEVELOPER_CONSOLE_ORIGIN: ${DEVELOPER_CONSOLE_ORIGIN:-http://localhost:3000}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-backend-secrets: &backend-secrets
+  - jwt_private.pem
+  - jwt_public.pem
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      # File provider only — no Docker-socket dependency. This is deliberate, not just a
+      # Windows-Docker-Desktop workaround: it means Traefik needs no access to the Docker
+      # API/socket at all (smaller attack surface, TRD-SEC principle of least privilege),
+      # and routing is explicit/reviewable in dynamic.yml rather than inferred from
+      # container labels. Revisit if/when the service fleet is dynamic enough that
+      # editing a static file per service becomes the bottleneck (tracked in CHECKLIST.md).
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "8080:80"
+      - "8081:8080" # Traefik dashboard (dev only — never expose in production)
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+    networks: [csense]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-csense}
+      POSTGRES_USER: ${POSTGRES_USER:-csense_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # dev convenience only — TRD-OPS: not exposed publicly in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-csense_app} -d ${POSTGRES_DB:-csense}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [csense]
+
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-csense_app}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-csense}
+    volumes:
+      - mongodata:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [csense]
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [csense]
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [csense]
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8554:8554" # RTSP
+      - "8889:8889" # WebRTC
+      - "8888:8888" # HLS
+    networks: [csense]
+
+  migrate:
+    build:
+      context: ../backend
+      dockerfile: migrations/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      # DDL requires the owner/superuser; this service also creates the restricted API
+      # role that everything else connects as.
+      POSTGRES_USER: ${POSTGRES_USER:-csense_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_API_USER: ${POSTGRES_API_USER:-csense_api}
+      POSTGRES_API_PASSWORD: ${POSTGRES_API_PASSWORD}
+      POSTGRES_PLATFORM_API_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PLATFORM_API_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [csense]
+
+  tenant-api:
+    build:
+      context: ../backend
+      dockerfile: tenant_api/Dockerfile
+    env_file: [../.env]
+    environment: *backend-env
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    networks: [csense]
+
+  admin-api:
+    build:
+      context: ../backend
+      dockerfile: admin_api/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      # The only service that connects as the platform role — a member of the
+      # `csense_platform` group role, which the RLS policies require for cross-tenant
+      # reads (migration 0005). The Tenant API's role is deliberately not a member.
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    networks: [csense]
+
+  developer-console:
+    build:
+      context: ../frontend/developer-console
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8080
+    networks: [csense]
+
+  customer-crm:
+    build:
+      context: ../frontend/customer-crm
+    environment:
+      VITE_API_BASE: http://localhost:8080
+    networks: [csense]
+
+networks:
+  csense:
+    driver: bridge
+
+volumes:
+  pgdata:
+  mongodata:
+  redisdata:
+  miniodata:
+
+secrets:
+  jwt_private.pem:
+    file: ./secrets/jwt_private.pem
+  jwt_public.pem:
+    file: ./secrets/jwt_public.pem
