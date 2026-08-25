@@ -17,6 +17,7 @@ dependencies = [
   "argon2-cffi>=23.1",
   "pyjwt[crypto]>=2.8",
   "python-json-logger>=2.0",
+  "minio>=7.2",
 ]
 
 [tool.setuptools.packages.find]

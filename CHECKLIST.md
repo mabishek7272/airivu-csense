@@ -23,9 +23,10 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked on
       PostgreSQL16, MongoDB7, Redis7, MinIO, Docker Compose (per [docs/00_DOCUMENT_INDEX.md](docs/00_DOCUMENT_INDEX.md))
 - [x] Confirm deployment target for this build: **local Docker Compose** (user decision)
 - [x] Establish monorepo layout, git repo, requirement-ID traceability convention
-- [!] Legacy CSense codebase inventory — **[NEEDS HUMAN INPUT]** no legacy system is
-      present in this workspace; treated as greenfield. If a real legacy system exists,
-      point me at it and I will run the migration workstream (W9) against it.
+- [x] Legacy CSense codebase inventory — **RESOLVED 2026-08-25.** Legacy system located
+      at `/var/www/csense` on `103.118.158.92` (12 GB). Model estate inventoried and
+      migrated; remaining W9 migration work (users, tenants, cameras, credentials,
+      detections, snapshots) is now unblocked.
 - [!] Pilot tenant, target countries/privacy jurisdiction, camera/NVR hardware list —
       **[NEEDS HUMAN INPUT]**, see [CLARIFICATIONS.md](CLARIFICATIONS.md)
 - [x] Write this checklist and CLARIFICATIONS.md
@@ -139,7 +140,25 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 ## Phase 4 — AI Registry, Pipeline Runtime, and Control Plane
 
-- [ ] Model family/version registry, immutable MinIO artifact storage, digest/provenance
+**Started early**, out of phase order, because the legacy model estate became available
+(server access provided 2026-08-25) and migrating it needed somewhere to land.
+
+- [x] Model family/version registry, immutable MinIO artifact storage, digest/provenance
+      (migration 0006: `models`, `model_versions`, `model_validation_runs`, `stored_objects`)
+- [x] Content-addressed artifact storage — `csense-models/global/models/{model}/{version}/{sha256}.ext`,
+      unique digest constraint, DB trigger rejecting any change to identity/artifact columns
+- [x] Legacy model migration: 14 unique artifacts (547 MB) transferred, SHA-256 verified,
+      imported with licence + provenance metadata
+      ([backend/migrations/legacy_model_manifest.py](backend/migrations/legacy_model_manifest.py),
+      [import_legacy_models.py](backend/migrations/import_legacy_models.py) — idempotent, re-runnable)
+- [x] Biometric quarantine: InsightFace models registered `revoked` / `biometric`, and the
+      promotion API refuses a deployable state without explicit acknowledgement
+- [x] Admin API: `GET /api/v1/admin/models`, `POST /api/v1/admin/model-versions/{id}/promote`
+      with a validated state machine, permission gating, and full audit + outbox events
+- [x] Registry regression tests (8) — immutability, duplicate-digest rejection, malformed
+      digest, biometric non-deployability, licence/provenance presence
+- [ ] Model family/version registry UI in the Developer Console
+- [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
 - [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
 - [ ] Python asyncio AI runtime skeleton: ingest → preprocess → infer → filter/ROI →
       track → rules → evidence-intent, using an open-source YOLO/ONNX model by default
@@ -148,6 +167,8 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 - [ ] Golden dataset + benchmark harness for at least one reference use case
 - [ ] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
       Runtime reference numbers otherwise
+- [ ] **[NEEDS DECISION]** YOLOv8/AGPL-3.0 licensing for commercial hosting — see
+      CLARIFICATIONS.md #15. Affects 5 of the 14 migrated models.
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
 
@@ -178,10 +199,19 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 ## Phase 7 — Migration Tooling and Pilot Beta
 
-- [!] **[NEEDS HUMAN/EXTERNAL INPUT]** entire phase depends on a real legacy system and a
-      real pilot tenant, neither of which exists yet. Migration tooling will be built
-      generically (idempotent import framework, reconciliation report) but cannot be
-      validated end-to-end without real source data.
+Legacy system access provided 2026-08-25, so this is partially unblocked.
+
+- [x] Model estate migration (idempotent, digest-verified) — done ahead of schedule as
+      part of Phase 4 above
+- [ ] Legacy source inventory frozen and mapping approved (users, tenants, cameras,
+      credentials, detections, snapshots)
+- [ ] Idempotent migration tools for the remaining entity types
+- [ ] Password migration or forced-reset strategy (legacy uses SQLite `csense_users.db`)
+- [ ] Snapshot-to-MinIO digest verification
+- [ ] DDNS/edge protocol compatibility or edge upgrade package
+- [ ] Per-tenant reconciliation dashboard/report
+- [!] Pilot cutover still needs a **named pilot tenant and an agreed cutover window**
+      — [NEEDS HUMAN INPUT]
 
 ## Phase 8 — Production Hardening
 

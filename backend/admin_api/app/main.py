@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, organizations
+from app.api import auth, health, models, organizations
 from csense_shared.config import get_settings
 from csense_shared.db.mongo import create_mongo_client, get_database
 from csense_shared.db.postgres import create_engine, create_session_factory
@@ -61,3 +61,4 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(organizations.router)
+app.include_router(models.router)

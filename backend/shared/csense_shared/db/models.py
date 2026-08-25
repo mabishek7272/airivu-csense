@@ -431,3 +431,122 @@ class ProcessedEvent(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     processed_at: Mapped[datetime.datetime] = mapped_column(nullable=False, server_default=text("now()"))
     result_hash: Mapped[str | None] = mapped_column(nullable=True)
+
+
+# --- Object storage and AI model registry (SCH §8, §11.5) -------------------------
+
+class StoredObject(Base):
+    """SCH §11.5. Object keys stay opaque and tenant-prefixed; clients never build them."""
+
+    __tablename__ = "stored_objects"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    bucket: Mapped[str] = mapped_column(nullable=False)
+    object_key: Mapped[str] = mapped_column(nullable=False)
+    object_type: Mapped[str] = mapped_column(nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(nullable=False)
+    encryption_key_ref: Mapped[str | None] = mapped_column(nullable=True)
+    retention_class: Mapped[str] = mapped_column(nullable=False, server_default="default")
+    expires_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+    legal_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime.datetime] = _created_at()
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("bucket", "object_key", name="uq_stored_object_location"),
+        Index("ix_stored_objects_sha256", "sha256"),
+    )
+
+
+class Model(Base):
+    """SCH §8.1 — platform-global model family. No tenant_id: a model artifact is not
+    tenant-owned data, so tenant repositories cannot reach this table at all."""
+
+    __tablename__ = "models"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(unique=True, nullable=False)
+    task_code: Mapped[str] = mapped_column(nullable=False)
+    description: Mapped[str | None] = mapped_column(nullable=True)
+    owner_team: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False, server_default="active")
+    default_label_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="1")
+    created_at: Mapped[datetime.datetime] = _created_at()
+    updated_at: Mapped[datetime.datetime] = _updated_at()
+
+
+class ModelVersion(Base):
+    """SCH §8.2 — immutable, content-addressed model version.
+
+    `artifact_sha256` is unique, and a database trigger (migration 0006) rejects updates
+    to the identity/artifact columns, so a published version can never be repointed at
+    different bytes. Only `state` transitions are permitted after creation.
+    """
+
+    __tablename__ = "model_versions"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("models.id", ondelete="RESTRICT"), nullable=False
+    )
+    version_label: Mapped[str] = mapped_column(nullable=False)
+    artifact_object_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("stored_objects.id"), nullable=False
+    )
+    artifact_sha256: Mapped[str] = mapped_column(nullable=False)
+    framework: Mapped[str] = mapped_column(nullable=False)
+    runtime: Mapped[str] = mapped_column(nullable=False)
+    input_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    output_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    label_map: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    hardware_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    license_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    provenance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    access_classification: Mapped[str] = mapped_column(nullable=False, server_default="standard")
+    state: Mapped[str] = mapped_column(
+        ENUM(
+            "uploaded", "validating", "validated", "staging", "production", "deprecated", "revoked",
+            name="model_version_state", create_type=False,
+        ),
+        nullable=False,
+        server_default="uploaded",
+    )
+    state_reason: Mapped[str | None] = mapped_column(nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime.datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint("model_id", "version_label", name="uq_model_version_label"),
+        UniqueConstraint("artifact_sha256", name="uq_model_version_artifact_sha256"),
+        Index("ix_model_versions_model_state", "model_id", "state"),
+    )
+
+
+class ModelValidationRun(Base):
+    """SCH §8.3 — records of the validation gates in TRD §15.2."""
+
+    __tablename__ = "model_validation_runs"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    model_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_version: Mapped[str] = mapped_column(nullable=False)
+    environment: Mapped[str] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(nullable=False, server_default="pending")
+    started_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+    metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    thresholds: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("stored_objects.id"), nullable=True
+    )
+    failure_summary: Mapped[str | None] = mapped_column(nullable=True)
+    runner_version: Mapped[str | None] = mapped_column(nullable=True)
+    correlation_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime.datetime] = _created_at()
