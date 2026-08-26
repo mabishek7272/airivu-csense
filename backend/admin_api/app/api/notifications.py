@@ -183,7 +183,19 @@ async def create_whatsapp_instance(
     require_permission(context, "notification.manage")
     provider = _gateway(request)
 
-    result = await provider.create_instance(body.instance)
+    # The instance token comes from configuration and is supplied at creation, so it
+    # never has to be captured from the response and stored.
+    token = request.app.state.settings.whatsapp_instance_token
+    if not token:
+        raise ApiError(
+            status_code=503,
+            code="whatsapp_instance_token_missing",
+            message=(
+                "WHATSAPP_INSTANCE_TOKEN is not set. Generate one "
+                "(openssl rand -hex 24), set it in .env, and restart the Admin API."
+            ),
+        )
+    result = await provider.create_instance(body.instance, token)
     if not result.get("ok"):
         raise ApiError(
             status_code=502,

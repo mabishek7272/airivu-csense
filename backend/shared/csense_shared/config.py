@@ -68,7 +68,12 @@ class Settings(BaseSettings):
     resend_reply_to: str = ""
 
     whatsapp_gateway_url: str = ""
+    # Admin key (the gateway's GLOBAL_API_KEY): instance create/list/delete only.
     whatsapp_gateway_api_key: str = ""
+    # Instance token: everything that acts as the linked number - status, QR, send.
+    # The gateway identifies the instance *by* this token, so the two are not
+    # interchangeable. Supplied by us at instance creation.
+    whatsapp_instance_token: str = ""
     whatsapp_instance: str = "default"
 
     # CORS origins

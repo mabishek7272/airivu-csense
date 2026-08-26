@@ -39,8 +39,9 @@ def build_registry(settings: Settings) -> ProviderRegistry:
         registry.register(
             EvolutionGoWhatsAppProvider(
                 base_url=settings.whatsapp_gateway_url,
-                api_key=settings.whatsapp_gateway_api_key,
-                instance=settings.whatsapp_instance,
+                admin_api_key=settings.whatsapp_gateway_api_key,
+                instance_token=settings.whatsapp_instance_token,
+                instance_name=settings.whatsapp_instance,
             )
         )
     else:
