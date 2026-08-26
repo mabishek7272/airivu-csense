@@ -3,8 +3,7 @@ docs/05_BACKEND_SCHEMA.md §8, §19).
 
 These lock in the properties the AI control plane depends on: a published version can
 never be repointed at different bytes, identical bytes cannot be registered twice, and
-biometric artifacts cannot sit in a deployable state without someone explicitly moving
-them there.
+face-processing models stay labelled biometric with an auditable promotion history.
 
 Needs a migrated database (TEST_POSTGRES_DSN); skipped otherwise.
 """
@@ -127,22 +126,39 @@ def test_invalid_access_classification_rejected(registered_version):
             )
 
 
-def test_imported_biometric_models_are_not_deployable():
-    """The InsightFace set must not sit in a state a pipeline could pick up. Facial
-    recognition is a release-one non-goal (PRD), so these stay quarantined until somebody
-    deliberately promotes them."""
+def test_biometric_models_keep_their_classification():
+    """Biometric models were promoted to production by owner decision (CLARIFICATIONS #16),
+    so state is no longer the control. What must still hold is that they remain *labelled*
+    biometric: the classification is how a privacy review, a data-subject request, or an
+    incident responder finds every face-processing model in one query. Silently relabelling
+    one 'standard' would make it invisible to all of those."""
     with _owner_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT m.name, mv.state FROM model_versions mv JOIN models m ON m.id = mv.model_id "
-            "WHERE mv.access_classification = 'biometric'"
+            "SELECT m.name FROM model_versions mv JOIN models m ON m.id = mv.model_id "
+            "WHERE m.task_code IN ('face_detection', 'face_recognition', 'face_landmark', "
+            "'face_attribute') AND mv.access_classification <> 'biometric'"
+        )
+        mislabelled = [row[0] for row in cur.fetchall()]
+        assert not mislabelled, f"face-processing models not classified biometric: {mislabelled}"
+
+
+def test_every_biometric_promotion_is_audited():
+    """Whatever state these end up in, the path there must be reconstructable."""
+    with _owner_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT mv.id, m.name FROM model_versions mv JOIN models m ON m.id = mv.model_id "
+            "WHERE mv.access_classification = 'biometric' AND mv.state <> 'uploaded'"
         )
         rows = cur.fetchall()
         if not rows:
-            pytest.skip("legacy models not imported into this database")
+            pytest.skip("no biometric models in this database")
 
-        deployable = {"validated", "staging", "production"}
-        offenders = [(name, state) for name, state in rows if state in deployable]
-        assert not offenders, f"biometric models in a deployable state: {offenders}"
+        for version_id, name in rows:
+            cur.execute(
+                "SELECT count(*) FROM audit_events WHERE action = 'model.promote' AND target_id = %s",
+                (str(version_id),),
+            )
+            assert cur.fetchone()[0] > 0, f"{name} changed state with no audit record"
 
 
 def test_imported_legacy_models_carry_license_and_provenance():

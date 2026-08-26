@@ -155,13 +155,34 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       promotion API refuses a deployable state without explicit acknowledgement
 - [x] Admin API: `GET /api/v1/admin/models`, `POST /api/v1/admin/model-versions/{id}/promote`
       with a validated state machine, permission gating, and full audit + outbox events
-- [x] Registry regression tests (8) — immutability, duplicate-digest rejection, malformed
-      digest, biometric non-deployability, licence/provenance presence
-- [ ] Model family/version registry UI in the Developer Console
+- [x] Registry regression tests (10) — immutability, duplicate-digest rejection, malformed
+      digest, biometric classification retention, audited promotion, licence/provenance
+- [x] **Models wired up and running** (2026-08-26). AI Runtime service
+      ([backend/ai_runtime/](backend/ai_runtime/)) loads artifacts from MinIO with
+      SHA-256 verification, keeps them resident in an LRU pool, and runs inference across
+      three frameworks. Verified live against a real photograph:
+  - [x] 6 Ultralytics models - detection + pose with keypoints (177ms-720ms warm, CPU)
+  - [x] `license-plate-detector` - ONNX end-to-end decoder (6- and 7-column layouts)
+  - [x] `kitchen-safety-y8` - TFLite via ai-edge-litert, raw YOLOv8 head + NMS
+  - [ ] 5 InsightFace models load and execute, but their SCRFD/ArcFace output needs the
+        `insightface` package's decoding rather than a generic detector decode. Tracked
+        below.
+  - [ ] `license-plate-ocr` - runs, but OCR output is a character sequence, not
+        detections; needs the ANPR pipeline stage to call it via `raw_infer`.
+- [x] Internal runtime API: `/internal/v1/models`, `/models/{name}/load`, `/infer`,
+      `/engines`. Deliberately **not** exposed through Traefik - it takes raw frames and
+      returns raw detections with no tenant scoping, so it is called by the pipeline
+      layer, never by a browser.
+- [ ] InsightFace decoding via the `insightface` FaceAnalysis wrapper (SCRFD anchors +
+      ArcFace embeddings)
+- [ ] Label maps for `kitchen-safety-y8` and the plate models - detections currently
+      return numeric class ids (see CLARIFICATIONS #18)
+- [ ] Golden dataset + benchmark harness; `model_validation_runs` is still empty
+- [ ] Model registry UI in the Developer Console
 - [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
-- [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
-- [ ] Python asyncio AI runtime skeleton: ingest → preprocess → infer → filter/ROI →
-      track → rules → evidence-intent, using an open-source YOLO/ONNX model by default
+- [~] Pipeline stages: **infer** is built (above). Remaining: ingest, preprocess,
+      filter/ROI, tracking, rules, evidence-intent — these turn raw detections into
+      tenant-scoped incidents and are the next real piece of work.
 - [ ] Redis config cache + invalidation, desired-state deployment to edge
 - [ ] Developer Console: registry, model detail, pipeline builder, version comparison
 - [ ] Golden dataset + benchmark harness for at least one reference use case

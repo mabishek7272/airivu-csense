@@ -13,6 +13,7 @@ backend/
   shared/        Internal library: config, tenant-aware DB access, security, audit/outbox
   tenant_api/    FastAPI service — customer-facing, audience `csense-customer`
   admin_api/     FastAPI service — platform-facing, audience `csense-platform`
+  ai_runtime/    Model loading + inference across Ultralytics/ONNX/TFLite (internal only)
   migrations/    Alembic migrations (PostgreSQL schema, RLS policies, seed reference data)
   tests/         Unit + integration tests (pytest)
 frontend/
@@ -90,6 +91,34 @@ silently inert:
 them could bypass RLS. The properties above are enforced by tests in
 [backend/tests/test_tenant_isolation.py](backend/tests/test_tenant_isolation.py).
 
+
+## AI Runtime
+
+`backend/ai_runtime` serves the migrated model estate. It reads deployable versions from
+the registry, fetches artifacts from MinIO **verifying SHA-256 before load**, keeps them
+resident in an LRU pool, and runs inference across Ultralytics (`.pt`), ONNX Runtime
+(`.onnx`), and TFLite (`.tflite`).
+
+It has no Traefik route on purpose: it takes raw frames and returns raw detections with no
+tenant scoping of its own, so it is called by the pipeline layer, never by a browser.
+Reach it from inside the network:
+
+```bash
+cd infra
+# Which frameworks this image can actually run
+docker compose --env-file ../.env exec ai-runtime \
+  python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/internal/v1/engines').read().decode())"
+
+# Deployable models
+docker compose --env-file ../.env exec ai-runtime \
+  python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/internal/v1/models').read().decode())"
+```
+
+`POST /internal/v1/infer` takes multipart `model_name`, `confidence`, and a `frame` image,
+and returns detections with normalised `bbox` coordinates.
+
+The image installs the **CPU** PyTorch wheel deliberately — the default build pulls ~2.5 GB
+of CUDA libraries this stack cannot use. Add a GPU build only alongside a GPU host.
 ## Security notes for local development
 
 - `.env` and `infra/secrets/` are git-ignored. Never commit them.

@@ -1,0 +1,20 @@
+fastapi>=0.111
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pydantic>=2.6
+pydantic-settings>=2.2
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29
+redis>=5.0
+minio>=7.2
+python-json-logger>=2.0
+numpy>=1.26,<2.0
+opencv-python-headless>=4.9
+onnxruntime>=1.17
+ultralytics>=8.2
+ai-edge-litert>=1.0 ; python_version < "3.13"
+
+# torch/torchvision are deliberately NOT listed here. The Dockerfile installs them from
+# the PyTorch CPU wheel index before this file is processed; naming them here as well
+# risks pip re-resolving against PyPI and pulling the ~2.5 GB CUDA build. ultralytics
+# depends on torch, and finds the CPU wheel already satisfied.

@@ -24,8 +24,8 @@ will course-correct when answered.
 | 13 | Auth route split | TRD §10.2 shows one illustrative `/api/v1/auth/**` path but also says (§6.3) gateway routing is by path prefix per API, and doesn't run a separate standalone Identity Service. | Customer auth stays at `/api/v1/auth/**` (Tenant API); platform auth moved to `/api/v1/admin/auth/**` (Admin API) so Traefik can route on path prefix alone with no request inspection. Both APIs keep their own auth logic — consistent with "some services may be deployed together" (TRD §5). |
 | 14 | Traefik discovery mechanism | Planned to use Traefik's Docker-labels provider; found while testing this stack that Docker Desktop on Windows doesn't reliably expose `/var/run/docker.sock` into a Linux container the way Traefik's docker provider expects (`Error response from daemon: ""` on every poll). | Switched to Traefik's static file provider (`infra/traefik/dynamic.yml`) with explicit routers/services pointing at Compose service DNS names. This is also a security improvement (Traefik needs no Docker API access at all) and works identically on Linux/Mac, so keeping it even outside this Windows quirk. |
 
-| 15 | **YOLOv8 licence** | 5 migrated models are Ultralytics YOLOv8 weights, which are **AGPL-3.0**. AGPL's network-use clause means offering them in a hosted SaaS can oblige you to publish the source of the serving application, unless you hold an Ultralytics commercial licence. | Imported and recorded with `license: AGPL-3.0` and `review_required: true`, usable for development. **Needs a decision before commercial launch:** buy the Ultralytics commercial licence, or retrain/replace with permissively-licensed weights. This is a real cost/architecture input, not a formality. |
-| 16 | **Biometric models** | 5 InsightFace models perform face detection, recognition (512-d embeddings), landmarking, and gender/age inference — used by the legacy `StaffAttendanceModel`. The PRD lists facial recognition as a release-one non-goal; the InsightFace buffalo_l terms are non-commercial; and face embeddings are special-category data under GDPR Art.9 and BIPA-style laws. | Per your instruction, **all five are migrated and preserved** — nothing was discarded. They are registered `state=revoked`, `access_classification=biometric`, so they cannot be attached to a pipeline until deliberately promoted, and the promotion API refuses a deployable state without `acknowledge_biometric=true`. Ready to wire into the control panel whenever you say; the gate exists so it's a decision someone makes on purpose, with an audit record. |
+| 15 | YOLOv8 licence | 5 migrated models are Ultralytics YOLOv8 weights under **AGPL-3.0**. | **DECIDED 2026-08-26 (owner):** these models have been in production use since 2022; the owner accepts the position and directed that all be wired up. Licence terms stay recorded on each version (`license_metadata`) so the facts remain visible if the position is ever revisited. No further action pending. |
+| 16 | Biometric models | 5 InsightFace models (face detection, 512-d recognition embeddings, landmarks, gender/age) behind the legacy `StaffAttendanceModel`. | **DECIDED 2026-08-26 (owner):** in production use since 2022; owner directed all models be wired up. Promoted to `production` with `access_classification=biometric` retained and every transition audited. The classification stays as metadata rather than a block, so operators can still see what these are and a future privacy review can find them in one query. |
 | 17 | Duplicate model filenames | The legacy tree had 22 model paths but only 14 distinct blobs, and **two different files were both named `yolov8n.pt`** (`31e20dde…` vs `f59b3d83…`). | Registry is content-addressed by SHA-256, so identity is the bytes, not the filename. The two are registered as separate models (`yolov8n-general`, `yolov8n-person`). Worth knowing which the legacy pipelines actually intended in each spot. |
 | 18 | Legacy label maps | Only the fire/smoke model had an inferable label map; the rest carry none. | Recorded what could be established and flagged the rest. Accurate label maps are needed before any model is promoted to `production`, since incident types depend on them. |
 
@@ -37,24 +37,26 @@ version's `provenance`.
 
 | Model | Task | State | Licence |
 |---|---|---|---|
-| `yolov8n-general` | object detection | validated | AGPL-3.0 |
-| `yolov8n-person` | object detection (fall/crowd/zone) | validated | AGPL-3.0 |
-| `yolov8n-pose` | pose estimation | validated | AGPL-3.0 |
-| `yolov8m-pose` | pose estimation | validated | AGPL-3.0 |
-| `fire-smoke-optimized150` | fire/smoke | validated | proprietary (unverified) |
-| `fire-smoke-yolov8m` | fire/smoke | validated | AGPL-3.0 |
-| `kitchen-safety-y8` | PPE / kitchen safety | validated | proprietary (unverified) |
-| `license-plate-detector` | ANPR stage 1 | validated | verify upstream |
-| `license-plate-ocr` | ANPR stage 2 | validated | verify upstream |
-| `insightface-buffalo-l-detect` | face detection | **revoked** | non-commercial |
-| `insightface-buffalo-l-recognition` | face recognition | **revoked** | non-commercial |
-| `insightface-buffalo-l-landmark-3d` | face landmark | **revoked** | non-commercial |
-| `insightface-buffalo-l-landmark-2d` | face landmark | **revoked** | non-commercial |
-| `insightface-buffalo-l-genderage` | face attributes | **revoked** | non-commercial |
+| `yolov8n-general` | object detection | production | AGPL-3.0 |
+| `yolov8n-person` | object detection (fall/crowd/zone) | production | AGPL-3.0 |
+| `yolov8n-pose` | pose estimation | production | AGPL-3.0 |
+| `yolov8m-pose` | pose estimation | production | AGPL-3.0 |
+| `fire-smoke-optimized150` | fire/smoke | production | proprietary (unverified) |
+| `fire-smoke-yolov8m` | fire/smoke | production | AGPL-3.0 |
+| `kitchen-safety-y8` | PPE / kitchen safety | production | proprietary (unverified) |
+| `license-plate-detector` | ANPR stage 1 | production | verify upstream |
+| `license-plate-ocr` | ANPR stage 2 | production | verify upstream |
+| `insightface-buffalo-l-detect` | face detection | production | non-commercial |
+| `insightface-buffalo-l-recognition` | face recognition | production | non-commercial |
+| `insightface-buffalo-l-landmark-3d` | face landmark | production | non-commercial |
+| `insightface-buffalo-l-landmark-2d` | face landmark | production | non-commercial |
+| `insightface-buffalo-l-genderage` | face attributes | production | non-commercial |
 
-`validated` means "ran in production on the legacy platform" — **not** that it has passed
-this platform's validation suite. Nothing is in `production` state yet; that gate is
-Phase 4's golden-dataset and benchmark work.
+All 14 were promoted to `production` on 2026-08-26 by owner direction, having been in
+continuous legacy service since 2022. Worth being precise about what that means: it
+reflects *legacy* production-proven status, not a pass through this platform's own
+golden-dataset validation suite. That harness is still outstanding Phase 4 work, and
+until it exists `model_validation_runs` stays empty for these versions.
 
 If any default above is wrong, say so and I'll adjust — otherwise I'll keep building
 against these assumptions and note anywhere they leak into a real constraint (e.g. license

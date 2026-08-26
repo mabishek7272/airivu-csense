@@ -200,6 +200,33 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [csense]
 
+  ai-runtime:
+    build:
+      context: ../backend
+      dockerfile: ai_runtime/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      # Reads the platform-global model registry (models/model_versions/stored_objects),
+      # which carries no tenant_id, so it connects as the platform role like the Admin API.
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+      MODEL_CACHE_DIR: /var/cache/csense/models
+      MODEL_POOL_SIZE: ${MODEL_POOL_SIZE:-4}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    volumes:
+      # Persist the artifact cache: ~550 MB of models should survive a restart.
+      - modelcache:/var/cache/csense/models
+    # No Traefik route by design. This service takes raw frames and returns raw
+    # detections with no tenant scoping of its own; it is called by the pipeline layer,
+    # never directly by a browser or a tenant. Exposing it publicly would bypass the
+    # tenant boundary (TRD §16).
+    security_opt: ["no-new-privileges:true"]
+    networks: [csense]
+
   developer-console:
     build:
       context: ../frontend/developer-console
@@ -223,6 +250,7 @@ volumes:
   mongodata:
   redisdata:
   miniodata:
+  modelcache:
 
 secrets:
   jwt_private.pem:

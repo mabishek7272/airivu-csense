@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     customer_crm_origin: str = "http://localhost:5173"
     developer_console_origin: str = "http://localhost:3000"
 
+    # AI runtime. Cache lives on a volume so restarts do not re-download ~550 MB of
+    # artifacts; pool size bounds resident models by count, since in-memory footprint is
+    # framework-dependent and not predictable from file size.
+    model_cache_dir: str = "/var/cache/csense/models"
+    model_pool_size: int = 4
+
     @property
     def postgres_dsn(self) -> str:
         return (
