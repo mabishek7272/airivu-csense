@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     argon2_memory_cost_kb: int = 65536
     argon2_parallelism: int = 2
 
+    # --- Notification providers ---
+    # Each is optional: a deployment without WhatsApp is valid, and an unconfigured
+    # channel reports itself rather than crashing at send time.
+    resend_api_key: str = ""
+    resend_from_address: str = "alerts@example.invalid"
+    # Points at a Cloudflare Email Routing address, so replying to an alert reaches the
+    # inbound webhook rather than an unwatched mailbox.
+    resend_reply_to: str = ""
+
+    whatsapp_gateway_url: str = ""
+    whatsapp_gateway_api_key: str = ""
+    whatsapp_instance: str = "default"
+
     # CORS origins
     # Comma-separated allow-lists. Each app is reachable at more than one origin:
     # through Traefik in the container stack, and on a Vite/Next dev port locally.

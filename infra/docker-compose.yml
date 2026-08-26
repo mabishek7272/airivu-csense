@@ -32,6 +32,14 @@ x-backend-env: &backend-env
   CUSTOMER_CRM_ORIGIN: ${CUSTOMER_CRM_ORIGIN:-http://localhost:5173}
   DEVELOPER_CONSOLE_ORIGIN: ${DEVELOPER_CONSOLE_ORIGIN:-http://localhost:3000}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Notification providers. Each is optional; an unconfigured channel reports itself
+  # in the Developer Console rather than failing at send time.
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM_ADDRESS: ${RESEND_FROM_ADDRESS:-alerts@example.invalid}
+  RESEND_REPLY_TO: ${RESEND_REPLY_TO:-}
+  WHATSAPP_GATEWAY_URL: ${WHATSAPP_GATEWAY_URL:-http://whatsapp-gateway:8080}
+  WHATSAPP_GATEWAY_API_KEY: ${WHATSAPP_GATEWAY_API_KEY:-}
+  WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-default}
 
 x-backend-secrets: &backend-secrets
   - jwt_private.pem
@@ -206,6 +214,36 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [csense]
 
+  whatsapp-gateway:
+    build:
+      context: ../edge/whatsapp-gateway
+    env_file: [../.env]
+    environment:
+      SERVER_PORT: 8080
+      # Its own databases, separate from the platform's. Session state here is WhatsApp
+      # credential material, so it does not share a schema with tenant data.
+      POSTGRES_AUTH_DB: postgresql://${POSTGRES_USER:-csense_app}:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_auth?sslmode=disable
+      POSTGRES_USERS_DB: postgresql://${POSTGRES_USER:-csense_app}:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_users?sslmode=disable
+      GLOBAL_API_KEY: ${WHATSAPP_GATEWAY_API_KEY}
+      CLIENT_NAME: csense
+      OS_NAME: CSense Gateway
+      DATABASE_SAVE_MESSAGES: "false"
+      CONNECT_ON_STARTUP: "true"
+      LOGTYPE: console
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      # It runs as non-root and writes a rotating logfile to ./logs relative to its
+      # workdir. Without a writable mount it logs "permission denied" on every write and
+      # the file log is silently lost - which is the log you need when a number gets
+      # banned and sends start failing.
+      - whatsappgatewaylogs:/app/logs
+    # Deliberately no Traefik route. This service holds live WhatsApp sessions and its
+    # API key can send as your number; it is reachable only from inside the Docker
+    # network, and the Admin API proxies every operator action.
+    security_opt: ["no-new-privileges:true"]
+    networks: [csense]
+
   developer-console:
     build:
       context: ../frontend/developer-console
@@ -229,6 +267,7 @@ volumes:
   redisdata:
   miniodata:
   modelcache:
+  whatsappgatewaylogs:
 
 secrets:
   jwt_private.pem:

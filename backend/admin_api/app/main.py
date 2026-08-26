@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, models, organizations
+from app.api import auth, health, models, notifications, organizations
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
 from csense_shared.errors import ApiError, api_error_handler, unhandled_exception_handler
 from csense_shared.logging import configure_logging, get_logger
 from csense_shared.middleware import CorrelationIdMiddleware
+from csense_shared.notifications.bootstrap import build_registry
 
 settings = get_settings()
 configure_logging("admin-api", settings.environment, settings.log_level)
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI):
     app.state.engine = create_engine(settings)
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.redis = create_redis_client(settings)
+    app.state.settings = settings
+    app.state.provider_registry = build_registry(settings)
     logger.info("admin_api_started")
     try:
         yield
@@ -58,3 +61,4 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(models.router)
+app.include_router(notifications.router)

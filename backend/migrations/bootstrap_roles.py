@@ -69,6 +69,20 @@ def _assert_cannot_bypass_rls(cur, name: str) -> None:
         raise SystemExit(1)
 
 
+# Databases the WhatsApp gateway owns. Kept separate from the platform database on
+# purpose: the gateway stores WhatsApp session credentials, and that material should not
+# share a schema - or a backup - with tenant business data.
+WHATSAPP_DATABASES = ("whatsapp_auth", "whatsapp_users")
+
+
+def _ensure_database(cur, name: str) -> None:
+    cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
+    if cur.fetchone() is None:
+        # CREATE DATABASE cannot run inside a transaction; this connection is autocommit.
+        cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        print(f"Created database {name!r} for the WhatsApp gateway.")
+
+
 def main() -> None:
     api_user = os.environ.get("POSTGRES_API_USER", "csense_api")
     api_password = os.environ.get("POSTGRES_API_PASSWORD")
@@ -108,6 +122,9 @@ def main() -> None:
                 sql.Identifier(PLATFORM_GROUP_ROLE), sql.Identifier(api_user)
             )
         )
+
+        for database in WHATSAPP_DATABASES:
+            _ensure_database(cur, database)
 
         for role in (api_user, platform_user):
             _assert_cannot_bypass_rls(cur, role)

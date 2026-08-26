@@ -36,3 +36,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Vendored upstream source archives. The extracted, patched source lives in
+# edge/whatsapp-gateway/ and is versioned; the archive itself is not.
+evolution-go-main.zip
+*.zip
