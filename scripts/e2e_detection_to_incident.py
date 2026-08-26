@@ -6,7 +6,8 @@ Proves the whole vertical slice against the running stack rather than in isolati
   2. create a site, a restricted zone, and a camera
   3. run a real photograph through the AI runtime
   4. evaluate a restricted-zone rule against the detections
-  5. create the incident (repeatedly, to prove deduplication)
+  5. persist detections, capture masked evidence, create the incident (repeatedly,
+     to prove deduplication and idempotency)
   6. read it back through the tenant API and work it through its lifecycle
 
 Run from the repo root with the stack up:
@@ -59,7 +60,7 @@ def _in_runtime(script: str) -> str:
     """Runs a snippet inside the ai-runtime container, which is not publicly routed."""
     result = subprocess.run(
         [*COMPOSE, "exec", "-T", "ai-runtime", "python", "-c", script],
-        cwd=INFRA_DIR, capture_output=True, text=True, timeout=600,
+        cwd=INFRA_DIR, capture_output=True, text=True, timeout=600, check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"ai-runtime call failed:\n{result.stderr[-1500:]}")
@@ -69,7 +70,7 @@ def _in_runtime(script: str) -> str:
 def _in_postgres(sql: str) -> str:
     result = subprocess.run(
         [*COMPOSE, "exec", "-T", "postgres", "psql", "-qtA", "-U", "csense_app", "-d", "csense", "-c", sql],
-        cwd=INFRA_DIR, capture_output=True, text=True, timeout=120,
+        cwd=INFRA_DIR, capture_output=True, text=True, timeout=120, check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"psql failed:\n{result.stderr[-1000:]}")
@@ -168,51 +169,173 @@ def main() -> int:
         print("\n    Rule did not fire - nothing to escalate. Ending here.")
         return 0
 
-    step(5, "Create the incident, then replay the same rule 9 more times")
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
+    step(5, "Persist detections, store evidence, and create the incident")
     import asyncio
 
+    from csense_shared.pipeline.detections import (
+        DetectionDocument,
+        attach_evidence_ref,
+        ensure_indexes,
+        record_detection,
+    )
+    from csense_shared.pipeline.evidence import capture_evidence
     from csense_shared.pipeline.incidents import upsert_incident_from_match
+    from csense_shared.storage.objects import create_client
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     pg_password = _read_env("POSTGRES_PASSWORD")
+    mongo_password = _read_env("MONGO_PASSWORD")
 
-    async def create_incidents() -> list:
+    class _MinioSettings:
+        minio_endpoint = "localhost:9000"
+        minio_root_user = _read_env("MINIO_ROOT_USER")
+        minio_root_password = _read_env("MINIO_ROOT_PASSWORD")
+        minio_use_tls = False
+
+    # The frame the runtime saw, so evidence matches the detection rather than being a
+    # re-fetch that may differ.
+    frame_bytes = urllib.request.urlopen(SAMPLE_IMAGE, timeout=60).read()
+
+    async def run_pipeline() -> dict:
+        import cv2
+        import numpy as np
+
+        image = cv2.imdecode(np.frombuffer(frame_bytes, np.uint8), cv2.IMREAD_COLOR)
+
+        mongo = AsyncIOMotorClient(
+            f"mongodb://csense_app:{mongo_password}@localhost:27017/?authSource=admin",
+            uuidRepresentation="standard",
+        )
+        mongo_db = mongo["csense"]
+        await ensure_indexes(mongo_db)
+
         engine = create_async_engine(
             f"postgresql+asyncpg://csense_app:{pg_password}@localhost:5432/csense"
         )
         factory = async_sessionmaker(engine, expire_on_commit=False)
-        records = []
-        async with factory() as session:
-            async with session.begin():
-                from sqlalchemy import text
+        minio = create_client(_MinioSettings())
 
+        summary: dict = {"records": [], "detections": [], "evidence": None}
+
+        async with factory() as session, session.begin():
                 await session.execute(
                     text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_id}
                 )
-                for frame in range(10):
-                    records.append(
-                        await upsert_incident_from_match(
-                            session,
-                            tenant_id=uuid.UUID(tenant_id),
-                            site_id=uuid.UUID(site_id),
-                            camera_id=uuid.UUID(camera_id),
-                            rule=rule,
-                            detected=outcome.best,
-                            detection_id=f"e2e-detection-{frame}",
-                            captured_at=dt.datetime.now(dt.UTC),
-                            zone_id=zone_id,
-                        )
-                    )
-        await engine.dispose()
-        return records
 
-    records = asyncio.run(create_incidents())
+                for frame_index in range(10):
+                    # 1. Persist the detection. The source_event_id is what an edge device
+                    #    would send; replaying it must not create a second document.
+                    detection = DetectionDocument(
+                        tenant_id=uuid.UUID(tenant_id),
+                        site_id=uuid.UUID(site_id),
+                        camera_id=uuid.UUID(camera_id),
+                        event_type="person.restricted_zone",
+                        source_event_id=f"e2e-{tenant_id[:8]}-frame-{frame_index}",
+                        capture_time=dt.datetime.now(dt.UTC),
+                        confidence=outcome.best.confidence,
+                        objects=[
+                            {
+                                "class": o.class_name,
+                                "confidence": round(o.confidence, 4),
+                                "bbox": [round(v, 5) for v in o.bbox],
+                            }
+                            for o in outcome.matched
+                        ],
+                        roi_id=zone_id,
+                    )
+                    stored = await record_detection(mongo_db, detection)
+                    summary["detections"].append(stored)
+
+                    # 2. Fold into the incident.
+                    record = await upsert_incident_from_match(
+                        session,
+                        tenant_id=uuid.UUID(tenant_id),
+                        site_id=uuid.UUID(site_id),
+                        camera_id=uuid.UUID(camera_id),
+                        rule=rule,
+                        detected=outcome.best,
+                        detection_id=stored.detection_id,
+                        captured_at=dt.datetime.now(dt.UTC),
+                        zone_id=zone_id,
+                    )
+                    summary["records"].append(record)
+
+                    # 3. Capture evidence once, for the frame that opened the incident.
+                    if record.created:
+                        original, masked = await capture_evidence(
+                            session,
+                            minio,
+                            tenant_id=uuid.UUID(tenant_id),
+                            camera_id=uuid.UUID(camera_id),
+                            image=image,
+                            capture_time=dt.datetime.now(dt.UTC),
+                            incident_id=record.id,
+                            detection_id=stored.detection_id,
+                            # Mask every detected person, not only the ones that alerted -
+                            # bystanders have the same privacy interest as the subject.
+                            mask_boxes=[o.bbox for o in objects if o.class_name == "person"],
+                        )
+                        await attach_evidence_ref(
+                            mongo_db,
+                            tenant_id=uuid.UUID(tenant_id),
+                            detection_id=stored.detection_id,
+                            evidence_id=str(masked.evidence_id),
+                        )
+                        summary["evidence"] = (original, masked)
+
+                # Replay frame 0 to prove detection-level idempotency end to end.
+                replay = await record_detection(
+                    mongo_db,
+                    DetectionDocument(
+                        tenant_id=uuid.UUID(tenant_id),
+                        site_id=uuid.UUID(site_id),
+                        camera_id=uuid.UUID(camera_id),
+                        event_type="person.restricted_zone",
+                        source_event_id=f"e2e-{tenant_id[:8]}-frame-0",
+                        capture_time=dt.datetime.now(dt.UTC),
+                        confidence=outcome.best.confidence,
+                        objects=[],
+                    ),
+                )
+                summary["replay"] = replay
+
+                summary["detection_count"] = await mongo_db["detections"].count_documents(
+                    {"tenant_id": tenant_id}
+                )
+
+        await engine.dispose()
+        mongo.close()
+        return summary
+
+    result = asyncio.run(run_pipeline())
+    records = result["records"]
     created = sum(1 for r in records if r.created)
+
+    print(f"    detections stored in MongoDB : {result['detection_count']}")
+    print(
+        f"    replayed frame 0             : created={result['replay'].created} "
+        f"(same id: {result['replay'].detection_id == result['detections'][0].detection_id})"
+    )
     print(f"    10 rule firings -> {created} incident(s) created, {10 - created} folded in")
     print(f"    incident #{records[0].incident_number}, detection_count={records[-1].detection_count}")
+
+    original, masked = result["evidence"]
+    print(f"    evidence original            : {original.size_bytes:,} bytes  sha {original.sha256[:12]}")
+    print(f"    evidence masked              : {masked.size_bytes:,} bytes  sha {masked.sha256[:12]}")
+    if original.sha256 == masked.sha256:
+        print("    FAIL: masked variant is byte-identical to the original")
+        return 1
+
     if created != 1:
         print(f"    FAIL: expected exactly 1 incident, got {created}")
+        return 1
+    if result["detection_count"] != 10:
+        print(f"    FAIL: expected 10 stored detections, got {result['detection_count']}")
+        return 1
+    if result["replay"].created:
+        print("    FAIL: replaying a detection created a second document")
         return 1
 
     step(6, "Read it back through the tenant API")

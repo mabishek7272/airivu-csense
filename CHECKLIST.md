@@ -222,9 +222,17 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       real photograph → 6 detections → rule filters to 2 matches with 4 distinct
       rejection reasons → 10 firings produce 1 incident → tenant API → full lifecycle →
       illegal transition refused with 409.
-- [ ] Detection persistence to MongoDB (`detections` collection, idempotent by
-      `source_event_id`) — currently detections are linked by id but not yet stored
-- [ ] Evidence capture: snapshot to MinIO, masked variant, SHA-256, access authorisation
+- [x] Detection persistence to MongoDB
+      ([detections.py](backend/shared/csense_shared/pipeline/detections.py)): idempotent by
+      unique `(tenant_id, source_event_id)`, so edge retries and offline-spool replay
+      record once. Keeps all five timestamps distinct (TRD-DATA-005) — capture, edge
+      receive, cloud receive — which is what makes a six-hour offline backlog diagnosable.
+      TTL index for retention; null `expires_at` keeps legal-hold documents out of its reach.
+- [x] Evidence capture ([evidence.py](backend/shared/csense_shared/pipeline/evidence.py)):
+      stores **two objects** — original and blurred variant — rather than masking at
+      render time, so unmasked bytes are never what a normal read path returns. SHA-256
+      verified by reading back from storage before the row is committed (SCH §19).
+      Tenant-scoped presigned URLs; originals marked `restricted`.
 - [ ] WebSocket real-time incident updates to the CRM
 - [ ] Notification policies, recipient groups, provider adapters, escalation
 - [ ] Customer CRM incident inbox UI
