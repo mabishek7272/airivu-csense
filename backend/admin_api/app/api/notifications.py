@@ -50,6 +50,17 @@ class CreateInstanceRequest(BaseModel):
     instance: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
 
 
+class PairRequest(BaseModel):
+    # E.164. whatsmeow misroutes ambiguous local formats, and the failure looks like a
+    # successful pair against a number nobody owns.
+    phone: str = Field(pattern=r"^\+[1-9]\d{7,14}$")
+
+
+class PairResponse(BaseModel):
+    instance: str
+    pairing_code: str
+
+
 class LicenceStatus(BaseModel):
     """Activation state of the WhatsApp gateway's own vendor licence."""
 
@@ -251,6 +262,36 @@ async def whatsapp_qr(
         instance=result.get("instance", "default"),
         qr_code=result.get("qr_code"),
         pairing_code=result.get("pairing_code"),
+    )
+
+
+@router.post("/whatsapp/pair", response_model=PairResponse)
+async def whatsapp_pair(
+    body: PairRequest,
+    request: Request,
+    context: PlatformContext = Depends(current_platform_context),
+) -> PairResponse:
+    """Requests an 8-character pairing code for a phone number.
+
+    The practical alternative to the QR, which rotates roughly every 20 seconds - rarely
+    long enough to render it, get it in front of the right person and have them open
+    WhatsApp. A pairing code is typed in and lasts minutes.
+
+    Not audited, for the same reason as the QR: it is a step towards linking, polled and
+    retried, and the link itself is the event worth recording.
+    """
+    require_permission(context, "notification.manage")
+    provider = _gateway(request)
+
+    result = await provider.pair_phone(body.phone)
+    if not result.get("ok"):
+        raise ApiError(
+            status_code=502,
+            code="gateway_error",
+            message=result.get("detail") or "The gateway would not issue a pairing code.",
+        )
+    return PairResponse(
+        instance=provider.instance_name, pairing_code=result["pairing_code"]
     )
 
 

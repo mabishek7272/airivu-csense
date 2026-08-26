@@ -241,17 +241,43 @@ class EvolutionGoWhatsAppProvider:
 
         body = self._safe_json(response)
         data = body.get("data") if isinstance(body.get("data"), dict) else body
-        connected = bool(data.get("connected"))
-        state = str(
-            data.get("state")
-            or data.get("status")
-            or ("connected" if connected else "disconnected")
-        ).lower()
+
+        # The gateway's StatusStruct fields carry no json tags, so Go marshals them with
+        # their exported names: "Connected", "LoggedIn", "Name". Read both cases.
+        def field(*names: str) -> Any:
+            for name in names:
+                if name in data:
+                    return data[name]
+            return None
+
+        # Two different things, and conflating them is how a half-linked gateway looks
+        # healthy: `Connected` is only the websocket to WhatsApp - true while the pairing
+        # code is still waiting to be entered. `LoggedIn` is whether a number is actually
+        # linked, and it alone decides whether a send can succeed. The gateway's own code
+        # makes the same choice when reporting instance health.
+        socket_up = bool(field("Connected", "connected"))
+        logged_in = bool(field("LoggedIn", "loggedIn", "logged_in"))
+
+        if logged_in:
+            state = "connected"
+        elif socket_up:
+            state = "awaiting_pairing"
+        else:
+            state = "disconnected"
+
+        jid = field("myJid", "jid")
         return {
-            "connected": connected or state in ("open", "connected", "online"),
+            "connected": logged_in,
             "state": state,
             "instance": self._instance_name,
-            "jid": data.get("jid") or None,
+            "jid": jid or None,
+            "account_name": field("Name", "name") or None,
+            "detail": (
+                "Linked to WhatsApp. Sends will be delivered." if logged_in
+                else "Connected to WhatsApp but no number is linked yet. "
+                     "Scan the QR or enter a pairing code to finish linking." if socket_up
+                else "The gateway is not connected to WhatsApp."
+            ),
         }
 
     async def instance_connect(self) -> dict[str, Any]:
@@ -290,6 +316,34 @@ class EvolutionGoWhatsAppProvider:
             "qr_code": data.get("qrcode") or data.get("qr") or data.get("base64"),
             "pairing_code": data.get("pairingCode") or data.get("code"),
         }
+
+    async def pair_phone(self, phone_e164: str) -> dict[str, Any]:
+        """Requests an 8-character pairing code for a phone number.
+
+        The alternative to scanning a QR, and far more practical: the QR rotates every
+        ~20 seconds, which is not enough time to render it somewhere, hand it to a person,
+        and have them open WhatsApp. A pairing code is typed in and lasts minutes.
+
+        WhatsApp -> Settings -> Linked devices -> Link a device -> Link with phone number.
+        """
+        if not E164.match(phone_e164):
+            return {"ok": False, "detail": "Phone must be E.164, e.g. +919876543210."}
+        try:
+            response = await self._request(
+                "POST", "/instance/pair", json={"phone": phone_e164.lstrip("+")}
+            )
+        except _MissingInstanceToken:
+            return {"ok": False, "detail": "No instance token configured."}
+        except httpx.HTTPError as exc:
+            return {"ok": False, "detail": redact(str(exc))}
+
+        if response.status_code not in (200, 201):
+            return {"ok": False, "detail": redact(response.text), "status_code": response.status_code}
+
+        body = self._safe_json(response)
+        data = body.get("data") if isinstance(body.get("data"), dict) else body
+        code = data.get("PairingCode") or data.get("pairingCode") or data.get("code")
+        return {"ok": bool(code), "pairing_code": code, "detail": None if code else redact(response.text)}
 
     async def instance_logout(self) -> dict[str, Any]:
         """Unlinks the WhatsApp number. DELETE, per the gateway's routing."""
