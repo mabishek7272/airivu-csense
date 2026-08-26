@@ -222,12 +222,17 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       real photograph → 6 detections → rule filters to 2 matches with 4 distinct
       rejection reasons → 10 firings produce 1 incident → tenant API → full lifecycle →
       illegal transition refused with 409.
-- [x] Detection persistence to MongoDB
-      ([detections.py](backend/shared/csense_shared/pipeline/detections.py)): idempotent by
-      unique `(tenant_id, source_event_id)`, so edge retries and offline-spool replay
-      record once. Keeps all five timestamps distinct (TRD-DATA-005) — capture, edge
-      receive, cloud receive — which is what makes a six-hour offline backlog diagnosable.
-      TTL index for retention; null `expires_at` keeps legal-hold documents out of its reach.
+- [x] Detection persistence in **PostgreSQL**, not MongoDB
+      ([detections.py](backend/shared/csense_shared/pipeline/detections.py), migration 0012)
+      — a deliberate departure from the spec's two-datastore design, see CLARIFICATIONS #19.
+      Idempotent by unique `(tenant_id, source_event_id)`, so edge retries and offline-spool
+      replay record once. Keeps all five timestamps distinct (TRD-DATA-005), which is what
+      makes a six-hour offline backlog diagnosable. Retention swept by
+      `delete_expired_detections()` since PostgreSQL has no TTL index; null `expires_at`
+      keeps legal-hold rows out of its reach.
+- [x] MongoDB removed from the stack entirely — 9 services instead of 10, one datastore to
+      back up, restore and patch. Detection tenant isolation is now enforced by row-level
+      security instead of an application-level filter.
 - [x] Evidence capture ([evidence.py](backend/shared/csense_shared/pipeline/evidence.py)):
       stores **two objects** — original and blurred variant — rather than masking at
       render time, so unmasked bytes are never what a normal read path returns. SHA-256

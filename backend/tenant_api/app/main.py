@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth, health, incidents
 from csense_shared.config import get_settings
-from csense_shared.db.mongo import create_mongo_client, get_database
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
 from csense_shared.errors import ApiError, api_error_handler, unhandled_exception_handler
@@ -24,15 +23,12 @@ async def lifespan(app: FastAPI):
     app.state.engine = create_engine(settings)
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.redis = create_redis_client(settings)
-    app.state.mongo_client = create_mongo_client(settings)
-    app.state.mongo_db = get_database(app.state.mongo_client, settings)
     logger.info("tenant_api_started")
     try:
         yield
     finally:
         await app.state.engine.dispose()
         await app.state.redis.aclose()
-        app.state.mongo_client.close()
         logger.info("tenant_api_stopped")
 
 

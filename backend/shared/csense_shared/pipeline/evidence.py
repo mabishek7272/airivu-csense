@@ -166,7 +166,7 @@ async def capture_evidence(
     image: np.ndarray,
     capture_time: dt.datetime,
     incident_id: uuid.UUID | None = None,
-    detection_id: str | None = None,
+    detection_id: uuid.UUID | None = None,
     mask_boxes: list[tuple[float, float, float, float]] | None = None,
     retention_days: int | None = 90,
 ) -> tuple[EvidenceRecord, EvidenceRecord]:

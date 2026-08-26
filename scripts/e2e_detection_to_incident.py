@@ -175,18 +175,15 @@ def main() -> int:
     from csense_shared.pipeline.detections import (
         DetectionDocument,
         attach_evidence_ref,
-        ensure_indexes,
         record_detection,
     )
     from csense_shared.pipeline.evidence import capture_evidence
     from csense_shared.pipeline.incidents import upsert_incident_from_match
     from csense_shared.storage.objects import create_client
-    from motor.motor_asyncio import AsyncIOMotorClient
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     pg_password = _read_env("POSTGRES_PASSWORD")
-    mongo_password = _read_env("MONGO_PASSWORD")
 
     class _MinioSettings:
         minio_endpoint = "localhost:9000"
@@ -203,13 +200,6 @@ def main() -> int:
         import numpy as np
 
         image = cv2.imdecode(np.frombuffer(frame_bytes, np.uint8), cv2.IMREAD_COLOR)
-
-        mongo = AsyncIOMotorClient(
-            f"mongodb://csense_app:{mongo_password}@localhost:27017/?authSource=admin",
-            uuidRepresentation="standard",
-        )
-        mongo_db = mongo["csense"]
-        await ensure_indexes(mongo_db)
 
         engine = create_async_engine(
             f"postgresql+asyncpg://csense_app:{pg_password}@localhost:5432/csense"
@@ -245,7 +235,7 @@ def main() -> int:
                         ],
                         roi_id=zone_id,
                     )
-                    stored = await record_detection(mongo_db, detection)
+                    stored = await record_detection(session, detection)
                     summary["detections"].append(stored)
 
                     # 2. Fold into the incident.
@@ -278,7 +268,7 @@ def main() -> int:
                             mask_boxes=[o.bbox for o in objects if o.class_name == "person"],
                         )
                         await attach_evidence_ref(
-                            mongo_db,
+                            session,
                             tenant_id=uuid.UUID(tenant_id),
                             detection_id=stored.detection_id,
                             evidence_id=str(masked.evidence_id),
@@ -287,7 +277,7 @@ def main() -> int:
 
                 # Replay frame 0 to prove detection-level idempotency end to end.
                 replay = await record_detection(
-                    mongo_db,
+                    session,
                     DetectionDocument(
                         tenant_id=uuid.UUID(tenant_id),
                         site_id=uuid.UUID(site_id),
@@ -301,19 +291,21 @@ def main() -> int:
                 )
                 summary["replay"] = replay
 
-                summary["detection_count"] = await mongo_db["detections"].count_documents(
-                    {"tenant_id": tenant_id}
-                )
+                summary["detection_count"] = (
+                    await session.execute(
+                        text("SELECT count(*) FROM detections WHERE tenant_id = :t"),
+                        {"t": tenant_id},
+                    )
+                ).scalar_one()
 
         await engine.dispose()
-        mongo.close()
         return summary
 
     result = asyncio.run(run_pipeline())
     records = result["records"]
     created = sum(1 for r in records if r.created)
 
-    print(f"    detections stored in MongoDB : {result['detection_count']}")
+    print(f"    detections stored (Postgres) : {result['detection_count']}")
     print(
         f"    replayed frame 0             : created={result['replay'].created} "
         f"(same id: {result['replay'].detection_id == result['detections'][0].detection_id})"

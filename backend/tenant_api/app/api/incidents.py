@@ -226,7 +226,7 @@ async def get_incident(
             )
             for e in events
         ],
-        detection_ids=list(detections),
+        detection_ids=[str(d) for d in detections],
     )
 
 

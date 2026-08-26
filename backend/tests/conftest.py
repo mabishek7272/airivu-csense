@@ -30,7 +30,6 @@ def settings(jwt_keypair):
     private_path, public_path = jwt_keypair
     return Settings(
         postgres_password="test",
-        mongo_password="test",
         redis_password="test",
         minio_root_user="test",
         minio_root_password="test",

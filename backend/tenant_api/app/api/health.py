@@ -29,11 +29,6 @@ async def readiness(request: Request) -> dict:
     except Exception:
         checks["redis"] = "unavailable"
 
-    try:
-        await request.app.state.mongo_client.admin.command("ping")
-        checks["mongo"] = "ok"
-    except Exception:
-        checks["mongo"] = "unavailable"
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     return {"status": overall, "dependencies": checks}

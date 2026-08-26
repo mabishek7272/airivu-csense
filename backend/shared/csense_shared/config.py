@@ -25,12 +25,6 @@ class Settings(BaseSettings):
     postgres_user: str = "csense_app"
     postgres_password: str = Field(...)
 
-    # MongoDB
-    mongo_host: str = "mongo"
-    mongo_port: int = 27017
-    mongo_db: str = "csense"
-    mongo_user: str = "csense_app"
-    mongo_password: str = Field(...)
 
     # Redis
     redis_host: str = "redis"
@@ -71,13 +65,6 @@ class Settings(BaseSettings):
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
-    @property
-    def mongo_dsn(self) -> str:
-        return (
-            f"mongodb://{self.mongo_user}:{self.mongo_password}"
-            f"@{self.mongo_host}:{self.mongo_port}/{self.mongo_db}?authSource=admin"
         )
 
     @property

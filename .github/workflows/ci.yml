@@ -19,15 +19,6 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U csense_app -d csense"
           --health-interval 5s --health-timeout 5s --health-retries 10
-      mongo:
-        image: mongo:7
-        env:
-          MONGO_INITDB_ROOT_USERNAME: csense_app
-          MONGO_INITDB_ROOT_PASSWORD: ci_mongo_password
-        ports: ["27017:27017"]
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
-          --health-interval 5s --health-timeout 5s --health-retries 10
       minio:
         image: minio/minio:edge-cicd
         env:
@@ -52,7 +43,6 @@ jobs:
       TEST_POSTGRES_DSN: "host=localhost port=5432 dbname=csense user=csense_app password=ci_test_password"
       TEST_POSTGRES_API_DSN: "host=localhost port=5432 dbname=csense user=csense_api password=ci_api_password"
       TEST_POSTGRES_PLATFORM_DSN: "host=localhost port=5432 dbname=csense user=csense_platform_api password=ci_platform_password"
-      TEST_MONGO_DSN: "mongodb://csense_app:ci_mongo_password@localhost:27017/?authSource=admin"
       TEST_MINIO_ENDPOINT: "localhost:9000"
       TEST_MINIO_USER: ci_minio_user
       TEST_MINIO_PASSWORD: ci_minio_password

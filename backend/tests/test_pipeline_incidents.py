@@ -17,6 +17,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from csense_shared.pipeline.detections import DetectionDocument, record_detection
 from csense_shared.pipeline.incidents import (
     InvalidTransitionError,
     transition_incident,
@@ -116,7 +117,28 @@ async def tenant_session():
     await engine.dispose()
 
 
+async def _record_detection(ctx, source_event_id: str, captured_at=CAPTURED_AT):
+    """Detections now live in the same database with a real foreign key from
+    incident_detection_links, so an incident can only reference one that exists."""
+    return await record_detection(
+        ctx["session"],
+        DetectionDocument(
+            tenant_id=ctx["tenant_id"],
+            site_id=ctx["site_id"],
+            camera_id=ctx["camera_id"],
+            event_type="person.restricted_zone",
+            source_event_id=source_event_id,
+            capture_time=captured_at,
+            confidence=PERSON.confidence,
+            objects=[{"class": PERSON.class_name, "bbox": list(PERSON.bbox)}],
+        ),
+    )
+
+
 async def _upsert(ctx, *, detection_id: str, captured_at=CAPTURED_AT, rule=RULE, detected=PERSON):
+    """`detection_id` here is the edge device's source_event_id; the detection is recorded
+    first and its real id is what links to the incident."""
+    stored = await _record_detection(ctx, detection_id, captured_at)
     return await upsert_incident_from_match(
         ctx["session"],
         tenant_id=ctx["tenant_id"],
@@ -124,7 +146,7 @@ async def _upsert(ctx, *, detection_id: str, captured_at=CAPTURED_AT, rule=RULE,
         camera_id=ctx["camera_id"],
         rule=rule,
         detected=detected,
-        detection_id=detection_id,
+        detection_id=stored.detection_id,
         captured_at=captured_at,
         zone_id="zone-a",
     )
