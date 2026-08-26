@@ -119,6 +119,31 @@ and returns detections with normalised `bbox` coordinates.
 
 The image installs the **CPU** PyTorch wheel deliberately — the default build pulls ~2.5 GB
 of CUDA libraries this stack cannot use. Add a GPU build only alongside a GPU host.
+
+## Detection pipeline
+
+`backend/shared/csense_shared/pipeline` turns raw detections into incidents.
+
+`rules.py` is pure logic — class filter, confidence, ROI overlap, duration, cooldown,
+schedules — with no database or clock, so the thresholds operators tune can be tested
+directly. ROI containment uses true polygon-overlap area rather than a centre-point test,
+because a person standing on the boundary of a restricted zone is exactly where the
+approximation gives the wrong answer.
+
+`incidents.py` is the stateful half. The guarantee that matters: **a rule firing on many
+consecutive frames produces one incident, not one per frame**, enforced by a partial
+unique index in the database rather than by application logic, so a retry or a concurrent
+worker cannot bypass it.
+
+To see the whole slice run against the live stack:
+
+```bash
+python scripts/e2e_detection_to_incident.py
+```
+
+That registers a tenant, creates a restricted zone, runs a real photograph through the AI
+runtime, applies a rule, proves deduplication over 10 firings, then works the incident
+through its lifecycle via the tenant API.
 ## Security notes for local development
 
 - `.env` and `infra/secrets/` are git-ignored. Never commit them.

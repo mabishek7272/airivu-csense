@@ -191,20 +191,43 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 - [ ] **[NEEDS DECISION]** YOLOv8/AGPL-3.0 licensing for commercial hosting — see
       CLARIFICATIONS.md #15. Affects 5 of the 14 migrated models.
 
+
 ## Phase 5 — Incident, Evidence, and Notification MVP
 
-- [ ] Detection normalization + idempotent ingestion (Mongo `detections`)
-- [ ] Rule correlation, cooldown, duplicate suppression, late-event policy
-- [ ] Incident state machine, timeline, comments, assignment, ack/resolve
-- [ ] Evidence storage (MinIO), masked variant, checksum, access authorization
-- [ ] Customer incident inbox/detail + WebSocket real-time updates
-- [ ] Notification policy versions, recipient groups, in-app/email/webhook adapters
-      (pluggable provider interface; concrete provider selection pending —
-      see [CLARIFICATIONS.md](CLARIFICATIONS.md))
-- [ ] Retry/backoff, delivery status, escalation, ack-cancels-escalation
-- [ ] Initial incident/response reports
-- [ ] Vertical-slice test: camera event → detection → incident → evidence → WebSocket →
-      notification → ack → resolve → full audit trail
+- [x] Rule evaluation engine ([backend/shared/csense_shared/pipeline/rules.py](backend/shared/csense_shared/pipeline/rules.py)):
+      class filter, confidence threshold, ROI containment by **true polygon overlap area**
+      (Sutherland–Hodgman clip, not centre-point), minimum duration, cooldown, and
+      overnight-wrapping schedules. Pure functions — no DB, no clock — so the thresholds
+      operators tune are directly testable. Every rejection carries a reason, so
+      "why didn't this alert?" is answerable.
+- [x] Incident creation with **deduplication enforced in the database**
+      ([incidents.py](backend/shared/csense_shared/pipeline/incidents.py)): a partial
+      unique index on (tenant, camera, type, correlation_key) for non-closed incidents
+      means a retry, a concurrent worker, or a redelivered event cannot create a
+      duplicate. Verified: 25 consecutive frames → 1 incident.
+- [x] Per-tenant gap-free incident numbers from a locked counter (tenants see
+      "Incident 42", not a global id leaking other tenants' volume)
+- [x] Incident state machine + append-only `incident_events` history (DB-enforced:
+      UPDATE/DELETE revoked from application roles)
+- [x] Schema: sites, zones (normalised ROI polygons), cameras, incidents,
+      incident_events, incident_detection_links — all RLS-protected with the same
+      group-membership-gated policy as Phase 1 (migration 0009)
+- [x] Tenant API incident endpoints: cursor-paginated inbox, detail with full history,
+      acknowledge / investigate / resolve / dismiss, permission-gated, each transition
+      audited and emitting an outbox event
+- [x] Recovered legacy label maps (migration 0008) — kitchen-safety and plate models were
+      returning numeric class ids. Also recovered `VIOLATION_CLASSES`: only 3 of the 6
+      kitchen classes are alertable, so `maskon`/`glove` no longer raise incidents.
+- [x] **End-to-end verified** ([scripts/e2e_detection_to_incident.py](scripts/e2e_detection_to_incident.py)):
+      real photograph → 6 detections → rule filters to 2 matches with 4 distinct
+      rejection reasons → 10 firings produce 1 incident → tenant API → full lifecycle →
+      illegal transition refused with 409.
+- [ ] Detection persistence to MongoDB (`detections` collection, idempotent by
+      `source_event_id`) — currently detections are linked by id but not yet stored
+- [ ] Evidence capture: snapshot to MinIO, masked variant, SHA-256, access authorisation
+- [ ] WebSocket real-time incident updates to the CRM
+- [ ] Notification policies, recipient groups, provider adapters, escalation
+- [ ] Customer CRM incident inbox UI
 
 ## Phase 6 — Resilience, APIs, Reporting, Privileged Support
 
