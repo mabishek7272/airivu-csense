@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from csense_shared.notifications.providers import (
+    Attachment,
     Channel,
     Message,
     ProviderRegistry,
@@ -350,9 +351,16 @@ async def send_delivery(
     subject: str | None,
     body: str,
     media_urls: list[str] | None = None,
+    attachments: list[Attachment] | None = None,
     now: dt.datetime | None = None,
 ) -> str:
-    """Sends one delivery and records the outcome. Returns the resulting status."""
+    """Sends one delivery and records the outcome. Returns the resulting status.
+
+    Media arrives two ways because the channels consume it differently: `media_urls` for
+    providers whose own server fetches the bytes (the WhatsApp gateway, from inside our
+    network), `attachments` for providers that must carry them (email, since Gmail proxies
+    `<img src>` through Google's fetchers and would need a publicly reachable URL).
+    """
     moment = now or dt.datetime.now(dt.UTC)
     channel: Channel = delivery["channel"]
     attempt = delivery["attempt_count"] + 1
@@ -381,6 +389,7 @@ async def send_delivery(
         subject=subject,
         body=body,
         media_urls=media_urls or [],
+        attachments=attachments or [],
         # Stable per delivery+attempt-window, so a provider that honours it will not
         # double-send if our own write fails after their accept.
         idempotency_key=f"{delivery['delivery_id']}",

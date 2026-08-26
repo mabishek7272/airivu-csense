@@ -17,6 +17,7 @@ State transitions follow docs/05_BACKEND_SCHEMA.md §9.2 and every one appends a
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -24,7 +25,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from csense_shared.notifications.dispatcher import cancel_pending_for_incident
 from csense_shared.pipeline.rules import DetectedObject, Rule
+
+logger = logging.getLogger(__name__)
 
 # SCH §9.2. Terminal states have no outgoing transitions except reopening, which is
 # deliberately not offered here - a resolved incident stays resolved, and a recurrence
@@ -39,6 +43,21 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 CLOSED_STATES = {"resolved", "dismissed"}
+
+# Statuses that mean a human has taken the incident, and so must stop the automatic
+# escalation ladder. Every transition in the state machine is operator-driven, so reaching
+# any of these proves somebody saw it - which is the exact condition the ladder exists to
+# detect the absence of.
+#
+# `escalated` is included, and that is worth stating plainly: it means an operator chose
+# to escalate to a specific person themselves. Continuing to climb the automatic ladder
+# underneath a deliberate human handoff pages people the operator did not choose, for work
+# already assigned.
+#
+# Notifications already sent are never touched - they cannot be unsent.
+STOPS_ESCALATION = frozenset(
+    {"acknowledged", "investigating", "escalated", "resolved", "dismissed"}
+)
 
 
 class InvalidTransitionError(ValueError):
@@ -355,6 +374,27 @@ async def transition_incident(
         ),
         params,
     )
+
+    if new_status in STOPS_ESCALATION:
+        # The behaviour the whole notification stack exists to get right: once a human has
+        # taken the incident, the ladder stops. Done in the same transaction as the status
+        # change, so there is no window in which an incident reads as acknowledged while
+        # its next escalation is still queued to fire.
+        cancelled = await cancel_pending_for_incident(
+            session,
+            tenant_id=tenant_id,
+            incident_id=incident_id,
+            reason=f"Incident {new_status} by {actor_type}.",
+        )
+        if cancelled:
+            logger.info(
+                "escalation_cancelled",
+                extra={
+                    "incident_id": str(incident_id),
+                    "notifications": cancelled,
+                    "status": new_status,
+                },
+            )
 
     await record_incident_event(
         session,

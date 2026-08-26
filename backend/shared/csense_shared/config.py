@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     whatsapp_instance_token: str = ""
     whatsapp_instance: str = "default"
 
+    # Notification worker. The poll interval bounds how late an alert can be, so it is
+    # deliberately short - the query is indexed on next_attempt_at and costs almost
+    # nothing when the queue is empty. The batch size bounds how much work one crash can
+    # leave stranded in `sending` for the stalled-delivery sweep to recover.
+    notification_poll_seconds: float = 5.0
+    notification_batch_size: int = 25
+
     # CORS origins
     # Comma-separated allow-lists. Each app is reachable at more than one origin:
     # through Traefik in the container stack, and on a Vite/Next dev port locally.

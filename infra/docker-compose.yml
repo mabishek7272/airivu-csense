@@ -173,9 +173,10 @@ services:
     env_file: [../.env]
     environment:
       <<: *backend-env
-      # The only service that connects as the platform role — a member of the
-      # `csense_platform` group role, which the RLS policies require for cross-tenant
-      # reads (migration 0005). The Tenant API's role is deliberately not a member.
+      # Connects as the platform role — a member of the `csense_platform` group role,
+      # which the RLS policies require for cross-tenant reads (migration 0005). Only this
+      # service and notification-worker use it; the Tenant API's role is deliberately not
+      # a member.
       POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
       POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
     secrets: *backend-secrets
@@ -186,6 +187,30 @@ services:
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
+    networks: [csense]
+
+  # Drives notification dispatch. Nothing else sends an alert: the APIs and pipeline only
+  # write rows to the queue. Separate from the APIs so a wedged send cannot take request
+  # serving down with it, and so it can be scaled on its own — several replicas drain the
+  # same queue safely because claiming uses FOR UPDATE SKIP LOCKED.
+  notification-worker:
+    build:
+      context: ../backend
+      dockerfile: notification_worker/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    # No ports published: the worker accepts no requests at all.
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
     networks: [csense]
 
   ai-runtime:

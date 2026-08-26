@@ -251,7 +251,34 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 - [x] Unmasked `original` withheld from roles lacking `evidence.download` — verified live
       against a `tenant_member` account, which receives only `annotated` and `masked`
 - [ ] WebSocket real-time incident updates to the CRM
-- [ ] Notification policies, recipient groups, provider adapters, escalation
+- [x] **Notification policies, recipient groups, provider adapters, escalation** — the
+      dispatcher, retry policy and provider adapters existed but nothing drove them, so
+      no alert could ever leave the building. Now closed end to end:
+  - [x] `notification-worker` service ([backend/notification_worker/](backend/notification_worker/)) —
+        polls every 5s, one transaction *per delivery* so a provider timeout cannot roll
+        back sends that already happened, and a stalled-delivery sweep that recovers rows
+        a killed worker left in `sending`. No ports: it accepts no requests.
+  - [x] Policy resolution ([policies.py](backend/shared/csense_shared/notifications/policies.py))
+        — parses tenant-written JSON defensively (a malformed policy must not stop
+        alerting for every other tenant) and falls back to a flat default so a tenant who
+        configured nothing is still told.
+  - [x] Escalation ladder written up front, not promoted rung by rung — a worker outage
+        then delays alerts instead of silently losing them.
+  - [x] **Acknowledgement cancels escalation**, wired into `transition_incident` in the
+        same transaction as the status change, and re-checked at send time to close the
+        claim→send window. All five human-driven statuses stop the ladder.
+  - [x] Annotated snapshots attached to email (never the unmasked `original`).
+  - [x] Migration 0017: `cancelled` added to `delivery_status`. Filing acknowledged
+        alerts under `abandoned` would have made a success dashboard report failures
+        during exactly the incidents handled best.
+  - [x] Verified live: [scripts/e2e_notification.py](scripts/e2e_notification.py) opened
+        an incident and the worker container sent a real email via Resend
+        (`accepted provider=resend`). 35 new tests; suite at 154 passing.
+  - [ ] Ingestion has no production caller yet — `schedule_incident_notifications` is
+        invoked by the e2e script and tests, and lands in the API when detection
+        ingestion does.
+- [ ] Quiet hours and per-tenant notification policy editing in the CRM (`within_quiet_hours`
+      is implemented and tested but not yet consulted by the dispatcher)
 - [x] **Customer CRM UI** — incident inbox, incident detail with evidence strip and
       history timeline, detections feed with annotated thumbnails. Design tokens with
       light/dark, WCAG 2.2 AA contrast, keyboard focus, skip link, reduced-motion support.
