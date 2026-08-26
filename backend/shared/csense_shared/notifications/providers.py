@@ -38,16 +38,37 @@ class DeliveryOutcome(StrEnum):
 
 
 @dataclass(frozen=True)
+class Attachment:
+    """Bytes carried with the message rather than linked from it."""
+
+    filename: str
+    content: bytes
+    mime_type: str = "image/jpeg"
+
+
+@dataclass(frozen=True)
 class Message:
-    """One message to one recipient, already rendered."""
+    """One message to one recipient, already rendered.
+
+    Media is carried two ways because the channels consume it differently, and getting
+    this wrong is the difference between an alert with a picture and one without:
+
+      `media_urls` - for channels whose *server* fetches the URL. The WhatsApp gateway
+          downloads the media itself, from inside our network, then uploads the bytes to
+          WhatsApp. So these can be internal URLs; they never leave the deployment.
+
+      `attachments` - for channels that must carry the bytes. Email is the case that
+          matters: Gmail proxies `<img src>` through Google's own fetchers, so a linked
+          image would need to be publicly reachable. Attaching sidesteps that entirely,
+          and an attached snapshot survives in the mailbox after any URL would have
+          expired.
+    """
 
     recipient: str            # email address, E.164 number, user id, or URL
     subject: str | None
     body: str
-    # Absolute URLs to imagery. WhatsApp takes the first as a media attachment; email
-    # embeds them. The annotated snapshot is what makes an alert actionable rather than
-    # a line of text someone has to go and investigate.
     media_urls: list[str] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
     # Idempotency key. Providers that support it will not double-send on our retry.
     idempotency_key: str | None = None
     metadata: dict = field(default_factory=dict)

@@ -15,6 +15,7 @@ acceptance as delivery is how a system reports 100% success while every message 
 """
 from __future__ import annotations
 
+import base64
 import html
 import logging
 from typing import Any
@@ -32,8 +33,8 @@ from csense_shared.notifications.providers import (
 logger = logging.getLogger(__name__)
 
 API_URL = "https://api.resend.com/emails"
-# Resend caps at 40 MB per message; well under that, since alert emails carry one or two
-# snapshots as links rather than attachments.
+# Resend caps at 40 MB per message. Alert snapshots are a couple of hundred KB each and
+# at most three are attached, so the cap is not a practical constraint.
 REQUEST_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 
@@ -78,6 +79,19 @@ class ResendEmailProvider:
         }
         if self._reply_to:
             payload["reply_to"] = self._reply_to
+        if message.attachments:
+            # Attached rather than linked. Gmail proxies `<img src>` through Google's
+            # fetchers, so a linked snapshot would have to be publicly reachable; an
+            # attachment needs no public host at all, and it still opens months later
+            # when any presigned URL would long since have expired.
+            payload["attachments"] = [
+                {
+                    "filename": attachment.filename,
+                    "content": base64.b64encode(attachment.content).decode(),
+                }
+                for attachment in message.attachments[:3]
+            ]
+
         if message.metadata:
             # Resend tags must be ASCII key/value; used to correlate webhooks back to a
             # delivery row without trusting the provider's own id alone.
@@ -160,12 +174,15 @@ class ResendEmailProvider:
         Everything is escaped: the body carries a camera name and site name that a tenant
         controls, so an unescaped template would let one tenant inject markup into a mail
         their own staff read.
+
+        Snapshots are referenced by `cid:` against the attachments, never by external URL,
+        so nothing here depends on publicly reachable storage.
         """
         body_html = html.escape(message.body).replace("\n", "<br>")
         images = "".join(
-            f'<img src="{html.escape(url)}" alt="Detection snapshot" '
+            f'<img src="cid:{html.escape(attachment.filename)}" alt="Detection snapshot" '
             f'style="max-width:100%;border-radius:6px;margin-top:16px">'
-            for url in message.media_urls[:3]
+            for attachment in message.attachments[:3]
         )
         return (
             '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
