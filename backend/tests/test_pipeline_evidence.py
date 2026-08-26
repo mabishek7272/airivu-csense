@@ -189,8 +189,10 @@ def test_unlinked_evidence_still_gets_a_wellformed_key():
 
 # --- Capture and storage -------------------------------------------------------------
 
-async def test_capture_stores_both_variants(tenant_ctx):
-    original, masked = await capture_evidence(
+async def test_capture_stores_all_three_variants(tenant_ctx):
+    from csense_shared.pipeline.evidence import Annotation
+
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -198,17 +200,21 @@ async def test_capture_stores_both_variants(tenant_ctx):
         image=noisy_image(),
         capture_time=CAPTURED_AT,
         mask_boxes=[(0.2, 0.2, 0.6, 0.6)],
+        annotations=[Annotation((0.2, 0.2, 0.6, 0.6), "person", 0.9)],
     )
 
+    original, masked, annotated = evidence.original, evidence.masked, evidence.annotated
     assert original.privacy_variant == "original"
     assert masked.privacy_variant == "masked"
-    # Different bytes, therefore different digests - proof the mask was applied before upload.
-    assert original.sha256 != masked.sha256
+    assert annotated.privacy_variant == "annotated"
+    # Three distinct digests: proof the mask and the boxes were applied before upload,
+    # not promised and skipped.
+    assert len({original.sha256, masked.sha256, annotated.sha256}) == 3
 
 
 async def test_stored_digest_matches_the_uploaded_bytes(tenant_ctx):
     """SCH §19: digest and size must match storage before evidence is available."""
-    original, _ = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -216,6 +222,7 @@ async def test_stored_digest_matches_the_uploaded_bytes(tenant_ctx):
         image=noisy_image(),
         capture_time=CAPTURED_AT,
     )
+    original = evidence.original
 
     response = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, original.object_key)
     try:
@@ -231,7 +238,7 @@ async def test_stored_digest_matches_the_uploaded_bytes(tenant_ctx):
 async def test_masked_variant_records_its_lineage(tenant_ctx):
     """A masked image must say what it was derived from, so the original is findable by
     someone with the right permission - and only by them."""
-    original, masked = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -240,6 +247,7 @@ async def test_masked_variant_records_its_lineage(tenant_ctx):
         capture_time=CAPTURED_AT,
         mask_boxes=[(0.1, 0.1, 0.5, 0.5)],
     )
+    original, masked = evidence.original, evidence.masked
 
     row = (
         await tenant_ctx["session"].execute(
@@ -257,7 +265,7 @@ async def test_masked_variant_records_its_lineage(tenant_ctx):
 
 async def test_original_is_marked_restricted(tenant_ctx):
     """The unmasked image is the sensitive artifact; its classification says so."""
-    original, _ = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -265,6 +273,7 @@ async def test_original_is_marked_restricted(tenant_ctx):
         image=noisy_image(),
         capture_time=CAPTURED_AT,
     )
+    original = evidence.original
     classification = (
         await tenant_ctx["session"].execute(
             text("SELECT access_classification FROM evidence WHERE id = :id"),
@@ -275,7 +284,7 @@ async def test_original_is_marked_restricted(tenant_ctx):
 
 
 async def test_retention_expiry_is_recorded(tenant_ctx):
-    _, masked = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -284,6 +293,7 @@ async def test_retention_expiry_is_recorded(tenant_ctx):
         capture_time=CAPTURED_AT,
         retention_days=30,
     )
+    masked = evidence.masked
     expires_at = (
         await tenant_ctx["session"].execute(
             text("SELECT expires_at FROM evidence WHERE id = :id"), {"id": masked.evidence_id}
@@ -293,7 +303,7 @@ async def test_retention_expiry_is_recorded(tenant_ctx):
 
 
 async def test_presign_returns_a_url_for_the_owning_tenant(tenant_ctx):
-    _, masked = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -301,6 +311,7 @@ async def test_presign_returns_a_url_for_the_owning_tenant(tenant_ctx):
         image=noisy_image(),
         capture_time=CAPTURED_AT,
     )
+    masked = evidence.masked
     url = await presign_evidence(
         tenant_ctx["session"], tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"], evidence_id=masked.evidence_id,
@@ -311,7 +322,7 @@ async def test_presign_returns_a_url_for_the_owning_tenant(tenant_ctx):
 async def test_presign_refuses_another_tenants_evidence(tenant_ctx):
     """Object storage performs no authorisation of its own (SCH §2), so this check is the
     only thing standing between an id and someone else's snapshot."""
-    _, masked = await capture_evidence(
+    evidence = await capture_evidence(
         tenant_ctx["session"],
         tenant_ctx["minio"],
         tenant_id=tenant_ctx["tenant_id"],
@@ -319,6 +330,7 @@ async def test_presign_refuses_another_tenants_evidence(tenant_ctx):
         image=noisy_image(),
         capture_time=CAPTURED_AT,
     )
+    masked = evidence.masked
     url = await presign_evidence(
         tenant_ctx["session"], tenant_ctx["minio"],
         tenant_id=uuid.uuid4(), evidence_id=masked.evidence_id,
@@ -349,3 +361,26 @@ def test_jpeg_encoding_roundtrips():
     payload = encode_jpeg(image)
     decoded = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
     assert decoded.shape == image.shape
+
+
+async def test_no_annotations_reuses_the_masked_variant(tenant_ctx):
+    """Without boxes, an annotated image would be byte-identical to the masked one.
+    Storing it would mean a duplicate object and row for every capture, so the masked
+    record is reused - and callers still never have to branch on whether one exists."""
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=noisy_image(),
+        capture_time=CAPTURED_AT,
+    )
+    assert evidence.annotated.evidence_id == evidence.masked.evidence_id
+
+    stored = (
+        await tenant_ctx["session"].execute(
+            text("SELECT count(*) FROM evidence WHERE camera_id = :c"),
+            {"c": tenant_ctx["camera_id"]},
+        )
+    ).scalar_one()
+    assert stored == 2, "only original and masked should be written"

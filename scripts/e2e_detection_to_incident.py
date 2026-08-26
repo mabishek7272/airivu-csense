@@ -103,8 +103,10 @@ def main() -> int:
     # path under test does not depend on how they were created.
     site_id = _in_postgres(
         f"SET app.is_platform = true; "
-        f"INSERT INTO sites (tenant_id, name, code) "
-        f"VALUES ('{tenant_id}', 'E2E Site', 'e2e-site') RETURNING id;"
+        f"INSERT INTO sites (tenant_id, name, code, address_json, latitude, longitude, timezone) "
+        f"VALUES ('{tenant_id}', 'Chennai Distribution Centre', 'e2e-site', "
+        f"'{json.dumps({'line1': '12 Anna Salai', 'city': 'Chennai', 'country': 'IN'})}'::jsonb, "
+        f"13.082680, 80.270721, 'Asia/Kolkata') RETURNING id;"
     ).splitlines()[-1]
     zone_id = _in_postgres(
         f"SET app.is_platform = true; "
@@ -177,7 +179,7 @@ def main() -> int:
         attach_evidence_ref,
         record_detection,
     )
-    from csense_shared.pipeline.evidence import capture_evidence
+    from csense_shared.pipeline.evidence import Annotation, capture_evidence
     from csense_shared.pipeline.incidents import upsert_incident_from_match
     from csense_shared.storage.objects import create_client
     from sqlalchemy import text
@@ -254,7 +256,11 @@ def main() -> int:
 
                     # 3. Capture evidence once, for the frame that opened the incident.
                     if record.created:
-                        original, masked = await capture_evidence(
+                        # Draw every object the model saw: matches in alert colour,
+                        # rejects muted, so the annotated frame shows both what was
+                        # detected and what the rule decided about it.
+                        matched_boxes = {o.bbox for o in outcome.matched}
+                        evidence_set = await capture_evidence(
                             session,
                             minio,
                             tenant_id=uuid.UUID(tenant_id),
@@ -266,14 +272,23 @@ def main() -> int:
                             # Mask every detected person, not only the ones that alerted -
                             # bystanders have the same privacy interest as the subject.
                             mask_boxes=[o.bbox for o in objects if o.class_name == "person"],
+                            annotations=[
+                                Annotation(
+                                    bbox=o.bbox,
+                                    label=o.class_name,
+                                    confidence=o.confidence,
+                                    triggered=o.bbox in matched_boxes,
+                                )
+                                for o in objects
+                            ],
                         )
                         await attach_evidence_ref(
                             session,
                             tenant_id=uuid.UUID(tenant_id),
                             detection_id=stored.detection_id,
-                            evidence_id=str(masked.evidence_id),
+                            evidence_id=str(evidence_set.annotated.evidence_id),
                         )
-                        summary["evidence"] = (original, masked)
+                        summary["evidence"] = evidence_set
 
                 # Replay frame 0 to prove detection-level idempotency end to end.
                 replay = await record_detection(
@@ -313,11 +328,15 @@ def main() -> int:
     print(f"    10 rule firings -> {created} incident(s) created, {10 - created} folded in")
     print(f"    incident #{records[0].incident_number}, detection_count={records[-1].detection_count}")
 
-    original, masked = result["evidence"]
-    print(f"    evidence original            : {original.size_bytes:,} bytes  sha {original.sha256[:12]}")
-    print(f"    evidence masked              : {masked.size_bytes:,} bytes  sha {masked.sha256[:12]}")
-    if original.sha256 == masked.sha256:
-        print("    FAIL: masked variant is byte-identical to the original")
+    evidence_set = result["evidence"]
+    for variant in (evidence_set.original, evidence_set.masked, evidence_set.annotated):
+        print(
+            f"    evidence {variant.privacy_variant:9s}           : {variant.size_bytes:,} bytes"
+            f"  sha {variant.sha256[:12]}"
+        )
+    digests = {evidence_set.original.sha256, evidence_set.masked.sha256, evidence_set.annotated.sha256}
+    if len(digests) != 3:
+        print("    FAIL: evidence variants are not three distinct images")
         return 1
 
     if created != 1:
@@ -330,7 +349,57 @@ def main() -> int:
         print("    FAIL: replaying a detection created a second document")
         return 1
 
-    step(6, "Read it back through the tenant API")
+    step(6, "List detections with screenshot, boundary, camera and location")
+    listing = _get("/api/v1/tenant/detections?limit=3&with_evidence_only=true", token)
+    if not listing["items"]:
+        # No evidence-bearing detection means the capture step silently did nothing.
+        print("    FAIL: no detections with evidence returned")
+        return 1
+
+    for item in listing["items"]:
+        print(f"    detection {item['detection_id']}")
+        print(f"      captured   : {item['captured_at']}")
+        print(f"      event      : {item['event_type']}  confidence {item['confidence']:.3f}")
+        print(f"      camera     : {item['camera']['camera_name']} ({item['camera']['camera_code']})")
+        loc = item["location"]
+        where = f"{loc['site_name']} / {loc['zone_name'] or 'no zone'}"
+        if loc["latitude"] is not None:
+            where += f"  [{loc['latitude']}, {loc['longitude']}]"
+        print(f"      location   : {where}  tz={loc['timezone']}")
+        for obj in item["objects"]:
+            box = obj["bbox"]
+            print(
+                f"      boundary   : {obj['class_name']} {obj['confidence']:.2f} "
+                f"x1={box['x1']:.3f} y1={box['y1']:.3f} x2={box['x2']:.3f} y2={box['y2']:.3f}"
+            )
+        for ev in item["evidence"]:
+            has_url = "url ok" if ev["url"] else "NO URL"
+            print(f"      snapshot   : {ev['variant']:9s} {has_url}  sha {ev['sha256'][:12]}")
+        if item["incident_number"]:
+            print(f"      incident   : #{item['incident_number']}")
+        print()
+
+    first = listing["items"][0]
+    required = {
+        "screenshot": any(e["url"] for e in first["evidence"]),
+        "annotated variant": any(e["variant"] == "annotated" for e in first["evidence"]),
+        "boundary": bool(first["objects"]),
+        "detection id": bool(first["detection_id"]),
+        "timestamp": bool(first["captured_at"]),
+        "camera name": bool(first["camera"]["camera_name"]),
+        "location": bool(first["location"]["site_name"]),
+    }
+    missing = [name for name, present in required.items() if not present]
+    if missing:
+        print(f"    FAIL: listing is missing {', '.join(missing)}")
+        return 1
+    print(f"    all required fields present: {', '.join(required)}")
+
+    # The unmasked frame must not appear for a caller without evidence.download.
+    variants = {e["variant"] for e in first["evidence"]}
+    print(f"    variants visible to this role: {sorted(variants)}")
+
+    step(7, "Read the incident back through the tenant API")
     inbox = _get("/api/v1/tenant/incidents", token)
     print(f"    inbox returned {len(inbox['items'])} incident(s)")
     incident = inbox["items"][0]
@@ -340,7 +409,7 @@ def main() -> int:
         f"detections={incident['detection_count']}"
     )
 
-    step(7, "Work the incident through its lifecycle")
+    step(8, "Work the incident through its lifecycle")
     incident_id = incident["id"]
     for action, payload in (
         ("acknowledge", {"reason": "Reviewed on camera"}),
@@ -357,7 +426,7 @@ def main() -> int:
         print(f"      {event['event_type']:24s} {arrow}")
     print(f"    linked detections: {len(detail['detection_ids'])}")
 
-    step(8, "Confirm an illegal transition is refused")
+    step(9, "Confirm an illegal transition is refused")
     try:
         _post(f"/api/v1/tenant/incidents/{incident_id}/acknowledge", {}, token)
         print("    FAIL: re-acknowledging a resolved incident should have been refused")

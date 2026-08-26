@@ -238,6 +238,18 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       render time, so unmasked bytes are never what a normal read path returns. SHA-256
       verified by reading back from storage before the row is committed (SCH §19).
       Tenant-scoped presigned URLs; originals marked `restricted`.
+- [x] **Detection listing with full context** — `GET /api/v1/tenant/detections`
+      ([detections.py](backend/tenant_api/app/api/detections.py)) returns, per detection:
+      annotated screenshot URL, boundary coordinates, detection id, capture timestamp,
+      camera name/code, and site name + address + lat/long + timezone. Filters by camera,
+      site, event type, time range, confidence; keyset-paginated.
+- [x] **Annotated evidence variant** (migration 0014): boxes and labels drawn on the
+      *masked* image, so a face stays blurred underneath its own box. Rule matches drawn
+      in alert colour, rejected detections muted — an operator sees what the model saw and
+      what the rule decided. Skipped when there are no boxes, since it would be a
+      byte-identical duplicate of the masked variant.
+- [x] Unmasked `original` withheld from roles lacking `evidence.download` — verified live
+      against a `tenant_member` account, which receives only `annotated` and `masked`
 - [ ] WebSocket real-time incident updates to the CRM
 - [ ] Notification policies, recipient groups, provider adapters, escalation
 - [ ] Customer CRM incident inbox UI

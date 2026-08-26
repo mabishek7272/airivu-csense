@@ -36,6 +36,19 @@ MIN_BLUR_KERNEL = 15
 
 
 @dataclass(frozen=True)
+class EvidenceSet:
+    """The three variants written for one captured frame.
+
+    `annotated` is what a listing shows, `masked` what a detail view shows, `original`
+    what a permissioned download returns.
+    """
+
+    original: EvidenceRecord
+    masked: EvidenceRecord
+    annotated: EvidenceRecord
+
+
+@dataclass(frozen=True)
 class EvidenceRecord:
     evidence_id: uuid.UUID
     object_id: uuid.UUID
@@ -90,6 +103,79 @@ def encode_jpeg(image: np.ndarray, quality: int = 85) -> bytes:
     if not ok:
         raise RuntimeError("Failed to encode frame as JPEG")
     return buffer.tobytes()
+
+
+@dataclass(frozen=True)
+class Annotation:
+    """One box to draw: normalised coordinates, a label, and whether it triggered."""
+
+    bbox: tuple[float, float, float, float]
+    label: str
+    confidence: float
+    # Detections that fired the rule are drawn in alert colour; ones the rule rejected
+    # are drawn muted, so an operator can see what the model saw *and* what the rule
+    # decided. Showing only the matches hides the reason a scene looked the way it did.
+    triggered: bool = True
+
+
+# BGR, because OpenCV. Red for what fired, grey for what was seen but rejected.
+ALERT_COLOUR = (0, 0, 220)
+CONTEXT_COLOUR = (150, 150, 150)
+
+
+def draw_detections(image: np.ndarray, annotations: list[Annotation]) -> np.ndarray:
+    """Draws detection boxes and labels on a copy of the image.
+
+    Line and text scale with frame size: a fixed 2px box is invisible on 4K and covers a
+    face on 320p. Cameras in one estate rarely share a resolution.
+    """
+    import cv2
+
+    if not annotations:
+        return image.copy()
+
+    annotated = image.copy()
+    height, width = annotated.shape[:2]
+    scale = max(height, width) / 1000.0
+    thickness = max(2, int(round(2 * scale)))
+    font_scale = max(0.45, 0.6 * scale)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    for item in annotations:
+        colour = ALERT_COLOUR if item.triggered else CONTEXT_COLOUR
+        x1, y1, x2, y2 = item.bbox
+        px1 = max(0, min(width - 1, int(x1 * width)))
+        py1 = max(0, min(height - 1, int(y1 * height)))
+        px2 = max(0, min(width, int(x2 * width)))
+        py2 = max(0, min(height, int(y2 * height)))
+        if px2 <= px1 or py2 <= py1:
+            continue
+
+        cv2.rectangle(annotated, (px1, py1), (px2, py2), colour, thickness)
+
+        caption = f"{item.label} {item.confidence:.0%}"
+        (text_w, text_h), baseline = cv2.getTextSize(caption, font, font_scale, thickness)
+
+        # Put the label inside the box when there is no room above it, so it never gets
+        # clipped off the top edge for a detection at the top of the frame.
+        label_top = py1 - text_h - baseline
+        if label_top < 0:
+            label_top = py1
+        label_bottom = label_top + text_h + baseline
+
+        cv2.rectangle(annotated, (px1, label_top), (px1 + text_w, label_bottom), colour, -1)
+        cv2.putText(
+            annotated,
+            caption,
+            (px1, label_bottom - baseline),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    return annotated
 
 
 def evidence_object_key(
@@ -168,15 +254,19 @@ async def capture_evidence(
     incident_id: uuid.UUID | None = None,
     detection_id: uuid.UUID | None = None,
     mask_boxes: list[tuple[float, float, float, float]] | None = None,
+    annotations: list[Annotation] | None = None,
     retention_days: int | None = 90,
-) -> tuple[EvidenceRecord, EvidenceRecord]:
-    """Stores an original and a masked variant, returning (original, masked).
+) -> EvidenceSet:
+    """Stores original, masked, and annotated variants.
 
-    Both are always written. The masked variant is what normal read paths serve; fetching
-    the original is a separate, permissioned act (`evidence.download`).
+    The masked variant is what normal read paths serve; fetching the original is a
+    separate, permissioned act (`evidence.download`). The annotated variant is the masked
+    image with detection boxes drawn - derived from masked, never from the original, so
+    the privacy default holds: the box shows where and what, never who.
     """
     original_id = uuid.uuid4()
     masked_id = uuid.uuid4()
+    annotated_id = uuid.uuid4()
     expires_at = capture_time + dt.timedelta(days=retention_days) if retention_days else None
 
     original_key = evidence_object_key(tenant_id, incident_id, original_id, "original")
@@ -189,6 +279,23 @@ async def capture_evidence(
     masked_object_id, masked_digest, masked_size = await _store_object(
         session, minio, tenant_id=tenant_id, object_key=masked_key, payload=encode_jpeg(masked_image)
     )
+
+    # With no boxes to draw, an annotated variant would be byte-identical to the masked
+    # one - a duplicate object and a duplicate row for every capture. Fall back to the
+    # masked record instead, so `EvidenceSet.annotated` is always safe to read.
+    annotated_record: EvidenceRecord | None = None
+    if annotations:
+        # Boxes go on the masked image, so a face stays blurred underneath its own box.
+        annotated_image = draw_detections(masked_image, annotations)
+        annotated_key = evidence_object_key(tenant_id, incident_id, annotated_id, "annotated")
+        annotated_object_id, annotated_digest, annotated_size = await _store_object(
+            session, minio, tenant_id=tenant_id, object_key=annotated_key,
+            payload=encode_jpeg(annotated_image),
+        )
+        annotated_record = EvidenceRecord(
+            annotated_id, annotated_object_id, annotated_key, annotated_digest,
+            annotated_size, "annotated",
+        )
 
     await session.execute(
         text(
@@ -241,9 +348,44 @@ async def capture_evidence(
         },
     )
 
-    return (
-        EvidenceRecord(original_id, original_object_id, original_key, original_digest, original_size, "original"),
-        EvidenceRecord(masked_id, masked_object_id, masked_key, masked_digest, masked_size, "masked"),
+    if annotated_record is not None:
+        await session.execute(
+            text(
+                """
+                INSERT INTO evidence
+                    (id, tenant_id, incident_id, camera_id, detection_id, object_id, evidence_type,
+                     capture_time, sha256, privacy_variant, original_evidence_id, retention_class,
+                     expires_at, access_classification)
+                VALUES (:id, :tenant_id, :incident_id, :camera_id, :detection_id, :object_id,
+                        'snapshot', :capture_time, :sha256, 'annotated', :original_id, 'standard',
+                        :expires_at, 'standard')
+                """
+            ),
+            {
+                "id": annotated_id,
+                "tenant_id": tenant_id,
+                "incident_id": incident_id,
+                "camera_id": camera_id,
+                "detection_id": detection_id,
+                "object_id": annotated_record.object_id,
+                "capture_time": capture_time,
+                "sha256": annotated_record.sha256,
+                "original_id": original_id,
+                "expires_at": expires_at,
+            },
+        )
+
+    masked_record = EvidenceRecord(
+        masked_id, masked_object_id, masked_key, masked_digest, masked_size, "masked"
+    )
+    return EvidenceSet(
+        original=EvidenceRecord(
+            original_id, original_object_id, original_key, original_digest, original_size, "original"
+        ),
+        masked=masked_record,
+        # No boxes to draw means no separate object; the masked variant is the annotated
+        # view, so callers never have to branch on whether one exists.
+        annotated=annotated_record or masked_record,
     )
 
 

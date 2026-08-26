@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, incidents
+from app.api import auth, detections, health, incidents
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
@@ -23,6 +23,9 @@ async def lifespan(app: FastAPI):
     app.state.engine = create_engine(settings)
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.redis = create_redis_client(settings)
+    # Settings on app.state so request handlers can build storage clients without
+    # re-reading the environment per request.
+    app.state.settings = settings
     logger.info("tenant_api_started")
     try:
         yield
@@ -57,3 +60,4 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(incidents.router)
+app.include_router(detections.router)
