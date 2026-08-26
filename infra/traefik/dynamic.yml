@@ -84,6 +84,8 @@ http:
         accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
         accessControlAllowOriginList:
+          # Both origins the CRM is reachable at: through Traefik, and the Vite dev server.
+          - "http://app.localhost:8080"
           - "http://localhost:5173"
         accessControlAllowCredentials: true
         accessControlMaxAge: 600
@@ -93,6 +95,7 @@ http:
         accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
         accessControlAllowOriginList:
+          - "http://console.localhost:8080"
           - "http://localhost:3000"
         accessControlAllowCredentials: true
         accessControlMaxAge: 600

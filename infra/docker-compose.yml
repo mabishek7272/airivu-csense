@@ -17,6 +17,9 @@ x-backend-env: &backend-env
   MINIO_ROOT_USER: ${MINIO_ROOT_USER}
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
   MINIO_USE_TLS: "false"
+  # Presigned URLs are followed by a browser, so they must name a host the
+  # browser can resolve - not the compose service name.
+  MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost:9000}
   JWT_ALGORITHM: ${JWT_ALGORITHM:-RS256}
   JWT_PRIVATE_KEY_PATH: /run/secrets/jwt_private.pem
   JWT_PUBLIC_KEY_PATH: /run/secrets/jwt_public.pem
@@ -214,7 +217,7 @@ services:
     build:
       context: ../frontend/customer-crm
     environment:
-      VITE_API_BASE: http://localhost:8080
+      VITE_API_BASE: ""
     networks: [csense]
 
 networks:

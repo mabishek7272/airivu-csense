@@ -48,7 +48,7 @@ app = FastAPI(
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.customer_crm_origin],
+    allow_origins=settings.customer_crm_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"],

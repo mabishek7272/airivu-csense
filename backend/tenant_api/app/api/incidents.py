@@ -33,6 +33,12 @@ router = APIRouter(prefix="/api/v1/tenant/incidents", tags=["incidents"])
 
 MAX_PAGE_SIZE = 100
 
+# Statuses that still represent work in front of a human. An acknowledged or escalated
+# incident is not finished - filtering the inbox to `open` alone makes an incident vanish
+# the moment someone acknowledges it, which is precisely when it becomes their job.
+ACTIVE_STATUSES = ("open", "acknowledged", "investigating", "escalated")
+VALID_STATUSES = frozenset(ACTIVE_STATUSES) | {"resolved", "dismissed"}
+
 
 class IncidentSummary(BaseModel):
     id: str
@@ -101,7 +107,13 @@ def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
 
 @router.get("", response_model=IncidentPage)
 async def list_incidents(
-    status: str | None = Query(default=None),
+    status: str | None = Query(
+        default=None,
+        description=(
+            "Comma-separated statuses, or 'active' for everything not yet closed. "
+            "Omit for all."
+        ),
+    ),
     severity: str | None = Query(default=None),
     camera_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=MAX_PAGE_SIZE),
@@ -115,8 +127,19 @@ async def list_incidents(
     params: dict = {"limit": limit + 1}  # one extra row tells us whether more exist
 
     if status:
-        filters.append("status = CAST(:status AS incident_status)")
-        params["status"] = status
+        wanted = ACTIVE_STATUSES if status == "active" else tuple(
+            part.strip() for part in status.split(",") if part.strip()
+        )
+        invalid = [s for s in wanted if s not in VALID_STATUSES]
+        if invalid:
+            raise ApiError(
+                status_code=400,
+                code="invalid_status",
+                message=f"Unknown status: {', '.join(invalid)}.",
+                details={"valid": sorted(VALID_STATUSES)},
+            )
+        filters.append("status = ANY(CAST(:statuses AS incident_status[]))")
+        params["statuses"] = list(wanted)
     if severity:
         filters.append("severity = CAST(:severity AS incident_severity)")
         params["severity"] = severity

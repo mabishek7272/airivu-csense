@@ -30,7 +30,7 @@ from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.tenant_context import TenantContext
-from csense_shared.storage.objects import create_client
+from csense_shared.storage.objects import create_presign_client
 
 router = APIRouter(prefix="/api/v1/tenant/detections", tags=["detections"])
 
@@ -212,7 +212,7 @@ async def _evidence_for(
         )
     ).all()
 
-    minio = create_client(request.app.state.settings)
+    minio = create_presign_client(request.app.state.settings)
     grouped: dict[uuid.UUID, list[EvidenceOut]] = {}
     for detection_id, evidence_id, variant, sha256, capture_time, bucket, object_key in rows:
         try:

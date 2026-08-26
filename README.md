@@ -144,6 +144,25 @@ python scripts/e2e_detection_to_incident.py
 That registers a tenant, creates a restricted zone, runs a real photograph through the AI
 runtime, applies a rule, proves deduplication over 10 firings, then works the incident
 through its lifecycle via the tenant API.
+## Customer CRM
+
+The tenant-facing app is served at `http://app.localhost:8080/`. It shares an origin with
+its API — Traefik routes `/api/**` on the same host — which is not just tidiness: the
+refresh token is an httpOnly `SameSite=Lax` cookie, and a cross-origin XHR would not send
+it, so the session would die on every page reload. `npm run dev` reproduces that shape via
+the Vite proxy.
+
+To see it with realistic data:
+
+```bash
+python scripts/seed_demo_tenant.py          # prints credentials once
+python scripts/screenshot_crm.py <email> <password> ./crm-screenshots
+```
+
+The second script drives a real browser: it logs in, walks every screen, asserts the
+evidence images genuinely load, acknowledges an incident and waits for the status badge to
+change, and fails if the page scrolls horizontally at 420px wide.
+
 ## Security notes for local development
 
 - `.env` and `infra/secrets/` are git-ignored. Never commit them.

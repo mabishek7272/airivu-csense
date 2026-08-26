@@ -252,7 +252,15 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       against a `tenant_member` account, which receives only `annotated` and `masked`
 - [ ] WebSocket real-time incident updates to the CRM
 - [ ] Notification policies, recipient groups, provider adapters, escalation
-- [ ] Customer CRM incident inbox UI
+- [x] **Customer CRM UI** — incident inbox, incident detail with evidence strip and
+      history timeline, detections feed with annotated thumbnails. Design tokens with
+      light/dark, WCAG 2.2 AA contrast, keyboard focus, skip link, reduced-motion support.
+      Severity and status always carry a text label, never colour alone.
+- [x] Browser-driven verification ([scripts/screenshot_crm.py](scripts/screenshot_crm.py)):
+      logs in, walks every screen, asserts evidence images actually load, acknowledges an
+      incident and waits for the badge to change, and checks the page does not scroll
+      horizontally at 420px. Seed data via
+      [scripts/seed_demo_tenant.py](scripts/seed_demo_tenant.py).
 
 ## Phase 6 — Resilience, APIs, Reporting, Privileged Support
 

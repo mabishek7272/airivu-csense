@@ -2,7 +2,12 @@
 // limit XSS blast radius (TRD §7.1); the refresh token lives in an httpOnly cookie the
 // browser sends automatically, so this module never touches it directly.
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
+// Empty means same-origin. Traefik routes /api/** to the Tenant API on the very host
+// the CRM is served from, so the app and its API share an origin. That matters for more
+// than tidiness: the refresh token is an httpOnly SameSite=Lax cookie, and a cross-origin
+// XHR would not send it — the session would silently die on every page reload.
+// `npm run dev` gets the same shape via the Vite proxy in vite.config.ts.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 let accessToken: string | null = null;
 let expiresAt = 0;

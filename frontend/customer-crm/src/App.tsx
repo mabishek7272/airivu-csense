@@ -1,11 +1,22 @@
+import type { JSX } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
-import { DashboardPage } from "./pages/DashboardPage";
+import { DetectionsPage } from "./pages/DetectionsPage";
+import { IncidentDetailPage } from "./pages/IncidentDetailPage";
+import { IncidentsPage } from "./pages/IncidentsPage";
 import { LoginPage } from "./pages/LoginPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
-  if (isLoading) return <p style={{ textAlign: "center", marginTop: "20vh" }}>Loading…</p>;
+  // While the silent refresh is in flight, render nothing rather than bouncing to the
+  // login screen — a redirect here would log out anyone who reloads the page.
+  if (isLoading) {
+    return (
+      <div className="auth-shell" aria-busy="true">
+        <p>Loading…</p>
+      </div>
+    );
+  }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return children;
 }
@@ -15,14 +26,30 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route
-        path="/dashboard"
+        path="/incidents"
         element={
           <RequireAuth>
-            <DashboardPage />
+            <IncidentsPage />
           </RequireAuth>
         }
       />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route
+        path="/incidents/:incidentId"
+        element={
+          <RequireAuth>
+            <IncidentDetailPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/detections"
+        element={
+          <RequireAuth>
+            <DetectionsPage />
+          </RequireAuth>
+        }
+      />
+      <Route path="*" element={<Navigate to="/incidents" replace />} />
     </Routes>
   );
 }

@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     minio_root_user: str = Field(...)
     minio_root_password: str = Field(...)
     minio_use_tls: bool = False
+    # Presigned URLs are handed to a browser, so they must name a host the browser
+    # can reach - not the container-network name the services connect to. Left blank,
+    # presigning falls back to `minio_endpoint`, which is correct only when the two
+    # are the same host.
+    minio_public_endpoint: str = ""
+    # Pinned so presigning never needs a GetBucketLocation round trip. MinIO
+    # defaults to us-east-1 unless configured otherwise.
+    minio_region: str = "us-east-1"
 
     # JWT
     jwt_algorithm: str = "RS256"
@@ -51,14 +59,31 @@ class Settings(BaseSettings):
     argon2_parallelism: int = 2
 
     # CORS origins
-    customer_crm_origin: str = "http://localhost:5173"
-    developer_console_origin: str = "http://localhost:3000"
+    # Comma-separated allow-lists. Each app is reachable at more than one origin:
+    # through Traefik in the container stack, and on a Vite/Next dev port locally.
+    # An allow-list, never a wildcard - these APIs use cookie auth, and
+    # `Access-Control-Allow-Origin: *` is incompatible with credentialed requests
+    # for good reason (TRD-SEC-006).
+    customer_crm_origin: str = "http://app.localhost:8080,http://localhost:5173"
+    developer_console_origin: str = "http://console.localhost:8080,http://localhost:3000"
 
     # AI runtime. Cache lives on a volume so restarts do not re-download ~550 MB of
     # artifacts; pool size bounds resident models by count, since in-memory footprint is
     # framework-dependent and not predictable from file size.
     model_cache_dir: str = "/var/cache/csense/models"
     model_pool_size: int = 4
+
+    @property
+    def minio_presign_endpoint(self) -> str:
+        return self.minio_public_endpoint or self.minio_endpoint
+
+    @property
+    def customer_crm_origins(self) -> list[str]:
+        return [o.strip() for o in self.customer_crm_origin.split(",") if o.strip()]
+
+    @property
+    def developer_console_origins(self) -> list[str]:
+        return [o.strip() for o in self.developer_console_origin.split(",") if o.strip()]
 
     @property
     def postgres_dsn(self) -> str:

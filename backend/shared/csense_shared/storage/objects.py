@@ -42,11 +42,35 @@ ALL_BUCKETS = (
 
 
 def create_client(settings: Settings) -> Minio:
+    """Client for server-side operations: uploads, stat, bucket management."""
     return Minio(
         settings.minio_endpoint,
         access_key=settings.minio_root_user,
         secret_key=settings.minio_root_password,
         secure=settings.minio_use_tls,
+    )
+
+
+def create_presign_client(settings: Settings) -> Minio:
+    """Client used only to mint presigned URLs.
+
+    A presigned URL is signed for a specific host, and it is a browser that will follow
+    it - so it must name the externally reachable endpoint, not the container-network
+    name the API itself connects to. Signing with the internal name produces URLs that
+    work from inside the stack and fail in every browser, which server-side tests do not
+    catch.
+
+    `region` is pinned rather than discovered. Signing is a pure cryptographic operation
+    and needs no network, but the SDK will call GetBucketLocation first unless the region
+    is already known - and that call would go to the *public* endpoint, which this process
+    generally cannot reach from inside the container network.
+    """
+    return Minio(
+        settings.minio_presign_endpoint,
+        access_key=settings.minio_root_user,
+        secret_key=settings.minio_root_password,
+        secure=settings.minio_use_tls,
+        region=settings.minio_region,
     )
 
 

@@ -14,8 +14,8 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
@@ -24,69 +24,104 @@ export function LoginPage() {
       } else {
         await register(organizationName, email, password, displayName);
       }
-      navigate("/dashboard");
+      navigate("/incidents");
     } catch (err) {
-      if (err instanceof ApiRequestError) {
-        setError(err.body.message);
-      } else {
-        setError("Something went wrong. Please try again.");
-      }
+      setError(
+        err instanceof ApiRequestError ? err.body.message : "Something went wrong. Please try again.",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 380, margin: "10vh auto", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 20 }}>AIRIVU CSense</h1>
-      <p style={{ color: "#555", marginBottom: 24 }}>Customer CRM — {mode === "login" ? "sign in" : "create your organization"}</p>
+    <main className="auth-shell">
+      <div className="card auth-card">
+        <h1>AIRIVU CSense</h1>
+        <p>{mode === "login" ? "Sign in to your workspace" : "Create your organization"}</p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {mode === "register" && (
-          <>
-            <label>
-              Organization name
-              <input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} required />
-            </label>
-            <label>
-              Your name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
-            </label>
-          </>
-        )}
-        <label>
-          Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={12}
-            required
-          />
-        </label>
+        <form onSubmit={handleSubmit}>
+          {mode === "register" && (
+            <>
+              <div className="field">
+                <label htmlFor="org">Organization name</label>
+                <input
+                  id="org"
+                  value={organizationName}
+                  onChange={(e) => setOrganizationName(e.target.value)}
+                  required
+                  autoComplete="organization"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="name">Your name</label>
+                <input
+                  id="name"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  required
+                  autoComplete="name"
+                />
+              </div>
+            </>
+          )}
 
-        {error && (
-          <p role="alert" style={{ color: "#b00020" }}>
-            {error}
-          </p>
-        )}
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
+          </div>
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create organization"}
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              minLength={12}
+              required
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              aria-describedby={mode === "register" ? "password-hint" : undefined}
+            />
+            {mode === "register" && (
+              <small id="password-hint" style={{ color: "var(--text-muted)" }}>
+                At least 12 characters.
+              </small>
+            )}
+          </div>
+
+          {error && (
+            <p role="alert" style={{ color: "var(--critical)" }}>
+              {error}
+            </p>
+          )}
+
+          <button type="submit" className="primary" disabled={submitting} style={{ width: "100%" }}>
+            {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create organization"}
+          </button>
+        </form>
+
+        <button
+          type="button"
+          className="link"
+          onClick={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setError(null);
+          }}
+          style={{ marginTop: 16 }}
+        >
+          {mode === "login"
+            ? "Need an account? Register your organization"
+            : "Already have an account? Sign in"}
         </button>
-      </form>
-
-      <button
-        type="button"
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-        style={{ marginTop: 16, background: "none", border: "none", color: "#0060df", cursor: "pointer" }}
-      >
-        {mode === "login" ? "Need an account? Register your organization" : "Already have an account? Sign in"}
-      </button>
+      </div>
     </main>
   );
 }
