@@ -1,0 +1,30 @@
+# Secret-scanning configuration.
+#
+# The default rules are kept in full; this only adds allowlists. Every entry below is
+# scoped as narrowly as it can be, because a broad allowlist is how a scanner ends up
+# passing while a real secret sits in the repository.
+
+[extend]
+useDefault = true
+
+[[rules]]
+# Placeholder so the allowlist below attaches to the extended default ruleset rather than
+# replacing it.
+id = "csense-placeholder-never-matches"
+description = "Inert rule; exists only to carry configuration."
+regex = '''\$\^csense-never-matches\$'''
+
+[allowlist]
+description = "Third-party documentation vendored verbatim from Evolution Go."
+paths = [
+  # These are the upstream project's own wiki pages, shipped inside the vendored gateway.
+  # Every hit is an example value in their API documentation, including the published
+  # default GLOBAL_API_KEY from their .env.example - which is public, is not used by this
+  # deployment, and must never be used by any deployment.
+  #
+  # Allowlisted by path rather than deleted so the vendored tree stays diffable against
+  # upstream when it is next updated. The trade-off is explicit: a genuine secret placed
+  # under this path would not be caught, which is acceptable only because nothing here is
+  # authored by us. Never extend this pattern to a directory we write to.
+  '''edge/whatsapp-gateway/docs/wiki/.*\.md''',
+]
