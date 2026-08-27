@@ -15,7 +15,23 @@ description = "Inert rule; exists only to carry configuration."
 regex = '''\$\^csense-never-matches\$'''
 
 [allowlist]
-description = "Third-party documentation vendored verbatim from Evolution Go."
+description = "Vendored third-party docs, and one fabricated test fixture."
+
+regexes = [
+  # A fabricated Stripe-shaped key in the redaction test
+  # (backend/tests/test_notifications.py). It is deliberately shaped like a real key -
+  # redaction that only catches obviously-fake strings would prove nothing.
+  #
+  # Allowlisted here rather than with an inline `gitleaks:allow` marker because this scan
+  # covers the full history, and the commit that introduced the line will always contain
+  # it unmarked. An inline marker cannot retroactively annotate a past commit; only a
+  # value- or path-based rule reaches back.
+  #
+  # Matching the exact literal keeps this as tight as possible: any other key-shaped
+  # string, in this file or anywhere else, is still reported.
+  '''sk_live_9f8a7b6c5d4e3f2a1b''',
+]
+
 paths = [
   # These are the upstream project's own wiki pages, shipped inside the vendored gateway.
   # Every hit is an example value in their API documentation, including the published

@@ -440,13 +440,13 @@ def test_provider_errors_are_redacted_before_storage():
     """Provider error bodies routinely echo the recipient address and sometimes the key
     that was rejected. Neither belongs in a column support staff can read."""
     # Fabricated, and deliberately shaped like a real key: redaction that only catches
-    # obviously-fake strings would prove nothing. The trailing marker tells the secret
-    # scanner this one line is fixture data - scoped to the line, so a real secret
-    # anywhere else in this file is still caught.
-    raw = "550 rejected for guard@example.com token Bearer sk_live_9f8a7b6c5d4e3f2a1b"  # gitleaks:allow
+    # obviously-fake strings would prove nothing. The secret scanner is told about this
+    # exact literal in .gitleaks.toml - by value, not by file, so any other key-shaped
+    # string here is still reported.
+    raw = "550 rejected for guard@example.com token Bearer sk_live_9f8a7b6c5d4e3f2a1b"
     cleaned = redact(raw)
     assert "guard@example.com" not in cleaned
-    assert "sk_live_9f8a7b6c5d4e3f2a1b" not in cleaned  # gitleaks:allow
+    assert "sk_live_9f8a7b6c5d4e3f2a1b" not in cleaned
     assert "550 rejected" in cleaned
 
 
