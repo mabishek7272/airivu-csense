@@ -1,4 +1,7 @@
--e ../shared
+# The shared library is installed separately, not from here. A relative path in a
+# requirements file resolves against the *working directory*, not the file, so `-e
+# ../shared` worked when run from backend/ and failed everywhere else - including CI.
+# Install it explicitly:  pip install ./backend/shared
 pytest>=8.0
 pytest-asyncio>=0.23
 httpx>=0.27
