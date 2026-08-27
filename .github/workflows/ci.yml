@@ -1,9 +1,13 @@
 name: CI
 
 on:
+  # Every branch, not just main. Work happens on feature branches for weeks before it
+  # merges, and a pipeline that only runs on main finds problems at the worst moment -
+  # when the branch is large and someone is trying to land it.
   push:
-    branches: [main]
   pull_request:
+  # So the pipeline can be exercised deliberately without inventing a commit.
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -60,10 +64,13 @@ jobs:
           pip install -r backend/tenant_api/requirements.txt
           pip install -r backend/admin_api/requirements.txt
           pip install -r backend/tests/requirements.txt
+          pip install -r backend/notification_worker/requirements.txt
           pip install ruff mypy pip-audit
 
       - name: Lint (ruff)
-        run: ruff check backend
+        # `scripts/` too: the e2e and operational scripts are how this system gets
+        # verified and recovered, so they are not somewhere lint should be optional.
+        run: ruff check backend scripts
 
       - name: Dependency vulnerability scan
         run: pip-audit -r backend/tenant_api/requirements.txt -r backend/admin_api/requirements.txt || true

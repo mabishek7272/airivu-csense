@@ -274,9 +274,25 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
   - [x] Verified live: [scripts/e2e_notification.py](scripts/e2e_notification.py) opened
         an incident and the worker container sent a real email via Resend
         (`accepted provider=resend`). 35 new tests; suite at 154 passing.
-  - [ ] Ingestion has no production caller yet — `schedule_incident_notifications` is
-        invoked by the e2e script and tests, and lands in the API when detection
-        ingestion does.
+  - [x] **Ingestion wired.** `POST /api/v1/tenant/ingest/detections` is the production
+        caller; the chain runs in one transaction so a detection can never be recorded
+        without its incident.
+- [x] **Vertical slice closed** — [scripts/e2e_ingest_to_alert.py](scripts/e2e_ingest_to_alert.py)
+      posts a detection to the HTTP API as an `edge_device` identity and verifies, in one
+      run: incident opened, three evidence variants stored, escalation scheduled, a real
+      email sent by the worker, a replayed `source_event_id` producing nothing, and
+      acknowledgement clearing the ladder. 18 new tests; suite at 172 passing.
+  - [x] Migration 0018: `detection_rules`, tenant-scoped with RLS. Camera-or-site scope so
+        a site rule is written once, not once per camera; thresholds constrained in the
+        database so nonsense cannot be stored whatever a future UI does.
+  - [x] Migration 0019: `detection.ingest` and an `edge_device` role holding it and nothing
+        else — a credential taken from a device in a plant room cannot read incidents or
+        download evidence.
+  - [x] Rule schedules evaluated in **site-local** time. Evaluating an overnight rule
+        against UTC shifts it by the site's offset, which reads as the rule being broken.
+- [ ] **Edge auth is interim.** Ingestion uses a bearer token scoped to one permission;
+      Phase 3 replaces it with per-device mTLS issued at enrolment.
+- [ ] Rule CRUD API and CRM editor — rules are currently created by SQL
 - [ ] Quiet hours and per-tenant notification policy editing in the CRM (`within_quiet_hours`
       is implemented and tested but not yet consulted by the dispatcher)
 - [x] **Customer CRM UI** — incident inbox, incident detail with evidence strip and

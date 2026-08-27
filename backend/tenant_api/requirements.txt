@@ -9,3 +9,5 @@ argon2-cffi>=23.1
 pyjwt[crypto]>=2.8
 python-json-logger>=2.0
 minio>=7.2
+opencv-python-headless>=4.9
+numpy>=1.26

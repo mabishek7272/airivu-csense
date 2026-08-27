@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, detections, health, incidents
+from app.api import auth, detections, health, incidents, ingest
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
 from csense_shared.errors import ApiError, api_error_handler, unhandled_exception_handler
 from csense_shared.logging import configure_logging, get_logger
 from csense_shared.middleware import CorrelationIdMiddleware
+from csense_shared.storage.objects import create_client
 
 settings = get_settings()
 configure_logging("tenant-api", settings.environment, settings.log_level)
@@ -26,6 +27,17 @@ async def lifespan(app: FastAPI):
     # Settings on app.state so request handlers can build storage clients without
     # re-reading the environment per request.
     app.state.settings = settings
+
+    # One MinIO client for the process. Ingestion writes evidence on the request path, and
+    # building a client per request would add a TLS handshake to every frame that opens an
+    # incident. Failure is not fatal: detections and alerts still work without snapshots,
+    # and refusing to start would turn a storage problem into a total outage.
+    try:
+        app.state.object_store = create_client(settings)
+    except Exception:  # noqa: BLE001
+        logger.exception("object_store_unavailable_evidence_capture_disabled")
+        app.state.object_store = None
+
     logger.info("tenant_api_started")
     try:
         yield
@@ -61,3 +73,4 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(incidents.router)
 app.include_router(detections.router)
+app.include_router(ingest.router)
