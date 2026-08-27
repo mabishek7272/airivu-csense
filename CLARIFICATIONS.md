@@ -72,3 +72,44 @@ until it exists `model_validation_runs` stays empty for these versions.
 If any default above is wrong, say so and I'll adjust — otherwise I'll keep building
 against these assumptions and note anywhere they leak into a real constraint (e.g. license
 terms on YOLOv8 for commercial use).
+
+---
+
+## 30. WhatsApp gateway leaked a Postgres connection pool per reconnect (fixed)
+
+**Symptom:** `/instance/qr` returned `400 no QR code available`, indefinitely. It looked
+like a broken QR endpoint.
+
+**Cause:** the vendored gateway called `sqlstore.New()` inline on every connection
+attempt. That opens a `*sql.DB`, which is a connection *pool* with no default limit, and
+nothing closed the discarded ones. The gateway retries roughly every fifteen seconds while
+a QR goes unscanned, so it climbed to ~90 of the server's 100 connection slots over a few
+hours - at which point it could no longer open its own session store, and every other
+service was refused connections too. `psql` itself could not connect.
+
+**Fix:** one store per process, created on first use behind a mutex
+(`pkg/whatsmeow/service/whatsmeow.go`, `sessionStore`). It is a package-level singleton
+rather than a struct field because `StartClient` takes a *value* receiver - anything
+cached on the struct is written to a copy and discarded, and an embedded mutex would be
+copied with it. Verified: connections held steady at 10-11 across repeated connects,
+where previously they grew without bound.
+
+**Worth carrying forward:** the leak was invisible in the gateway's own logs, which only
+reported the downstream `too many clients` error. Connection-count monitoring on Postgres
+would have named this in minutes rather than hours.
+
+## 31. Two QR rendering attempts produced images that scanned as nothing
+
+Both tried to recover the QR module grid by sampling the gateway's rendered 256px PNG.
+That cannot work reliably: at roughly three pixels per module the sampling is ambiguous,
+and a grid wrong by a single module still *looks* exactly like a QR code while decoding as
+nothing - which is a slow and demoralising thing to discover while holding a phone.
+
+The gateway's `/instance/qr` response carries a `code` field alongside the PNG: the raw
+payload string. Encoding that directly removes the guesswork, and `--png` now verifies its
+own output with a decoder before claiming it is scannable.
+
+One correction on the record: I described the gateway's own PNG as unscannable because
+OpenCV would not decode it. A phone camera read it fine, and that is how the number was
+eventually linked. OpenCV's decoder is stricter than a phone's; "cv2 cannot read it" is
+not the same claim as "it will not scan".

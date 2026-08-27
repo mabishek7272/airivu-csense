@@ -99,6 +99,18 @@ type whatsmeowService struct {
 	passkeyCeremony    *ceremony.Store
 }
 
+// The whatsmeow session store, opened once for the process.
+//
+// It lives at package scope rather than on whatsmeowService because StartClient takes a
+// value receiver: the struct is copied on every call, so anything cached on it would be
+// written to a copy and thrown away - and an embedded mutex would be copied along with
+// it, which is worse than useless. The store's DSN comes from configuration and never
+// changes at runtime, so one per process is exactly right.
+var (
+	storeContainerMu sync.Mutex
+	storeContainer   *sqlstore.Container
+)
+
 type MyClient struct {
 	service            WhatsmeowService
 	WAClient           *whatsmeow.Client
@@ -301,6 +313,52 @@ func (w whatsmeowService) ForceUpdateJid(instanceId string, number string) error
 	return nil
 }
 
+// sessionStore returns the shared whatsmeow session store, opening it on first use.
+//
+// This was previously created inline on every connection attempt. sqlstore.New opens a
+// *sql.DB, which is a connection *pool* rather than a single connection, and Go gives it
+// no default limit on how many it will open. Nothing closed the discarded pools, so each
+// reconnect leaked another one - and the gateway retries roughly every fifteen seconds
+// while a QR goes unscanned. It eventually held every connection slot on the server, at
+// which point it could no longer open its own store and stopped producing QR codes at
+// all, while unrelated services were refused connections too. The symptom looked like a
+// broken QR endpoint; the cause was here.
+//
+// One store per process is also what whatsmeow expects: the container holds the device
+// sessions, and recreating it does no useful work.
+func (w whatsmeowService) sessionStore() (*sqlstore.Container, error) {
+	storeContainerMu.Lock()
+	defer storeContainerMu.Unlock()
+
+	if storeContainer != nil {
+		return storeContainer, nil
+	}
+
+	var dbLog waLog.Logger
+	if w.config.WaDebug != "" {
+		dbLog = waLog.Stdout("Database", w.config.WaDebug, true)
+	}
+
+	dialect, dsn := "postgres", w.config.PostgresAuthDB
+	if dsn == "" {
+		dialect = "sqlite"
+		dsn = fmt.Sprintf(
+			"file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL",
+			w.exPath,
+		)
+	}
+
+	container, err := sqlstore.New(context.Background(), dialect, dsn, dbLog)
+	if err != nil {
+		// Deliberately not cached on failure, so a store that was unavailable at startup
+		// can still come up later without restarting the gateway.
+		return nil, err
+	}
+
+	storeContainer = container
+	return container, nil
+}
+
 func (w whatsmeowService) StartClient(cd *ClientData) {
 
 	w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("Starting websocket connection to Whatsapp for user '%s'", cd.Instance.Id)
@@ -314,27 +372,9 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	var container *sqlstore.Container
-
-	if w.config.WaDebug != "" {
-		dbLog := waLog.Stdout("Database", w.config.WaDebug, true)
-		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, dbLog)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, dbLog)
-		}
-	} else {
-		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, nil)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, nil)
-		}
-	}
-
+	container, err := w.sessionStore()
 	if err != nil {
-		w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to create container: %v", cd.Instance.Id, err)
+		w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to open session store: %v", cd.Instance.Id, err)
 		return
 	}
 
