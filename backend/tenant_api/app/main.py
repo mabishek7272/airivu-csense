@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, detections, health, incidents, ingest
+from app.api import auth, cameras, detections, health, incidents, ingest
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
@@ -48,10 +48,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AIRIVU CSense — Tenant API",
+    title="AIRIVU CSense â€” Tenant API",
     version="0.1.0",
     lifespan=lifespan,
-    # Separate OpenAPI surface per TRD §6.3 — this document only ever describes
+    # Separate OpenAPI surface per TRD Â§6.3 â€” this document only ever describes
     # tenant-scoped and auth endpoints, never admin/platform routes.
     openapi_url="/api/v1/tenant/openapi.json",
     docs_url="/api/v1/tenant/docs",
@@ -74,3 +74,5 @@ app.include_router(auth.router)
 app.include_router(incidents.router)
 app.include_router(detections.router)
 app.include_router(ingest.router)
+app.include_router(cameras.router)
+
