@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     whatsapp_instance_token: str = ""
     whatsapp_instance: str = "default"
 
+    # Envelope encryption for stored credentials (camera RTSP passwords and the like).
+    # A directory rather than a single file, so a rotation is "add the new key, restart,
+    # rewrap" instead of a flag day - old secrets stay readable under the old key.
+    master_key_dir: str = "/run/secrets"
+    # Which key new secrets are sealed under. Empty means the highest-numbered one found,
+    # so adding master_v2.key is enough to start using it.
+    master_key_active_id: str = ""
+
     # Notification worker. The poll interval bounds how late an alert can be, so it is
     # deliberately short - the query is indexed on next_attempt_at and costs almost
     # nothing when the queue is empty. The batch size bounds how much work one crash can

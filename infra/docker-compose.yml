@@ -1,12 +1,12 @@
-name: csense
+﻿name: csense
 
 x-backend-env: &backend-env
   ENVIRONMENT: ${ENVIRONMENT:-local}
   POSTGRES_HOST: postgres
   POSTGRES_PORT: 5432
   POSTGRES_DB: ${POSTGRES_DB:-csense}
-  # APIs connect as the restricted, NOBYPASSRLS role — never the superuser/owner, which
-  # would silently bypass every row-level-security policy (SCH §15). The `migrate`
+  # APIs connect as the restricted, NOBYPASSRLS role â€” never the superuser/owner, which
+  # would silently bypass every row-level-security policy (SCH Â§15). The `migrate`
   # service overrides these back to the owner, since DDL needs ownership.
   POSTGRES_USER: ${POSTGRES_API_USER:-csense_api}
   POSTGRES_PASSWORD: ${POSTGRES_API_PASSWORD}
@@ -41,16 +41,22 @@ x-backend-env: &backend-env
   WHATSAPP_GATEWAY_API_KEY: ${WHATSAPP_GATEWAY_API_KEY:-}
   WHATSAPP_INSTANCE_TOKEN: ${WHATSAPP_INSTANCE_TOKEN:-}
   WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-default}
+  # Envelope encryption for stored camera credentials. The directory is scanned for
+  # *.key files, so rotating is "mount master_v2.key alongside, restart, rewrap" -
+  # secrets sealed under v1 stay readable throughout.
+  MASTER_KEY_DIR: /run/secrets
+  MASTER_KEY_ACTIVE_ID: ${MASTER_KEY_ACTIVE_ID:-}
 
 x-backend-secrets: &backend-secrets
   - jwt_private.pem
   - jwt_public.pem
+  - master_v1.key
 
 services:
   traefik:
     image: traefik:v3.1
     command:
-      # File provider only — no Docker-socket dependency. This is deliberate, not just a
+      # File provider only â€” no Docker-socket dependency. This is deliberate, not just a
       # Windows-Docker-Desktop workaround: it means Traefik needs no access to the Docker
       # API/socket at all (smaller attack surface, TRD-SEC principle of least privilege),
       # and routing is explicit/reviewable in dynamic.yml rather than inferred from
@@ -65,7 +71,7 @@ services:
       - --accesslog=true
     ports:
       - "8080:80"
-      - "8081:8080" # Traefik dashboard (dev only — never expose in production)
+      - "8081:8080" # Traefik dashboard (dev only â€” never expose in production)
     volumes:
       - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
     networks: [csense]
@@ -79,7 +85,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432" # dev convenience only — TRD-OPS: not exposed publicly in production
+      - "5432:5432" # dev convenience only â€” TRD-OPS: not exposed publicly in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-csense_app} -d ${POSTGRES_DB:-csense}"]
       interval: 5s
@@ -173,7 +179,7 @@ services:
     env_file: [../.env]
     environment:
       <<: *backend-env
-      # Connects as the platform role — a member of the `csense_platform` group role,
+      # Connects as the platform role â€” a member of the `csense_platform` group role,
       # which the RLS policies require for cross-tenant reads (migration 0005). Only this
       # service and notification-worker use it; the Tenant API's role is deliberately not
       # a member.
@@ -191,7 +197,7 @@ services:
 
   # Drives notification dispatch. Nothing else sends an alert: the APIs and pipeline only
   # write rows to the queue. Separate from the APIs so a wedged send cannot take request
-  # serving down with it, and so it can be scaled on its own — several replicas drain the
+  # serving down with it, and so it can be scaled on its own â€” several replicas drain the
   # same queue safely because claiming uses FOR UPDATE SKIP LOCKED.
   notification-worker:
     build:
@@ -236,7 +242,7 @@ services:
     # No Traefik route by design. This service takes raw frames and returns raw
     # detections with no tenant scoping of its own; it is called by the pipeline layer,
     # never directly by a browser or a tenant. Exposing it publicly would bypass the
-    # tenant boundary (TRD §16).
+    # tenant boundary (TRD Â§16).
     security_opt: ["no-new-privileges:true"]
     networks: [csense]
 
@@ -296,7 +302,13 @@ volumes:
   whatsappgatewaylogs:
 
 secrets:
+  # Master key for envelope-encrypting stored credentials. Mounted as a file rather
+  # than an env var so it stays out of `docker inspect` and can be rotated by adding
+  # master_v2.key alongside it - old secrets stay readable under the old key.
+  master_v1.key:
+    file: ./secrets/master_v1.key
   jwt_private.pem:
     file: ./secrets/jwt_private.pem
   jwt_public.pem:
     file: ./secrets/jwt_public.pem
+
