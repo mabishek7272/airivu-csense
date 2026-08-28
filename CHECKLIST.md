@@ -127,8 +127,42 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 ## Phase 3 — Edge, Camera, and Live Media Alpha
 
-- [ ] Edge enrollment token issuance + device cert bootstrap (mTLS)
-- [ ] Device heartbeat, observed/desired state, signed commands with expiry/idempotency
+- [x] **Edge section** — device registry for Raspberry Pi, Jetson Nano/Orin, DGX Spark and
+      Windows/Linux PCs. `role` (`gateway` / `inference` / `hybrid`) is the field that
+      decides where CPU cost lands: a Pi costs the server ~0.5 cores per camera, a Jetson
+      running models locally costs almost nothing.
+  - [x] Enrolment tokens: single-use, 48h, serial-pinned on redemption, stored as a
+        digest, every failure returning one identical message so tokens cannot be probed.
+  - [x] A separate long-lived agent credential issued at enrolment — the enrolment token
+        travels (USB stick, read aloud to an installer), so reusing it as the ongoing
+        credential would make that path a permanent way in.
+  - [x] Migrations 0025/0026: two narrow `SECURITY DEFINER` lookups. RLS scopes by tenant,
+        but resolving a device credential is what *discovers* the tenant; the Tenant API's
+        role deliberately still cannot bypass RLS. `search_path` pinned on both.
+  - [ ] mTLS device certificates — the bearer credential is the interim step
+- [x] **Device heartbeat and health** — three tiers (infrastructure/service/quality).
+      Current state overwritten on the device row, history written only for transitions
+      and failures: every-beat storage would be ~2,880 rows/device/day recording that
+      nothing happened. `observed_at` and `received_at` are both kept, because a device
+      reports cached events on reconnect and the gap is what an outage investigation needs.
+- [ ] Signed commands with expiry/idempotency (desired-state push to the device)
+- [x] **Connectivity model + SSRF guard correction** — `connection_mode` per camera
+      (`direct` / `vpn` / `edge` / `cloud_relay`). The guard previously refused every
+      private address, which blocked the *recommended* production path (camera at
+      `10.0.0.2` via WireGuard). Now allowlists only what a tenant has provisioned: the
+      peer's `/32` and the site LAN it routes.
+  - [x] Peer allowlisted as `/32`, never the `/24` — every peer shares one WireGuard
+        interface, so a subnet entry would expose every other tenant's cameras.
+  - [x] `validate_allowlist_candidate` rejects ranges overlapping the host's own networks.
+        A tenant declaring `172.18.0.0/16` looks ordinary but is Docker's bridge: traffic
+        takes the local route and reaches our Postgres, not their tunnel.
+  - [ ] **[NEEDS PROCEDURE CHANGE]** The deployment guide's WireGuard templates pair
+        `AllowedIPs = 10.0.0.0/24` on every client with a blanket server-side FORWARD
+        accept, which lets one tenant's peer route to another's cameras. Needs per-peer
+        `/32` and a `wg0 → wg0` drop rule in the documented procedure.
+  - [ ] VPN address allocation from a pool — the template hardcodes `10.0.0.2`, so the
+        second site collides. A fleet-wide unique index makes a collision fail loudly, but
+        nothing allocates yet.
 - [ ] Site/zone/edge schemas + Customer CRM screens
 - [ ] Camera CRUD, encrypted credential storage (envelope encryption), ONVIF discovery
       stub, manual RTSP entry, NVR adapter interface (one mock reference adapter)
