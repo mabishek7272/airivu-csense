@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     whatsapp_instance_token: str = ""
     whatsapp_instance: str = "default"
 
+    # Networks this host can already reach directly - its Docker bridges, its own LAN.
+    # A tenant must never be able to allowlist one of these for tunnel access: traffic to
+    # such an address takes the local route, not their tunnel, so "reach my camera at
+    # 172.18.0.5" would reach our own Postgres instead. Comma-separated CIDRs.
+    reserved_local_networks: str = "172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+
     # Envelope encryption for stored credentials (camera RTSP passwords and the like).
     # A directory rather than a single file, so a rotation is "add the new key, restart,
     # rewrap" instead of a flag day - old secrets stay readable under the old key.

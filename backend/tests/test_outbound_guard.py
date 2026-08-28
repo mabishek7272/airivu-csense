@@ -17,7 +17,9 @@ import pytest
 from csense_shared.security.outbound import (
     BlockedAddressError,
     check_public_address,
+    parse_networks,
     resolve_public_endpoint,
+    validate_allowlist_candidate,
 )
 
 # --- Literal addresses ----------------------------------------------------------------
@@ -150,3 +152,107 @@ def test_input_bounds():
         resolve_public_endpoint("nvr.example.com", 0)
     with pytest.raises(BlockedAddressError, match="out of range"):
         resolve_public_endpoint("nvr.example.com", 70000)
+
+
+# --- The tunnel exception --------------------------------------------------------------
+#
+# The recommended production deployment puts the camera at 10.0.0.2:554, reachable because
+# a WireGuard tunnel makes it routable. A blanket refusal of private addresses blocked the
+# primary path; these pin down the narrow exception that fixes it.
+
+def test_a_provisioned_peer_address_is_allowed():
+    allowed = parse_networks(["10.0.0.2/32"])
+
+    check_public_address("10.0.0.2", allowed)
+
+    # And only that address - the rest of the subnet is other tenants' peers.
+    with pytest.raises(BlockedAddressError):
+        check_public_address("10.0.0.3", allowed)
+
+
+def test_a_provisioned_site_lan_is_allowed():
+    """A camera at 192.168.1.100 behind a peer that routes 192.168.1.0/24."""
+    allowed = parse_networks(["10.0.0.2/32", "192.168.1.0/24"])
+
+    check_public_address("192.168.1.100", allowed)
+
+    # A different private range the tenant did not provision stays refused.
+    with pytest.raises(BlockedAddressError):
+        check_public_address("192.168.9.100", allowed)
+
+
+def test_an_allowlist_can_never_reach_loopback_or_metadata():
+    """Even a stored allowlist entry covering them must not open these."""
+    overly_broad = parse_networks(["0.0.0.0/1", "128.0.0.0/1", "169.254.0.0/16",
+                                   "127.0.0.0/8"])
+
+    for address in ("127.0.0.1", "169.254.169.254"):
+        with pytest.raises(BlockedAddressError):
+            check_public_address(address, overly_broad)
+
+
+def test_resolution_honours_the_allowlist(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo(["10.0.0.2"]))
+
+    assert resolve_public_endpoint(
+        "camera.site.internal", 554, allowed_networks=parse_networks(["10.0.0.2/32"])
+    ) == [(socket.AF_INET, "10.0.0.2")]
+
+    with pytest.raises(BlockedAddressError):
+        resolve_public_endpoint("camera.site.internal", 554)
+
+
+def test_public_addresses_still_work_without_an_allowlist(monkeypatch):
+    """A DDNS camera has no tunnel and must not need one."""
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo(["206.148.37.112"]))
+
+    assert resolve_public_endpoint("nvr.dyndns.org", 554) == [
+        (socket.AF_INET, "206.148.37.112")
+    ]
+
+
+# --- What may be allowlisted in the first place -----------------------------------------
+
+def test_a_normal_site_lan_is_accepted():
+    assert str(validate_allowlist_candidate("192.168.1.0/24")) == "192.168.1.0/24"
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    ["127.0.0.0/8", "169.254.0.0/16", "169.254.169.254/32", "224.0.0.0/4", "::1/128"],
+)
+def test_never_routable_ranges_are_refused(candidate):
+    with pytest.raises(BlockedAddressError):
+        validate_allowlist_candidate(candidate)
+
+
+def test_a_range_overlapping_this_hosts_own_network_is_refused():
+    """The subtle one, and the reason this function exists.
+
+    172.18.0.0/16 is Docker's default bridge. Traffic there never reaches the tenant's
+    tunnel because the host's local route wins - it reaches our own Postgres. It looks
+    like an ordinary private LAN, which is exactly what makes it dangerous.
+    """
+    reserved = parse_networks(["172.18.0.0/16"])
+
+    with pytest.raises(BlockedAddressError, match="already reach directly"):
+        validate_allowlist_candidate("172.18.0.0/16", reserved)
+
+    # A subnet of it is equally unusable, and equally refused.
+    with pytest.raises(BlockedAddressError, match="already reach directly"):
+        validate_allowlist_candidate("172.18.5.0/24", reserved)
+
+    # A range that merely looks similar but does not overlap is fine.
+    validate_allowlist_candidate("172.20.0.0/16", reserved)
+
+
+def test_a_default_route_cannot_be_allowlisted():
+    with pytest.raises(BlockedAddressError, match="default route"):
+        validate_allowlist_candidate("0.0.0.0/0")
+
+
+def test_malformed_candidates_are_refused():
+    with pytest.raises(BlockedAddressError):
+        validate_allowlist_candidate("not-a-cidr")
+    with pytest.raises(BlockedAddressError):
+        parse_networks(["192.168.1.0/33"])
