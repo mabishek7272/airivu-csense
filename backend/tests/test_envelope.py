@@ -294,6 +294,34 @@ def test_keyring_loads_raw_and_base64_keys(tmp_path: Path):
     assert keyring.active_id == "v2"
 
 
+def test_raw_key_containing_whitespace_bytes_still_loads(tmp_path: Path):
+    """Random key material contains whatever bytes it contains.
+
+    0x20, 0x09 and 0x0a are all valid key bytes and are all stripped by `bytes.strip()`.
+    Stripping before checking the raw length made roughly one generated key in twenty-two
+    unloadable, and it looked like file corruption rather than a bug in the reader.
+    """
+    key = bytes([0x20]) + b"\x01" * 30 + bytes([0x0A])
+    assert len(key) == KEY_BYTES
+    (tmp_path / "v1.key").write_bytes(key)
+    if os.name == "posix":
+        (tmp_path / "v1.key").chmod(0o400)
+
+    keyring = KeyRing.from_directory(tmp_path)
+
+    ctx = {"tenant_id": TENANT, "secret_id": SECRET_ID, "purpose": "camera.rtsp"}
+    assert open_secret(keyring, seal(keyring, PASSWORD, **ctx), **ctx).decode() == PASSWORD
+
+
+def test_base64_key_of_wrong_length_is_rejected(tmp_path: Path):
+    (tmp_path / "v1.key").write_bytes(base64.b64encode(b"only-sixteen!!!!"))
+    if os.name == "posix":
+        (tmp_path / "v1.key").chmod(0o400)
+
+    with pytest.raises(EnvelopeError, match="decodes to 16 bytes"):
+        KeyRing.from_directory(tmp_path)
+
+
 def test_wrong_length_key_is_rejected(tmp_path: Path):
     (tmp_path / "v1.key").write_bytes(b"too-short")
     if os.name == "posix":

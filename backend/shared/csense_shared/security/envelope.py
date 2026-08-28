@@ -199,15 +199,33 @@ class KeyRing:
 
 
 def _read_key(path: Path) -> bytes:
-    raw = path.read_bytes().strip()
+    """Reads a key file holding either 32 raw bytes or their base64 form.
+
+    The raw case is checked *before* stripping, and that ordering is the whole point.
+    Random key material contains whatever bytes it contains, including 0x20, 0x09 and
+    0x0a - all of which `bytes.strip()` removes. Stripping first turns roughly one
+    generated key in twenty-two into an unloadable 31-byte file, and the failure looks
+    like a corrupt key rather than a bug here.
+
+    Trailing whitespace only matters for the base64 form, where an editor or `echo` may
+    have added a newline, so the strip happens on that path alone.
+    """
+    raw = path.read_bytes()
     if len(raw) == KEY_BYTES:
         return raw
+
     try:
-        decoded = base64.b64decode(raw, validate=True)
+        decoded = base64.b64decode(raw.strip(), validate=True)
     except (ValueError, TypeError) as exc:
         raise EnvelopeError(
             f"Master key '{path.name}' is neither {KEY_BYTES} raw bytes nor valid base64."
         ) from exc
+
+    if len(decoded) != KEY_BYTES:
+        raise EnvelopeError(
+            f"Master key '{path.name}' decodes to {len(decoded)} bytes; "
+            f"{KEY_BYTES} required."
+        )
     return decoded
 
 

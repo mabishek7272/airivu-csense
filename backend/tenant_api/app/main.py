@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cameras, detections, health, incidents, ingest
+from app.api import auth, cameras, detections, edge, health, incidents, ingest
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
@@ -75,4 +75,6 @@ app.include_router(incidents.router)
 app.include_router(detections.router)
 app.include_router(ingest.router)
 app.include_router(cameras.router)
+app.include_router(edge.router)
+
 
