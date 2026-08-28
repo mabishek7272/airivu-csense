@@ -39,6 +39,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
+from app.deps_agent import AgentContext, agent_db_session, current_agent
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.tenant_context import TenantContext
@@ -52,6 +53,18 @@ DEVICE_TYPES = (
     "pc_linux", "pc_windows", "other",
 )
 DEVICE_ROLES = ("gateway", "inference", "hybrid")
+
+# The ACDK agent's three reporting tiers.
+HEALTH_LEVELS = ("infrastructure", "service", "quality")
+EVENT_STATUSES = ("ok", "degraded", "failed", "recovered")
+
+# Health events are operational telemetry, not evidence: worth keeping long enough to
+# investigate an outage, and no longer.
+HEALTH_EVENT_RETENTION = dt.timedelta(days=30)
+
+# Returned to the agent on every heartbeat rather than compiled into it, so the cadence
+# can be widened during an incident without shipping firmware.
+HEARTBEAT_INTERVAL_SECONDS = 30
 
 # Long enough that an installer will not lose it, short enough that a token left on a
 # desk is not still live weeks later.
@@ -578,16 +591,201 @@ async def enrol(
     )
 
 
-def _json(value: dict) -> str:
+def _json(value: dict, limit: int = 8192) -> str:
     import json
 
-    # Bounded: hardware and capability blobs come from a device, and an unbounded one
-    # would let a compromised box fill the table.
+    # Bounded: these blobs come from a device, and an unbounded one would let a
+    # compromised box fill the table.
     encoded = json.dumps(value)
-    if len(encoded) > 8192:
+    if len(encoded) > limit:
         raise ApiError(
             status_code=422,
             code="payload_too_large",
-            message="Reported hardware or capabilities exceed 8 KB.",
+            message=f"Reported payload exceeds {limit // 1024} KB.",
         )
     return encoded
+
+
+# --- Heartbeat -------------------------------------------------------------------------
+
+class HealthCheckIn(BaseModel):
+    """One check the agent ran.
+
+    `observed_at` is when the *device* saw it, which is not when we received it. A device
+    that was offline reports its cached events on reconnect, and the gap between those two
+    timestamps is exactly what an outage investigation needs.
+    """
+
+    level: str = Field(pattern="^(" + "|".join(HEALTH_LEVELS) + ")$")
+    check_name: str = Field(min_length=1, max_length=64)
+    status: str = Field(pattern="^(" + "|".join(EVENT_STATUSES) + ")$")
+    detail: str | None = Field(default=None, max_length=1000)
+    metrics: dict = Field(default_factory=dict)
+    observed_at: dt.datetime | None = None
+
+
+class HeartbeatIn(BaseModel):
+    # Overall verdict, so a listing can be filtered without unpacking the snapshot.
+    status: str = Field(default="ok", pattern="^(ok|degraded|failed)$")
+    # Current state per tier, overwritten in place rather than appended.
+    health: dict = Field(default_factory=dict)
+    # Only transitions and failures. A device reporting every 30 seconds that everything
+    # is fine should send an empty list, not 2,880 rows a day saying nothing happened.
+    events: list[HealthCheckIn] = Field(default_factory=list, max_length=100)
+    connectivity_method: str | None = Field(
+        default=None, pattern="^(wireguard|cloud_relay|port_forward|direct)$"
+    )
+    connectivity_reason: str | None = Field(default=None, max_length=500)
+    agent_version: str | None = Field(default=None, max_length=40)
+    last_error: str | None = Field(default=None, max_length=1000)
+
+
+class HeartbeatOut(BaseModel):
+    acknowledged: bool
+    events_recorded: int
+    # How long the device should wait before reporting again. Returned rather than
+    # hardcoded in the agent so the interval can be widened during an incident without
+    # shipping firmware.
+    next_interval_seconds: int
+
+
+class HealthEventOut(BaseModel):
+    level: str
+    check_name: str
+    status: str
+    detail: str | None = None
+    metrics: dict = {}
+    observed_at: dt.datetime
+    received_at: dt.datetime
+
+
+@router.post("/heartbeat", response_model=HeartbeatOut)
+async def heartbeat(
+    body: HeartbeatIn,
+    agent: AgentContext = Depends(current_agent),
+    db: AsyncSession = Depends(agent_db_session),
+) -> HeartbeatOut:
+    """Records a device's current health, and any transitions it saw.
+
+    Authenticated by the device's own credential - there is no user session here. The
+    tenant comes from that credential, so a device cannot write against another tenant
+    even if it tries.
+    """
+    now = dt.datetime.now(dt.UTC)
+    device_id = uuid.UUID(agent.device_id)
+    tenant_id = uuid.UUID(agent.tenant_id)
+
+    await db.execute(
+        text(
+            """
+            UPDATE edge_devices
+            SET status = CASE WHEN status IN ('enrolled', 'offline') THEN 'online'
+                              ELSE status END,
+                health = CAST(:health AS jsonb),
+                health_status = :health_status,
+                connectivity_method = COALESCE(:method, connectivity_method),
+                connectivity_reason = COALESCE(:reason, connectivity_reason),
+                agent_version = COALESCE(:agent_version, agent_version),
+                last_error = :last_error,
+                last_seen_at = :now,
+                last_health_at = :now,
+                updated_at = :now
+            WHERE id = :id
+            """
+        ),
+        {
+            "id": device_id,
+            "health": _json(body.health, limit=16384),
+            "health_status": body.status,
+            "method": body.connectivity_method,
+            "reason": body.connectivity_reason,
+            "agent_version": body.agent_version,
+            "last_error": body.last_error,
+            "now": now,
+        },
+    )
+
+    recorded = 0
+    for event in body.events:
+        observed = event.observed_at or now
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=dt.UTC)
+        # A device with a wrong clock must not park an event in the future where it sorts
+        # above everything real forever.
+        observed = min(observed, now + dt.timedelta(minutes=5))
+
+        await db.execute(
+            text(
+                """
+                INSERT INTO edge_health_events
+                    (tenant_id, device_id, level, check_name, status, detail, metrics,
+                     observed_at, received_at, expires_at)
+                VALUES (:tenant_id, :device_id, :level, :check_name, :status, :detail,
+                        CAST(:metrics AS jsonb), :observed_at, :now, :expires_at)
+                """
+            ),
+            {
+                "tenant_id": tenant_id, "device_id": device_id, "level": event.level,
+                "check_name": event.check_name, "status": event.status,
+                "detail": event.detail, "metrics": _json(event.metrics, limit=4096),
+                "observed_at": observed, "now": now,
+                "expires_at": now + HEALTH_EVENT_RETENTION,
+            },
+        )
+        recorded += 1
+
+    if body.status != "ok" or recorded:
+        # Only worth a log line when something is wrong or changed; an "everything fine"
+        # line every 30 seconds per device drowns out the ones that matter.
+        logger.info(
+            "edge_heartbeat",
+            extra={
+                "device_id": agent.device_id,
+                "health_status": body.status,
+                "events": recorded,
+            },
+        )
+
+    return HeartbeatOut(
+        acknowledged=True,
+        events_recorded=recorded,
+        next_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
+    )
+
+
+@router.get("/devices/{device_id}/health", response_model=list[HealthEventOut])
+async def device_health_history(
+    device_id: uuid.UUID,
+    level: str | None = Query(default=None, pattern="^(" + "|".join(HEALTH_LEVELS) + ")$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> list[HealthEventOut]:
+    """What actually happened to this device, most recent first."""
+    require_permission(context, "edge.read")
+    await _load(db, device_id)
+
+    clauses = ["device_id = :device_id"]
+    params: dict = {"device_id": device_id, "limit": limit}
+    if level:
+        clauses.append("level = :level")
+        params["level"] = level
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT level, check_name, status, detail, metrics, observed_at, received_at "
+                f"FROM edge_health_events WHERE {' AND '.join(clauses)} "
+                "ORDER BY observed_at DESC LIMIT :limit"
+            ),
+            params,
+        )
+    ).all()
+
+    return [
+        HealthEventOut(
+            level=r[0], check_name=r[1], status=r[2], detail=r[3], metrics=r[4] or {},
+            observed_at=r[5], received_at=r[6],
+        )
+        for r in rows
+    ]

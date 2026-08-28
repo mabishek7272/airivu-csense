@@ -169,7 +169,59 @@ def main() -> int:
     if leaked:
         failures.append(f"credentials readable from the API: {leaked}")
 
-    step(11, "Retiring the device destroys what it authenticates with")
+    step(11, "The device heartbeats with its own credential")
+    _, beat = api("/api/v1/tenant/edge/heartbeat", {
+        "status": "ok",
+        "health": {
+            "infrastructure": {"wireguard_handshake_age_s": 12, "vpn_ip": "10.0.0.2"},
+            "service": {"rtsp_reachable": True, "cameras_up": 4},
+            "quality": {"latency_ms": 48, "fps": 20.0, "packet_loss_pct": 0.1},
+        },
+        "connectivity_method": "wireguard",
+        "connectivity_reason": "VPN permitted and production deployment",
+        "events": [
+            {"level": "infrastructure", "check_name": "wireguard_handshake",
+             "status": "recovered", "detail": "Tunnel re-established after ISP IP change",
+             "metrics": {"downtime_s": 42}},
+        ],
+    }, agent_token)
+    print(f"    acknowledged={beat['acknowledged']}  events={beat['events_recorded']}  "
+          f"next in {beat['next_interval_seconds']}s")
+
+    step(12, "The device now reads as online, with its connectivity method recorded")
+    _, detail = api(f"/api/v1/tenant/edge/devices/{device_id}", None, token, method="GET")
+    print(f"    online={detail['online']}  status={detail['status']}  "
+          f"method={detail['connectivity_method']}")
+    if not detail["online"]:
+        failures.append("a device that just heartbeated does not read as online")
+    if detail["connectivity_method"] != "wireguard":
+        failures.append("the connectivity method the device chose was not recorded")
+
+    step(13, "Only transitions are stored, not every beat")
+    for _ in range(3):
+        api("/api/v1/tenant/edge/heartbeat", {"status": "ok"}, agent_token)
+    _, history = api(
+        f"/api/v1/tenant/edge/devices/{device_id}/health", None, token, method="GET"
+    )
+    print(f"    4 heartbeats sent, {len(history)} history row(s) stored")
+    for event in history:
+        print(f"      {event['level']}/{event['check_name']}: {event['status']}"
+              f" - {event['detail']}")
+    if len(history) != 1:
+        failures.append(f"expected 1 stored event after 4 heartbeats, got {len(history)}")
+
+    step(14, "A device cannot heartbeat with a user's token, or a bad credential")
+    status_a, _ = api("/api/v1/tenant/edge/heartbeat", {"status": "ok"}, token,
+                      expect=(401,))
+    status_b, _ = api("/api/v1/tenant/edge/heartbeat", {"status": "ok"},
+                      "not-a-real-credential", expect=(401,))
+    status_c, _ = api("/api/v1/tenant/edge/heartbeat", {"status": "ok"}, None,
+                      expect=(401,))
+    print(f"    user JWT -> {status_a}, bad credential -> {status_b}, none -> {status_c}")
+    if {status_a, status_b, status_c} != {401}:
+        failures.append("a heartbeat was accepted without a valid device credential")
+
+    step(15, "Retiring the device destroys what it authenticates with")
     api(f"/api/v1/tenant/edge/devices/{device_id}", None, token, method="DELETE")
     remaining = psql(
         "SELECT coalesce(agent_token_hash,'destroyed'), status FROM edge_devices "
@@ -179,7 +231,14 @@ def main() -> int:
     if "destroyed" not in remaining:
         failures.append("a retired device kept a usable agent credential")
 
-    step(12, "Clean up")
+    step(16, "A retired device's credential stops working immediately")
+    status_d, _ = api("/api/v1/tenant/edge/heartbeat", {"status": "ok"}, agent_token,
+                      expect=(401,))
+    print(f"    -> {status_d} (no waiting for a credential to expire)")
+    if status_d != 401:
+        failures.append("a retired device could still heartbeat")
+
+    step(17, "Clean up")
     psql(f"DELETE FROM tenants WHERE id = '{tenant_id}'")
     psql(f"DELETE FROM organizations WHERE display_name = 'Edge E2E {suffix}'")
     print("    test tenant removed")
