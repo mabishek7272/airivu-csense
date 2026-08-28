@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { NotificationProvider } from "./components/Notifications";
 import { CamerasPage } from "./pages/CamerasPage";
 import { EdgePage } from "./pages/EdgePage";
+import { SitesPage } from "./pages/SitesPage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
@@ -49,6 +50,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <DetectionsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/sites"
+        element={
+          <RequireAuth>
+            <SitesPage />
           </RequireAuth>
         }
       />

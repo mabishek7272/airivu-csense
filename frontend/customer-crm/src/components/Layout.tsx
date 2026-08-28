@@ -19,6 +19,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <nav className="app-nav" aria-label="Main">
           <NavLink to="/incidents">Incidents</NavLink>
           <NavLink to="/detections">Detections</NavLink>
+          <NavLink to="/sites">Sites</NavLink>
           <NavLink to="/cameras">Cameras</NavLink>
           <NavLink to="/edge">Edge</NavLink>
         </nav>

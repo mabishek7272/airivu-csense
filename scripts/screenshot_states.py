@@ -108,31 +108,34 @@ def main() -> int:
         )
         shot(page, "03-field-error")
 
-        print("\n[5] Success state - creating a camera")
-        site_id = os.environ.get("STATES_SITE_ID", "")
-        dialog.locator('[name="name"]').fill("Loading Bay 2")
-        dialog.locator('[name="code"]').fill(f"bay-{suffix}")
-        dialog.locator('[name="site_id"]').fill(site_id)
-        dialog.locator('[name="main_stream_path"]').fill("/Streaming/Channels/101")
-        dialog.locator('[name="hostname"]').fill("nvr.example.com")
-        # Scoped to the dialog: the page header has a button of the same name, and an
-        # ambiguous locator would pass or fail depending on render order.
-        dialog.get_by_role("button", name="Add camera").click()
+        print("\n[5] Success state - creating a record")
+        dialog.get_by_role("button", name="Cancel").click()
+        # An edge device rather than a camera: a camera now needs a site to exist first,
+        # and that whole path is covered by e2e_site_to_camera.py. What is being captured
+        # here is the success state itself, so the simplest record that reaches it is the
+        # right one to use.
+        page.goto(f"{BASE}/edge")
+        page.wait_for_selector(".state-panel, .data-table")
+        page.get_by_role("button", name="Add your first device").click()
+        page.wait_for_selector("div[role='dialog']")
+        device_dialog = page.locator("div[role='dialog']")
+        device_dialog.locator('[name="name"]').fill(f"Gateway {suffix}")
+        device_dialog.get_by_role("button", name="Add device").click()
 
-        # Either outcome is a state worth capturing. With a real site id the create
-        # succeeds and a toast confirms it; without one the server rejects it, and what
-        # matters then is that the rejection lands on the form rather than vanishing.
         page.wait_for_selector(".toast-success, .error-summary", timeout=15000)
         if page.locator(".toast-success").count() > 0:
             check(True, "a success toast confirms the create", failures)
             shot(page, "04-success-toast")
         else:
-            check(True, "a server rejection is surfaced on the form", failures)
+            # Not a pass. A rejection here means the create genuinely failed, and the
+            # success state - the thing this step exists to capture - was not reached.
+            check(False, "a success toast confirms the create", failures)
             shot(page, "04-server-error")
-            dialog.get_by_role("button", name="Cancel").click()
+            device_dialog.get_by_role("button", name="Cancel").click()
 
         print("\n[6] No results - a filter that matches nothing")
-        page.wait_for_timeout(500)
+        page.goto(f"{BASE}/cameras")
+        page.wait_for_selector(".state-panel, .data-table")
         page.locator("#camera-search").fill("zzzz-no-such-camera")
         page.wait_for_selector(".state-panel")
         body = page.locator(".state-panel").inner_text()

@@ -18,6 +18,7 @@ import {
   required,
   useForm,
 } from "../components/Form";
+import { listSites } from "../api/sites";
 import { Layout, relativeTime } from "../components/Layout";
 import { useNotifications } from "../components/Notifications";
 import {
@@ -384,12 +385,24 @@ function DeviceFormDialog({
   onSaved: (device: EdgeDevice, wasNew: boolean) => void;
 }) {
   const isNew = device === null;
+  const sites = useResource(listSites, []);
+  const siteOptions = useMemo(
+    () => [
+      // A device can legitimately be registered before anyone decides where it goes, so
+      // unlike a camera this stays optional.
+      { value: "", label: "Not assigned yet" },
+      ...(sites.data ?? []).map((s) => ({ value: s.id, label: s.name })),
+    ],
+    [sites.data],
+  );
+
   const form = useForm({
     name: {
       initial: device?.name ?? "",
       label: "Name",
       validate: combine(required("Name"), maxLength(120, "Name")),
     },
+    site_id: { initial: device?.site_id ?? "", label: "Site" },
     device_type: { initial: device?.device_type ?? "raspberry_pi", label: "Hardware" },
     role: { initial: device?.role ?? "gateway", label: "Role" },
     serial_number: { initial: device?.serial_number ?? "", label: "Serial number" },
@@ -401,6 +414,7 @@ function DeviceFormDialog({
     try {
       const body = {
         name: form.values.name,
+        site_id: form.values.site_id || undefined,
         device_type: form.values.device_type,
         role: form.values.role,
         serial_number: form.values.serial_number || undefined,
@@ -422,6 +436,12 @@ function DeviceFormDialog({
         <ErrorSummary errors={form.visibleErrors} formError={form.formError} />
 
         <Field {...form.field("name")} label="Name" required placeholder="Warehouse gateway" />
+        <Field
+          {...form.field("site_id")}
+          label="Site"
+          options={siteOptions}
+          hint="Optional — a device can be registered before anyone decides where it goes."
+        />
         <Field
           {...form.field("device_type")}
           label="Hardware"

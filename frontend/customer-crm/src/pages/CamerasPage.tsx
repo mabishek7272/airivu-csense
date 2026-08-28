@@ -20,6 +20,7 @@ import {
   required,
   useForm,
 } from "../components/Form";
+import { listSites } from "../api/sites";
 import { Layout } from "../components/Layout";
 import { useNotifications } from "../components/Notifications";
 import {
@@ -414,6 +415,20 @@ function CameraFormDialog({
   onSaved: (camera: Camera, wasNew: boolean) => void;
 }) {
   const isNew = camera === null;
+  const sites = useResource(listSites, []);
+  const siteOptions = useMemo(
+    () => [
+      { value: "", label: "Choose a site…" },
+      ...(sites.data ?? []).map((s) => ({
+        // The timezone is in the label because it is the field's real consequence, and
+        // picking the wrong site is far easier to notice here than at 3am.
+        value: s.id,
+        label: `${s.name} (${s.timezone})`,
+      })),
+    ],
+    [sites.data],
+  );
+
   const form = useForm({
     site_id: {
       initial: camera?.site_id ?? "",
@@ -503,12 +518,34 @@ function CameraFormDialog({
           hint="A short identifier, unique within your account."
           placeholder="loading-bay-2"
         />
-        <Field
-          {...form.field("site_id")}
-          label="Site"
-          required
-          hint="The site this camera belongs to."
-        />
+        {/* A picker, not a typed id. Asking someone to paste a UUID is not a form, and
+            a site with no cameras is invisible until one is attached — so when there are
+            none, the field says how to fix that rather than presenting an empty dropdown
+            with no explanation. */}
+        {sites.data && sites.data.length === 0 ? (
+          <div className="notice notice-warning" style={{ marginBottom: 16 }}>
+            <span aria-hidden="true">⚠</span>
+            <div>
+              <strong>You have no sites yet.</strong>
+              <p>
+                A camera belongs to a site, and the site's timezone decides when time-based
+                rules apply. Add one under Sites first.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <Field
+            {...form.field("site_id")}
+            label="Site"
+            required
+            options={siteOptions}
+            hint={
+              sites.loading
+                ? "Loading sites…"
+                : "Its timezone is what time-based rules are evaluated in."
+            }
+          />
+        )}
         <div className="field-row">
           <Field {...form.field("hostname")} label="Host" placeholder="nvr.example.com" />
           <Field {...form.field("rtsp_port")} label="Port" type="number" />
