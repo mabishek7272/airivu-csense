@@ -443,3 +443,201 @@ button.link {
 
 /* Nothing should be able to force the page wider than the viewport. */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* --- State panels, extended --------------------------------------------------- */
+
+.state-icon {
+  font-size: 32px;
+  line-height: 1;
+  color: var(--border-strong);
+  margin-bottom: var(--space-3);
+}
+.state-panel p { margin: 0 0 var(--space-2); max-width: 46ch; margin-inline: auto; }
+.state-actions { margin-top: var(--space-4); display: flex; gap: var(--space-2); justify-content: center; }
+.state-offline .state-icon { color: var(--high); }
+.state-success .state-icon { color: var(--low); }
+.muted { color: var(--text-muted); }
+
+.inline-spinner { display: inline-flex; align-items: center; }
+.spinner {
+  width: 14px; height: 14px; flex: none;
+  border: 2px solid var(--border-strong);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  /* Still legible as a state, without the rotation. */
+  .spinner { animation: none; border-top-color: var(--border-strong); opacity: 0.6; }
+}
+
+/* --- Notices ------------------------------------------------------------------ */
+
+.notice {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.notice p { margin: 4px 0 0; font-size: 13px; color: var(--text-muted); }
+.notice strong { display: block; }
+.notice-info { background: var(--info-subtle); border-color: var(--info); color: var(--info); }
+.notice-warning { background: var(--high-subtle); border-color: var(--high); color: var(--high); }
+.notice-info p, .notice-warning p { color: inherit; opacity: 0.85; }
+
+/* --- Top banner (offline / reconnected) --------------------------------------- */
+
+.top-banner {
+  position: sticky; top: 0; z-index: 60;
+  display: flex; gap: var(--space-2); align-items: center; justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  font-size: 14px;
+  border-bottom: 1px solid;
+}
+.top-banner-offline { background: var(--high-subtle); color: var(--high); border-color: var(--high); }
+.top-banner-online { background: var(--low-subtle); color: var(--low); border-color: var(--low); }
+
+/* --- Toasts ------------------------------------------------------------------- */
+
+.toast-region {
+  position: fixed; top: var(--space-4); right: var(--space-4); z-index: 80;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  width: min(380px, calc(100vw - 32px));
+}
+.toast {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.toast p { margin: 4px 0 0; font-size: 13px; color: var(--text-muted); }
+.toast-body { flex: 1; min-width: 0; }
+.toast-body strong { word-break: break-word; }
+.toast-icon { font-weight: 700; line-height: 1.4; }
+.toast-success { border-left-color: var(--low); }
+.toast-success .toast-icon { color: var(--low); }
+.toast-error { border-left-color: var(--critical); }
+.toast-error .toast-icon { color: var(--critical); }
+.toast-warning { border-left-color: var(--high); }
+.toast-warning .toast-icon { color: var(--high); }
+.toast-info { border-left-color: var(--accent); }
+.toast-info .toast-icon { color: var(--accent); }
+.toast-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); padding: 2px 4px; font-size: 14px; line-height: 1;
+}
+.toast-close:hover { color: var(--text); }
+
+/* --- Dialog ------------------------------------------------------------------- */
+
+.dialog-overlay {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgb(20 24 31 / 55%);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: var(--space-5) var(--space-4);
+  overflow-y: auto;
+}
+.dialog {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  width: min(560px, 100%);
+  margin: auto;
+}
+.dialog-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-4); border-bottom: 1px solid var(--border);
+}
+.dialog-header h2 { margin: 0; font-size: 16px; }
+.dialog-body { padding: var(--space-4); }
+.dialog-body p { margin: 0 0 var(--space-2); }
+.dialog-footer {
+  display: flex; gap: var(--space-2); justify-content: flex-end;
+  padding: var(--space-4); border-top: 1px solid var(--border);
+}
+
+/* --- Forms -------------------------------------------------------------------- */
+
+.field-row { display: flex; gap: var(--space-3); }
+.field-row .field { flex: 1; }
+.field-hint { margin: 0; font-size: 12px; color: var(--text-muted); }
+.field-required { color: var(--critical); }
+.field-error { margin: 2px 0 0; font-size: 13px; color: var(--critical); font-weight: 500; }
+.field-invalid input, .field-invalid select {
+  /* Not colour alone: the border thickens and the message carries a mark, so the state
+   * survives a colour vision deficiency and a greyscale print. */
+  border-color: var(--critical);
+  border-width: 2px;
+}
+.error-summary {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 2px solid var(--critical);
+  border-radius: var(--radius);
+  background: var(--critical-subtle);
+  color: var(--critical);
+}
+.error-summary ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
+.error-summary a { color: inherit; }
+.form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* --- Tables and page furniture ------------------------------------------------ */
+
+.page-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4); margin-bottom: var(--space-4); flex-wrap: wrap;
+}
+.page-header h1 { margin: 0 0 4px; font-size: 20px; }
+.page-header p { margin: 0; font-size: 13px; }
+
+.filter-bar {
+  display: flex; gap: var(--space-2); margin-bottom: var(--space-4); flex-wrap: wrap;
+}
+.filter-bar input[type="search"] { flex: 1; min-width: 200px; }
+
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td {
+  text-align: left; padding: var(--space-3); border-bottom: 1px solid var(--border);
+  vertical-align: top; font-size: 14px;
+}
+.data-table th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table .muted { font-size: 12px; }
+.row-actions { display: flex; gap: var(--space-1); flex-wrap: wrap; white-space: nowrap; }
+
+.pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 500; border: 1px solid currentColor;
+}
+.pill-ready, .pill-online { color: var(--low); background: var(--low-subtle); }
+.pill-provisioning, .pill-pending, .pill-enrolled { color: var(--medium); background: var(--medium-subtle); }
+.pill-disabled, .pill-retired, .pill-offline { color: var(--text-muted); background: var(--surface-sunken); }
+
+.btn-quiet {
+  background: none; border: 1px solid transparent; color: var(--accent);
+  padding: 4px 8px; cursor: pointer; font-size: 13px; border-radius: var(--radius-sm);
+}
+.btn-quiet:hover { background: var(--accent-subtle); }
+.btn-danger { background: var(--critical); border-color: var(--critical); color: var(--text-inverse); }
+.btn-danger-quiet { color: var(--critical); }
+.btn-danger-quiet:hover { background: var(--critical-subtle); }
+
+/* The table scrolls inside its own container rather than the page - a horizontally
+ * scrolling body makes every other column unreachable on a phone. */
+@media (max-width: 720px) {
+  .card:has(.data-table) { overflow-x: auto; }
+  .data-table { min-width: 640px; }
+  .toast-region { left: var(--space-4); right: var(--space-4); width: auto; }
+}
+
+.token-display {
+  display: flex; gap: var(--space-2); align-items: center;
+  padding: var(--space-3); background: var(--surface-sunken);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.token-display code { flex: 1; word-break: break-all; font-size: 13px; }

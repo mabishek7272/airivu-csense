@@ -19,6 +19,8 @@ export function Layout({ children }: { children: ReactNode }) {
         <nav className="app-nav" aria-label="Main">
           <NavLink to="/incidents">Incidents</NavLink>
           <NavLink to="/detections">Detections</NavLink>
+          <NavLink to="/cameras">Cameras</NavLink>
+          <NavLink to="/edge">Edge</NavLink>
         </nav>
         <span className="mono" style={{ color: "var(--text-muted)" }} title="Tenant">
           {tenantId ? `${tenantId.slice(0, 8)}…` : ""}
@@ -88,3 +90,4 @@ export function relativeTime(iso: string): string {
   }
   return iso;
 }
+

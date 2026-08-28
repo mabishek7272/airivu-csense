@@ -1,6 +1,9 @@
 import type { JSX } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { NotificationProvider } from "./components/Notifications";
+import { CamerasPage } from "./pages/CamerasPage";
+import { EdgePage } from "./pages/EdgePage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
@@ -49,6 +52,22 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
+      <Route
+        path="/cameras"
+        element={
+          <RequireAuth>
+            <CamerasPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/edge"
+        element={
+          <RequireAuth>
+            <EdgePage />
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<Navigate to="/incidents" replace />} />
     </Routes>
   );
@@ -57,7 +76,10 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <NotificationProvider>
+        <AppRoutes />
+      </NotificationProvider>
     </AuthProvider>
   );
 }
+
