@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+
 import type { Site, SiteInput } from "../api/sites";
 import { createSite, deleteSite, listSites, listTimezones, updateSite } from "../api/sites";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
@@ -365,10 +366,16 @@ function SiteFormDialog({
     }
   });
 
-  const zoneOptions = (timezones.data ?? [form.values.timezone]).map((tz) => ({
-    value: tz,
-    label: tz,
-  }));
+  // The selected zone must be among the options, or the select displays the first entry
+  // while the form still holds something else - and the user submits a value they never
+  // saw. Browsers report deprecated aliases (`Asia/Calcutta` rather than `Asia/Kolkata`)
+  // which the canonical list does not contain, so the current value is always included.
+  const zoneOptions = useMemo(() => {
+    const available = timezones.data ?? [];
+    const current = form.values.timezone;
+    const list = available.includes(current) || !current ? available : [current, ...available];
+    return (list.length > 0 ? list : [current]).map((tz) => ({ value: tz, label: tz }));
+  }, [timezones.data, form.values.timezone]);
 
   return (
     <Dialog open title={isNew ? "Add site" : `Edit ${site.name}`} onClose={onClose}>

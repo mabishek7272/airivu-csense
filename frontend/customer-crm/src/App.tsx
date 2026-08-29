@@ -5,6 +5,7 @@ import { NotificationProvider } from "./components/Notifications";
 import { CamerasPage } from "./pages/CamerasPage";
 import { EdgePage } from "./pages/EdgePage";
 import { SitesPage } from "./pages/SitesPage";
+import { ZonesPage } from "./pages/ZonesPage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
@@ -58,6 +59,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <SitesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/zones"
+        element={
+          <RequireAuth>
+            <ZonesPage />
           </RequireAuth>
         }
       />

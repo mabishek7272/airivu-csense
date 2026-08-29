@@ -641,3 +641,59 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 .token-display code { flex: 1; word-break: break-all; font-size: 13px; }
+
+/* --- Polygon editor ----------------------------------------------------------- */
+
+.polygon-editor { margin-top: var(--space-2); }
+.polygon-canvas {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+.polygon-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.polygon-backdrop-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 13px;
+  /* A grid rather than a black rectangle: black reads as a camera fault. */
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 10% 10%;
+}
+.polygon-svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+.polygon-shape {
+  fill: var(--accent);
+  fill-opacity: 0.22;
+  stroke: var(--accent);
+  stroke-width: 0.004;
+  vector-effect: non-scaling-stroke;
+}
+.polygon-handle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 0.006;
+  cursor: grab;
+  vector-effect: non-scaling-stroke;
+}
+.polygon-handle:hover { fill: var(--accent-subtle); }
+.polygon-handle.is-selected { fill: var(--accent); }
+/* A visible focus ring on an SVG element, which the browser default does not provide. */
+.polygon-handle:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 0.012;
+}
+.polygon-status {
+  display: flex; gap: var(--space-3); align-items: center;
+  margin-top: var(--space-2); font-size: 13px;
+}
+
+.zone-thumb {
+  width: 72px; height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.zone-thumb-frame { fill: none; stroke: var(--border); stroke-width: 0.01; }

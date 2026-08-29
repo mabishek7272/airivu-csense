@@ -17,7 +17,6 @@ import datetime as dt
 import json
 import logging
 import uuid
-import zoneinfo
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, field_validator
@@ -28,13 +27,15 @@ from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.tenant_context import TenantContext
+from csense_shared.timezones import OFFERED_TIMEZONES, is_usable_timezone
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tenant/sites", tags=["sites"])
 
-# Read once. The set is a few hundred strings and the lookup happens on every write.
-_VALID_TIMEZONES = zoneinfo.available_timezones()
+# Both live in the shared library, because the pipeline resolves the same zone every time
+# it evaluates a time-based rule - and a validator that disagreed with the evaluator would
+# let a site hold a value that later fails silently, falling back to UTC.
 
 
 class Address(BaseModel):
@@ -57,11 +58,11 @@ class SiteIn(BaseModel):
     @field_validator("timezone")
     @classmethod
     def _known_zone(cls, value: str) -> str:
-        if value not in _VALID_TIMEZONES:
+        if not is_usable_timezone(value):
             raise ValueError(
-                f"'{value}' is not a known IANA timezone. Use a name like "
-                "'Asia/Kolkata' or 'Australia/Sydney' — rule schedules are evaluated in "
-                "this zone, so a wrong one makes overnight rules fire during the day."
+                f"'{value}' is not a timezone this server can resolve. Use an IANA name "
+                "like 'Asia/Kolkata' or 'Australia/Sydney' — rule schedules are evaluated "
+                "in this zone, so a wrong one makes overnight rules fire during the day."
             )
         return value
 
@@ -298,11 +299,15 @@ async def delete_site(
 async def list_timezones(
     context: TenantContext = Depends(current_tenant_context),
 ) -> list[str]:
-    """The zones a site may be set to.
+    """The zones the picker offers.
 
     Served from the server's own IANA database rather than hardcoded in the client, so the
-    list the UI offers is exactly the list the validator accepts. A picker that can produce
-    a value the API rejects is worse than a free-text field.
+    UI cannot offer something this deployment has never heard of.
+
+    This is the *canonical* list, which is narrower than what the API accepts: deprecated
+    aliases such as `Asia/Calcutta` resolve fine and are allowed on write, they are simply
+    not worth offering when `Asia/Kolkata` names the same zone. So the picker is a subset
+    of what is valid, never a superset — which is the direction that matters.
     """
     require_permission(context, "site.read")
-    return sorted(_VALID_TIMEZONES)
+    return OFFERED_TIMEZONES
