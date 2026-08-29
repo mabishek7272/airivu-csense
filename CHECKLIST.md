@@ -259,20 +259,62 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           again too). Verified against a real curated frame: the plate visible on a
           parked car went from fully unblurred (missed at confidence 0.4) to correctly
           detected and blurred (`scripts/build_demo_assets.py`).
-  - [x] `kitchen-safety-y8` - TFLite via ai-edge-litert, raw YOLOv8 head + NMS
+  - [x] `kitchen-safety-y8` - TFLite via ai-edge-litert, raw YOLOv8 head + NMS. Carries a
+        real label map (`glove`, `hairnet`, `maskoff`, `maskon`, `no_glove`,
+        `no_hairnet`) - CLARIFICATIONS #18 and this checklist both said this was still
+        missing; it wasn't, found while checking the OCR item below against the real
+        database rather than trusting the doc.
   - [ ] 5 InsightFace models load and execute, but their SCRFD/ArcFace output needs the
         `insightface` package's decoding rather than a generic detector decode. Tracked
         below.
-  - [ ] `license-plate-ocr` - runs, but OCR output is a character sequence, not
-        detections; needs the ANPR pipeline stage to call it via `raw_infer`.
+  - [~] **`license-plate-ocr` didn't actually run at all** - found while wiring it in.
+        Two real bugs in `OnnxEngine`, both in shared preprocessing code every ONNX
+        model goes through, not something specific to this one model:
+    - [x] **Wrong input layout.** `_preprocess`/`_target_size` assumed NCHW (channels
+          first) unconditionally - true for every other ONNX artifact in this estate
+          (the plate detector, all 5 InsightFace models), false for this one: its real
+          input is `[-1, 64, 128, 3]`, channels *last*. Reading that as NCHW resizes the
+          frame to 3 pixels wide (width read off the channel axis) before the model ever
+          sees it. Fixed with a layout check based on which axis actually looks like a
+          channel count (1/3/4) rather than a per-model exception, so the next NHWC
+          export this codebase picks up is handled the same way, not silently assumed
+          away again.
+    - [x] **Wrong dtype.** The model's own ONNX input metadata declares `tensor(uint8)`
+          - it normalises internally - but `_preprocess` always cast to normalised
+          float32. Found because onnxruntime rejects the mismatch outright (a real
+          error, not a silent wrong answer); fixed by reading the artifact's own
+          declared input type instead of assuming float32 for every model.
+    - [x] Both fixed and pinned with 6 new decoder tests
+          ([test_ai_runtime_decoder.py](backend/tests/test_ai_runtime_decoder.py))
+          covering NCHW/NHWC detection and dtype handling directly, not just this one
+          model's shape.
+    - [ ] **Text decode is not implemented**, on purpose. With the layout/dtype bugs
+          fixed, the model runs and returns a well-formed `(1, 9, 37)` output - 9
+          character positions, each a 37-way softmax (blank/pad + 10 digits + 26
+          letters is the one class count that fits). But the actual index-to-character
+          mapping is unverified: every real plate crop from this camera's 640x480
+          source tried during this work was too low-resolution for a human or the model
+          to confidently read it (10-40% per-position confidence, trailing positions
+          converging on what looks like blank/pad). Shipping a guessed charset mapping
+          would be exactly the failure mode `OutputContractUnknownError` exists to avoid
+          elsewhere in this same file - a wrong guess produces a plausible-looking plate
+          number that is silently wrong. Needs either the model's original training
+          config or a clearer reference image with a known answer to check against; not
+          guessed at here. Documented in `raw_infer`'s own docstring
+          ([engines.py](backend/ai_runtime/app/engines.py)).
 - [x] Internal runtime API: `/internal/v1/models`, `/models/{name}/load`, `/infer`,
       `/engines`. Deliberately **not** exposed through Traefik - it takes raw frames and
       returns raw detections with no tenant scoping, so it is called by the pipeline
       layer, never by a browser.
 - [ ] InsightFace decoding via the `insightface` FaceAnalysis wrapper (SCRFD anchors +
       ArcFace embeddings)
-- [ ] Label maps for `kitchen-safety-y8` and the plate models - detections currently
-      return numeric class ids (see CLARIFICATIONS #18)
+- [x] ~~Label maps for `kitchen-safety-y8` and the plate models~~ — stale: checked
+      against the real database rather than trusting this line, and `kitchen-safety-y8`
+      and `license-plate-detector` both already carry real label maps (see above). What
+      was actually still missing turned out to be `license-plate-ocr`'s output decode,
+      tracked in its own entry above under a more accurate description than "a label
+      map" - a character-position softmax isn't the same shape of problem as a
+      class-id map, and conflating them here was itself part of what made this stale.
 - [ ] Golden dataset + benchmark harness; `model_validation_runs` is still empty
 - [x] **Model registry UI in the Developer Console** — the registry (`GET
       /api/v1/admin/models`, `POST /model-versions/{id}/promote`) was fully built and

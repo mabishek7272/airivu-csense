@@ -23,6 +23,23 @@ LABELS = {0: "person", 1: "helmet"}
 INPUT_SIZE = (640, 640)
 
 
+class _FakeInput:
+    """Stands in for onnxruntime's own input metadata object - only `.shape` and `.type`
+    are ever read by the code under test here."""
+
+    def __init__(self, shape, dtype="tensor(float)"):
+        self.shape = shape
+        self.type = dtype
+
+
+def _onnx_engine_with_input_shape(shape, dtype="tensor(float)"):
+    """Builds an OnnxEngine for testing layout detection/preprocessing without loading a
+    real ONNX model - these only ever touch `self._input.shape`/`.type`."""
+    engine = OnnxEngine.__new__(OnnxEngine)
+    engine._input = _FakeInput(shape, dtype)
+    return engine
+
+
 def _onnx_engine(labels=None):
     """Builds an OnnxEngine for testing `_decode` without loading a real ONNX model -
     `__init__` needs onnxruntime and an artifact file, and `_decode` only touches
@@ -214,3 +231,78 @@ def test_end2end_falls_back_to_raw_yolo_head_for_unrecognised_column_count():
     detections = engine._decode([raw], confidence=0.25, target_size=INPUT_SIZE)
     assert len(detections) == 1
     assert detections[0].class_name == "person"
+
+
+# --- OnnxEngine input layout: NCHW vs NHWC -------------------------------------------
+#
+# Every artifact in this estate but one exports NCHW (channels first) - the plate
+# detector's [1, 3, 384, 384], every InsightFace model's [.., 3, H, W]. The plate OCR
+# model's real input is [-1, 64, 128, 3], channels *last* - reading that as NCHW would
+# resize the frame to 3 pixels wide (width read from the channel axis) before the model
+# ever sees it. These pin the layout detection this decoder-quality bug fix depends on.
+
+
+def test_nchw_input_is_detected_and_sized_correctly():
+    engine = _onnx_engine_with_input_shape([1, 3, 384, 384])
+    assert engine._is_nhwc() is False
+    assert engine._target_size(np.zeros((10, 10, 3))) == (384, 384)
+
+
+def test_nhwc_input_is_detected_and_sized_correctly():
+    """The real license-plate-ocr artifact's own shape."""
+    engine = _onnx_engine_with_input_shape([-1, 64, 128, 3])
+    assert engine._is_nhwc() is True
+    assert engine._target_size(np.zeros((10, 10, 3))) == (64, 128)
+
+
+def test_dynamic_nchw_falls_back_to_the_frames_own_size():
+    engine = _onnx_engine_with_input_shape([1, 3, "height", "width"])
+    frame = np.zeros((480, 640, 3))
+    assert engine._is_nhwc() is False
+    assert engine._target_size(frame) == (480, 640)
+
+
+def test_ambiguous_shape_defaults_to_nchw():
+    """A 4-channel-looking value on both axes (e.g. a stray 4D shape this estate doesn't
+    actually have) must not be guessed as NHWC - NCHW is this estate's real norm, and a
+    wrong guess here silently reshapes every frame wrong."""
+    engine = _onnx_engine_with_input_shape([1, 3, 3, 3])
+    assert engine._is_nhwc() is False
+
+
+def test_non_4d_shape_defaults_to_nchw():
+    engine = _onnx_engine_with_input_shape([1, 512])
+    assert engine._is_nhwc() is False
+
+
+def test_preprocess_produces_nchw_tensor_for_an_nchw_model():
+    engine = _onnx_engine_with_input_shape([1, 3, 64, 32])
+    frame = np.random.randint(0, 255, (100, 50, 3), dtype=np.uint8)
+    tensor = engine._preprocess(frame)
+    assert tensor.shape == (1, 3, 64, 32)
+    assert tensor.dtype == np.float32
+    assert 0.0 <= tensor.min() and tensor.max() <= 1.0
+
+
+def test_preprocess_produces_nhwc_tensor_for_an_nhwc_model():
+    """The fix this whole section exists for: before it, this would have come back
+    shaped (1, 3, 128, 3) instead - resized to 3 pixels wide, wrongly transposed."""
+    engine = _onnx_engine_with_input_shape([-1, 64, 128, 3])
+    frame = np.random.randint(0, 255, (100, 50, 3), dtype=np.uint8)
+    tensor = engine._preprocess(frame)
+    assert tensor.shape == (1, 64, 128, 3)
+    assert tensor.dtype == np.float32
+    assert 0.0 <= tensor.min() and tensor.max() <= 1.0
+
+
+def test_preprocess_keeps_raw_uint8_for_a_model_that_declares_it():
+    """The plate OCR model's real input metadata: `tensor(uint8)`, [-1, 64, 128, 3] -
+    it normalises internally, and feeding it a 0..1 float tensor fails outright (a real
+    onnxruntime dtype-mismatch error, not a silent wrong answer - that is how this was
+    actually found)."""
+    engine = _onnx_engine_with_input_shape([-1, 64, 128, 3], dtype="tensor(uint8)")
+    frame = np.random.randint(0, 255, (36, 37, 3), dtype=np.uint8)
+    tensor = engine._preprocess(frame)
+    assert tensor.shape == (1, 64, 128, 3)
+    assert tensor.dtype == np.uint8
+    assert tensor.max() > 1  # never rescaled to 0..1

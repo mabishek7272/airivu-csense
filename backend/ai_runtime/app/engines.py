@@ -259,12 +259,36 @@ class OnnxEngine:
             detail=f"providers={','.join(self._providers)} input={self._input.name}",
         )
 
+    def _is_nhwc(self) -> bool:
+        """Most artifacts in this estate export NCHW (batch, channels, height, width) -
+        the plate detector's `[1, 3, 384, 384]`, every InsightFace model's `[.., 3, H,
+        W]`. The plate OCR model does not: its real input is `[-1, 64, 128, 3]`, channels
+        *last*. Reading that as NCHW would treat 128 (width) as height and 3 (channels) as
+        width - resizing the frame to 3 pixels wide before ever reaching the model.
+
+        Channel counts are always small (1, 3 or 4) and spatial dimensions in this
+        estate's real artifacts never are, so that is what decides it - not a hardcoded
+        per-model exception, so the next NHWC export this codebase picks up (a common
+        enough layout that assuming it away would be its own quiet bug) is handled by the
+        same rule. Ambiguous or non-4D shapes default to NCHW, this estate's norm.
+        """
+        shape = self._input.shape
+        if len(shape) != 4:
+            return False
+        channels_first = shape[1] if isinstance(shape[1], int) else None
+        channels_last = shape[3] if isinstance(shape[3], int) else None
+        return channels_last in (1, 3, 4) and channels_first not in (1, 3, 4)
+
     def _target_size(self, image: np.ndarray) -> tuple[int, int]:
         shape = self._input.shape
         # Static square inputs are the common case (384x384 for the plate detector);
         # fall back to the frame's own size for dynamic axes.
-        height = shape[2] if isinstance(shape[2], int) else image.shape[0]
-        width = shape[3] if isinstance(shape[3], int) else image.shape[1]
+        if self._is_nhwc():
+            height = shape[1] if isinstance(shape[1], int) else image.shape[0]
+            width = shape[2] if isinstance(shape[2], int) else image.shape[1]
+        else:
+            height = shape[2] if isinstance(shape[2], int) else image.shape[0]
+            width = shape[3] if isinstance(shape[3], int) else image.shape[1]
         return int(height), int(width)
 
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
@@ -272,7 +296,18 @@ class OnnxEngine:
 
         height, width = self._target_size(image)
         resized = cv2.resize(image, (width, height))
-        chw = resized.transpose(2, 0, 1).astype(np.float32) / 255.0
+        # Every artifact but one expects normalised float32 - the plate OCR model's own
+        # graph declares `tensor(uint8)` and does its own normalisation internally
+        # (confirmed against its real ONNX input metadata, not assumed); feeding it a
+        # 0..1 float tensor fails loudly (a dtype mismatch onnxruntime itself rejects),
+        # which is how this was actually found rather than guessed at.
+        if self._input.type == "tensor(uint8)":
+            resized = resized.astype(np.uint8)
+        else:
+            resized = resized.astype(np.float32) / 255.0
+        if self._is_nhwc():
+            return np.expand_dims(resized, axis=0)
+        chw = resized.transpose(2, 0, 1)
         return np.expand_dims(chw, axis=0)
 
     def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
@@ -345,7 +380,28 @@ class OnnxEngine:
 
     def raw_infer(self, image: np.ndarray) -> list[np.ndarray]:
         """Escape hatch for models whose output contract the caller knows - plate OCR,
-        face embeddings - and which do not fit the Detection shape."""
+        face embeddings - and which do not fit the Detection shape.
+
+        `license-plate-ocr` specifically: takes a plate crop (its own real input is
+        NHWC `[-1, 64, 128, 3]`, `tensor(uint8)` - both handled by `_preprocess` above,
+        found and fixed while wiring this in, not assumed correct beforehand). Output is
+        `(1, 9, 37)` - confirmed empirically against the real artifact, not from
+        documentation, which doesn't exist for this migrated model: each of 9 character
+        positions carries its own 37-way softmax (rows sum to 1.0), and 37 matches
+        exactly one plausible charset size (blank/pad + 10 digits + 26 letters).
+
+        **No decode into actual plate text is implemented here.** The exact index-to-
+        character mapping is not verified: every real plate crop from this camera's
+        640x480 source tried during this work was too low-resolution for either a human
+        or the model to confidently read (per-position confidence 10-40% except a run of
+        trailing blank/pad positions), so there was no ground truth to check a charset
+        guess against. Shipping a guessed mapping would be exactly the failure mode
+        `OutputContractUnknownError` above exists to avoid elsewhere in this file - a
+        wrong guess here produces a plausible-looking plate number that is silently
+        wrong, not an error. Decoding this into text needs either the model's original
+        training config (the charset order) or a clearer reference image with a known
+        answer to validate against - tracked in CHECKLIST.md, not guessed at here.
+        """
         return self._session.run(None, {self._input.name: self._preprocess(image)})
 
 
