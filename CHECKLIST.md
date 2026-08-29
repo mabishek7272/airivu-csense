@@ -249,13 +249,54 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 - [ ] Label maps for `kitchen-safety-y8` and the plate models - detections currently
       return numeric class ids (see CLARIFICATIONS #18)
 - [ ] Golden dataset + benchmark harness; `model_validation_runs` is still empty
-- [ ] Model registry UI in the Developer Console
+- [x] **Model registry UI in the Developer Console** — the registry (`GET
+      /api/v1/admin/models`, `POST /model-versions/{id}/promote`) was fully built and
+      tested since the AI runtime work, but the console had zero UI for it: a login
+      screen and one page listing organizations. Built alongside a first design-system
+      pass for the console itself (it had no CSS or navigation at all before this - a
+      trimmed port of the Customer CRM's tokens/components, not a new system).
+  - [x] `/models`: every version, grouped by model, filterable by state and
+        classification (server-side, matching the API's own query params). A biometric
+        version is flagged with the word itself next to a warning icon, never colour
+        alone.
+  - [x] Promote dialog: the target-state dropdown only ever offers what the server's own
+        `VALID_TRANSITIONS` table allows from the version's current state - an operator
+        cannot even attempt an illegal hop from the form. The biometric-acknowledgement
+        notice appears only when it would matter (biometric + a deployable target),
+        mirrors the server's own explanation word-for-word, and leaving it unchecked
+        still submits - the resulting 422 is what actually proves the gate is real, not
+        the checkbox's presence.
+  - [x] **A real, pre-existing bug found while building this, unrelated to the feature
+        itself**: the console's login response sets no cookie at all
+        (`Set-Cookie: None`), so a full page reload or a bookmarked deep link silently
+        logs a platform admin back out - the in-memory access token only survives
+        client-side (`next/link`) navigation. Doesn't block normal use (nobody hard-
+        refreshes mid-session by habit) but is a real reliability gap. **Not fixed here** -
+        flagged for a decision on whether the console should call the admin API same-
+        origin (matching how the Customer CRM avoids this entirely) or the cookie needs
+        `SameSite=None` treatment for its current cross-origin (`console.localhost` ->
+        `localhost`) setup.
+  - [x] Verified against the real registry, not a fixture double —
+        [scripts/e2e_model_registry.py](scripts/e2e_model_registry.py) (14 checks):
+        renders all 14 real legacy models, promotes two throwaway versions through the
+        actual state machine, proves the biometric gate is server-enforced, confirms the
+        audit/outbox trail recorded the acknowledgement, and - the concrete form of why
+        this all exists to be centralized - asserts no download URL, presigned URL,
+        object key, or bucket name ever appears in a response body or the rendered page
+        across the whole run.
 - [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
 - [~] Pipeline stages: **infer** is built (above). Remaining: ingest, preprocess,
       filter/ROI, tracking, rules, evidence-intent — these turn raw detections into
-      tenant-scoped incidents and are the next real piece of work.
+      tenant-scoped incidents and are the next real piece of work. **Note**: today's live
+      detection path (`POST /api/v1/tenant/.../detections`) takes detections an edge
+      device already computed - nothing in this repo yet calls AI Runtime's `/infer` for
+      a live stream, so "models never leave the central server" is proven for the
+      registry and runtime themselves but not yet *enforced* for that path. Not a leak
+      today (how an `inference`-role device gets its own model is outside this repo
+      entirely); a gap to close when this stage is built.
 - [ ] Redis config cache + invalidation, desired-state deployment to edge
-- [ ] Developer Console: registry, model detail, pipeline builder, version comparison
+- [ ] Developer Console: pipeline builder, version comparison (registry + model detail
+      done above)
 - [ ] Golden dataset + benchmark harness for at least one reference use case
 - [ ] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
       Runtime reference numbers otherwise

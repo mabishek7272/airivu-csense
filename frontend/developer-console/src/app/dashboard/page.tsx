@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
+import { Layout } from "@/components/Layout";
+import { EmptyPanel, FailureState, LoadingRows } from "@/components/States";
+import { useOnlineStatus } from "@/hooks/useNetwork";
+import { useResource } from "@/hooks/useResource";
+import { apiFetch } from "@/api/client";
 
 interface Organization {
   id: string;
@@ -13,53 +17,81 @@ interface Organization {
 }
 
 export default function DashboardPage() {
-  const { isAuthenticated, isLoading, logout } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
-  const [organizations, setOrganizations] = useState<Organization[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const online = useOnlineStatus();
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.replace("/login");
   }, [isAuthenticated, isLoading, router]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    apiFetch<Organization[]>("/api/v1/admin/organizations")
-      .then(setOrganizations)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load organizations"));
-  }, [isAuthenticated]);
+  const orgs = useResource(
+    () => apiFetch<Organization[]>("/api/v1/admin/organizations"),
+    [isAuthenticated],
+  );
 
-  if (isLoading || !isAuthenticated) return <p style={{ textAlign: "center", marginTop: "20vh" }}>Loading…</p>;
+  if (isLoading || !isAuthenticated) {
+    return (
+      <div className="auth-shell" aria-busy="true">
+        <p>Loading…</p>
+      </div>
+    );
+  }
 
   return (
-    <main style={{ maxWidth: 720, margin: "5vh auto" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ fontSize: 20 }}>Platform dashboard</h1>
-        <button onClick={logout}>Sign out</button>
-      </header>
+    <Layout>
+      <div className="page-header">
+        <div>
+          <h1>Platform dashboard</h1>
+          <p>{orgs.data ? `${orgs.data.length} organization${orgs.data.length === 1 ? "" : "s"}` : " "}</p>
+        </div>
+      </div>
 
-      <section style={{ marginTop: 24 }}>
-        <h2 style={{ fontSize: 16 }}>Organizations</h2>
-        {error && <p style={{ color: "#b00020" }}>{error}</p>}
-        {!error && !organizations && <p>Loading organizations…</p>}
-        {organizations && organizations.length === 0 && <p style={{ color: "#555" }}>No organizations yet.</p>}
-        {organizations && organizations.length > 0 && (
-          <ul>
-            {organizations.map((org) => (
-              <li key={org.id}>
-                {org.display_name} — {org.organization_type} ({org.status})
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {orgs.loading ? (
+        <LoadingRows rows={3} columns={3} />
+      ) : Boolean(orgs.error) && !orgs.data ? (
+        <FailureState error={orgs.error} online={online} onRetry={orgs.reload} entity="organizations" />
+      ) : orgs.data && orgs.data.length === 0 ? (
+        <EmptyPanel title="No organizations yet" icon="○">
+          <p>Organizations are created through tenant registration, not from here.</p>
+        </EmptyPanel>
+      ) : (
+        <div className="card">
+          <table className="data-table">
+            <caption className="visually-hidden">Organizations</caption>
+            <thead>
+              <tr>
+                <th scope="col">Organization</th>
+                <th scope="col">Type</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(orgs.data ?? []).map((org) => (
+                <tr key={org.id}>
+                  <td>{org.display_name}</td>
+                  <td>{org.organization_type}</td>
+                  <td>
+                    <span className="pill">{org.status}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <section style={{ marginTop: 32, padding: 24, border: "1px dashed #ccc", borderRadius: 8 }}>
-        <p>
-          This is the Phase&nbsp;1 foundation shell. License/reseller management, model/pipeline registry, and audit
-          search land here in Phases&nbsp;2–6 per <code>CHECKLIST.md</code>.
-        </p>
-      </section>
-    </main>
+      <div className="notice notice-info" style={{ marginTop: 24 }}>
+        <span aria-hidden="true">ⓘ</span>
+        <div>
+          <strong>Phase 1 foundation shell.</strong>
+          <p>
+            License/reseller management, a pipeline builder, and audit search land here in
+            later phases per CHECKLIST.md. The model registry is live under{" "}
+            <strong>Models</strong> above.
+          </p>
+        </div>
+      </div>
+    </Layout>
   );
 }
