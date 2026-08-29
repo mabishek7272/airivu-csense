@@ -4,6 +4,13 @@ import { CATEGORIES } from "./categories";
 
 type Manifest = Record<string, string[]>;
 
+// Two real inboxes, not a placeholder alias invented for this page - both as "to"
+// recipients rather than a to/cc split, so either person can pick it up.
+const CONTACT_EMAILS = ["aron.morgan@airivu.ai", "ak@irairf.com"];
+const CONTACT_HREF = `mailto:${CONTACT_EMAILS.join(",")}?subject=${encodeURIComponent(
+  "CSense demo",
+)}`;
+
 export default function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [failed, setFailed] = useState(false);
@@ -77,6 +84,14 @@ export default function App() {
           </main>
         </>
       )}
+
+      <section className="cta" aria-labelledby="cta-heading">
+        <h2 id="cta-heading">Want to see this on your own site?</h2>
+        <p>Send over a few minutes of footage from a camera you already have, and we&apos;ll show you exactly what CSense finds on it.</p>
+        <a className="cta-button" href={CONTACT_HREF}>
+          Talk to us
+        </a>
+      </section>
 
       <footer className="footer">
         <p>AIRIVU CSense — on-site AI detection. This page runs no live model; every example is pre-rendered.</p>

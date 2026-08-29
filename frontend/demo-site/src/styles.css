@@ -307,6 +307,42 @@ body {
   color: var(--text-muted);
 }
 
+/* --- CTA ---------------------------------------------------------------- */
+
+.cta {
+  margin-top: var(--space-8);
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.cta h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 22px;
+}
+
+.cta p {
+  margin: 0 auto var(--space-4);
+  max-width: 480px;
+  color: var(--text-muted);
+}
+
+.cta-button {
+  display: inline-block;
+  padding: 12px 28px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--text-inverse);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cta-button:hover {
+  background: var(--accent-hover);
+}
+
 /* --- Footer ------------------------------------------------------------------ */
 
 .footer {

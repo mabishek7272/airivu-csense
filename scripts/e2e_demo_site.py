@@ -175,6 +175,14 @@ def main() -> int:
                 failures,
             )
 
+            print("\n[8] The closing CTA has a real, well-formed contact link")
+            cta_href = page.locator(".cta-button").get_attribute("href")
+            check(
+                bool(cta_href) and cta_href.startswith("mailto:") and "@" in cta_href,
+                f"the CTA button is a mailto: link to a real address ({cta_href})",
+                failures,
+            )
+
         finally:
             browser.close()
 

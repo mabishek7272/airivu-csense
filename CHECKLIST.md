@@ -347,17 +347,27 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         (arrows), pause on hover/focus, dot navigation, and `prefers-reduced-motion`
         genuinely stops the auto-advance timer, not just its transition (CSS alone can
         silence a fade; it can't stop a `setInterval`).
+  - [x] Closing CTA ("Want to see this on your own site?") — a `mailto:` link to two
+        real inboxes given directly for this purpose (`aron.morgan@airivu.ai`,
+        `ak@irairf.com`), not a placeholder alias invented for the page. Deliberately not
+        a form: this site has no backend to submit one to, and a fake-looking form that
+        silently goes nowhere is worse than an honest mailto.
   - [x] Verified with a real browser, not just a build —
-        [scripts/e2e_demo_site.py](scripts/e2e_demo_site.py) (9 checks): categories
+        [scripts/e2e_demo_site.py](scripts/e2e_demo_site.py) (10 checks): categories
         switch, real images render, keyboard nav advances the frame, reduced motion is
-        respected in both directions, and — the check specific to this site's privacy
-        requirement — samples pixel-luminance variance inside the flagship plate frame's
-        actual detected bbox versus a same-size region right beside it, confirming the
-        region is *measurably* blurred rather than merely boxed.
+        respected in both directions, the CTA resolves to a real address, and — the check
+        specific to this site's privacy requirement — samples pixel-luminance variance
+        inside the flagship plate frame's actual detected bbox versus a same-size region
+        right beside it, confirming the region is *measurably* blurred rather than merely
+        boxed.
   - [x] A dark-mode contrast bug (hero heading rendering dark-on-dark, caught in a manual
         screenshot review rather than by typecheck/lint/the e2e script) fixed before
         shipping — `--text-inverse` flips per theme for other uses on this page, but the
         hero's own background never does, so it needed its own theme-independent token.
+  - [x] Checked for a second Person Detection example beyond the 2 shipped — reran person
+        detection against both curated candidate pools already on disk (48 frames, down
+        to confidence 0.1): nothing new. The archive is genuinely vehicle-lot-heavy;
+        finding more would mean a fresh, wider pull from the server, not local curation.
       Real, uncurated source frames for this (`curate-review/`, `smoke-test*/`) live
       outside the repo entirely and are gitignored as a safety net; only the finished,
       reviewed, redacted output under `public/showcase/` reaches git.
