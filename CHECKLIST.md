@@ -214,14 +214,61 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       of the line above; ONVIF discovery in particular blocks on real hardware/simulators to
       test against (**[NEEDS EXTERNAL INPUT]**, see below), but a stub interface with a mock
       adapter doesn't.
-- [ ] MediaMTX integration: short-lived signed media session, WebRTC/HLS, privacy masking
-      pipeline — confirmed still not built: infra config exists (`infra/mediamtx/`) but
-      nothing in tenant_api issues a media session or serves live video yet.
+- [x] MediaMTX integration: short-lived signed media session, HLS + WebRTC live view.
+  - [x] **HLS is the primary path, not WebRTC** - a scope reversal from the first pass at
+        this plan, caught before any code was written: the deployment's real NVR streams
+        H.265 only ([[nvr-h265-constraint]]), which no mainstream browser's WebRTC stack
+        can decode (confirmed - MediaMTX's own WebRTC endpoint 400s an H.265 source), but
+        which HLS carries natively, no transcoding, no extra cost. `POST
+        /api/v1/tenant/cameras/{id}/live-session` (`backend/tenant_api/app/api/media.py`)
+        relays the mainstream through a MediaMTX path MediaMTX only pulls from
+        `sourceOnDemand` (nothing watched, nothing costs anything).
+  - [x] **WebRTC transcodes the substream, never the mainstream** - a real, measured cost
+        difference (~0.23 vs ~1.7 CPU cores/camera, [[nvr-h265-constraint]]), driven by a
+        MediaMTX `runOnDemand` ffmpeg process that only starts once a viewer actually
+        connects. Needed the `bluenviron/mediamtx:1.20.1-ffmpeg` image variant - the plain
+        tag has no shell or ffmpeg at all (confirmed directly).
+  - [x] **Two real auth-webhook bugs found only by testing the real system**, both
+        corrected the same session: MediaMTX's `authMethod: http` by default gates its own
+        Control API (`action: api`) behind the same webhook meant for viewers - excluded
+        explicitly (`mediamtx.yml`'s `authHTTPExclude`), or `media.py` could not configure
+        any path at all. It also gates the WebRTC transcode's own internal loopback
+        *publish* - a first pass assumed this was implicitly trusted and was wrong; fixed
+        with a narrowly-scoped exclusion (`publish` on `*-webrtc` paths only, not `publish`
+        generally), and RTSP (8554) was found to need no host port published at all once
+        that was understood, narrowing the exclusion's real reach to this compose network.
+  - [x] Session tokens (`csense_shared/security/media_sessions.py`) are deliberately
+        **not** `ws_tickets.py`'s single-use shape - a live view needs to survive repeated
+        auth-webhook checks over a real viewing duration, so this checks-not-consumes and
+        relies on a TTL instead; carries `protocol` so an `hls` token can't authorize a
+        `webrtc` path or vice versa (they cost genuinely different amounts).
+  - [x] `camera.view_live` permission (migration 0033), elevated, granted to both
+        `tenant_owner` and `tenant_member` - watching a camera is more routine than editing
+        one (`camera.manage`, owner-only), matching `camera.probe`'s existing precedent.
+  - [x] **No live masking, deliberately** - real-time per-frame masking would need a
+        separate transcode pipeline the no-GPU production server can't really support, and
+        would undercut live monitoring's actual purpose. Confirmed with you explicitly
+        before building. Masking stays an evidence/retention-time concern, unchanged.
+  - [x] **Verified against the real NVR, not just structurally** - `scripts/e2e_live_view.py`
+        drives the real API end to end and, when given real credentials (never hardcoded,
+        never persisted), runs a real `ffprobe` through the real MediaMTX and confirms
+        actual video: the hls path carries real HEVC from the real camera, the webrtc
+        path's transcode actually produces real H.264 - not just a plausible-looking config.
+  - [ ] **Deliberately deferred**: zone-privacy-level gating (`zones.privacy_level` is
+        still CRUD-only, read by nothing); a concurrency/CPU guardrail on the WebRTC
+        transcode path (no cap on simultaneous transcodes - a real risk on a fixed-core
+        box, not building a limiter without a real policy to build it against); HLS
+        fallback via hls.js is built, but no feature-detection fallback exists for a
+        browser that can decode neither HEVC-over-HLS nor gets to try WebRTC - the UI
+        names the limitation rather than silently failing (`useHlsPlayer.ts`).
 - [ ] Camera health current-state model + telemetry history (Mongo) — note: MongoDB was
       removed from the stack (CLARIFICATIONS #19/#20); this will land in PostgreSQL like
       detections did, not Mongo as originally spec'd. Line stays open; wording is stale.
-- [ ] **[NEEDS EXTERNAL INPUT]** real camera/NVR hardware or RTSP test feeds for actual
-      onboarding validation — will build against RTSP test streams / simulators otherwise
+- [~] **[NEEDS EXTERNAL INPUT]** real camera/NVR hardware or RTSP test feeds for actual
+      onboarding validation — partially resolved: a real NVR (`autotek-dorani-nvr
+      .dyndns.org`, see [[nvr-h265-constraint]]) was available and used to validate live
+      view end-to-end (`scripts/e2e_live_view.py`). Broader onboarding flows (ONVIF
+      discovery, the NVR adapter interface) still have nothing real to test against.
 
 ## Phase 4 — AI Registry, Pipeline Runtime, and Control Plane
 

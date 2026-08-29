@@ -1,13 +1,58 @@
-# Minimal local-dev MediaMTX config (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §14).
-# Paths are created dynamically once the Media Session Service (Phase 3) issues
-# short-lived signed sessions; this file only sets safe transport defaults for now.
+# Local-dev MediaMTX config (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §14).
+# Paths are created dynamically by the Media Session Service (Tenant API's media.py) the
+# first time a camera is watched - never defined statically here.
 logLevel: info
 
 rtspAddress: :8554
 webrtcAddress: :8889
 hlsAddress: :8888
 
-# Authentication is delegated to the Media Session Service once it exists (Phase 3).
-# Until then, no paths are defined, so nothing is publishable/playable by default —
-# fail-safe per architecture principle 9 (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md §2).
+# Local-dev topology only: a browser on the host reaches this container via `localhost`
+# (Traefik/published ports), but MediaMTX's own ICE candidate gathering only knows its
+# container-internal address by default - without this, WebRTC negotiates successfully but
+# no media ever arrives. A real deployment needs the real external host/IP here instead.
+webrtcAdditionalHosts: [localhost]
+
+# Control API (backend/tenant_api/app/api/media.py creates/replaces paths through this) -
+# reached container-to-container only, never exposed to a browser or through Traefik.
+api: yes
+apiAddress: :9997
+
+# External HTTP auth (verified against the real contract, not assumed): MediaMTX POSTs
+# {user, password, token, ip, action, path, protocol, id, query, userAgent} here on every
+# connection attempt; any 20x response authorizes, anything else refuses. This is a
+# server-to-server call MediaMTX itself makes - the browser never talks to Tenant API for
+# this (TRD §14: "live media is not routed through Tenant API processes" - only this one
+# auth check is, the media bytes never are).
+authMethod: http
+authHTTPAddress: http://tenant-api:8000/api/v1/tenant/media/authenticate
+# The webhook above only ever expects a viewer session token (read/publish) - the Control
+# API itself (media.py's own path-configuration calls) is a different trust boundary
+# entirely (Tenant API managing its own media server, not a viewer watching a camera) and
+# must not be gated behind the same check. Confirmed this mattered by testing directly:
+# without this exclusion, `GET /v3/config/paths/list` returns "authentication error" even
+# for MediaMTX's own control plane, which would make media.py unable to configure any path
+# at all. metrics/pprof excluded too - neither is viewer-facing either.
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+  # The WebRTC on-demand transcode's ffmpeg process (media.py's `runOnDemand` command)
+  # publishes back into this same container over an RTSP loopback - confirmed by testing
+  # directly, not assumed, that this publish is *also* gated by the webhook above by
+  # default (it failed with a real "401 ANNOUNCE" until this was added), and the ffmpeg
+  # command carries no credentials of its own to satisfy it. Scoped narrowly to
+  # `-webrtc`-suffixed paths and `publish` only - a viewer's `read` of the same path still
+  # goes through the real session-token check. Residual risk, named rather than ignored:
+  # anything else on this compose network could still publish garbage to a `*-webrtc`
+  # path unauthenticated. Acceptable for local dev (RTSP/8554 is not published to the
+  # host, so this is reachable only from inside the Docker network); a real deployment
+  # should replace this with a real per-path publish credential instead.
+  - action: publish
+    path: "~-webrtc$"
+
+# No paths defined statically - every path is created (and kept current - see
+# media.py's `_put_mediamtx_path`, which always replaces rather than assuming a stale
+# config is still correct) by the Media Session Service on first watch. Fail-safe per
+# architecture principle 9 (TRD §2): nothing is publishable/playable until then.
 paths: {}

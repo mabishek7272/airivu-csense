@@ -156,7 +156,10 @@ def _to_camera(row) -> CameraOut:
     )
 
 
-async def _load(db: AsyncSession, camera_id: uuid.UUID) -> CameraOut:
+async def load_camera(db: AsyncSession, camera_id: uuid.UUID) -> CameraOut:
+    """Public (not `_load`) - `media.py`'s live-session endpoints reuse this rather than
+    re-deriving the same RLS-scoped "not found covers both missing and another tenant's
+    camera" lookup."""
     row = (
         await db.execute(
             text(_SELECT + " WHERE c.id = :id AND c.deleted_at IS NULL"),
@@ -203,7 +206,7 @@ async def get_camera(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> CameraOut:
     require_permission(context, "camera.read")
-    return await _load(db, camera_id)
+    return await load_camera(db, camera_id)
 
 
 @router.post("", response_model=CameraOut, status_code=201)
@@ -260,7 +263,7 @@ async def create_camera(
         "camera_created",
         extra={"camera_id": str(camera_id), "tenant_id": str(context.tenant_id)},
     )
-    return await _load(db, camera_id)
+    return await load_camera(db, camera_id)
 
 
 @router.patch("/{camera_id}", response_model=CameraOut)
@@ -271,11 +274,11 @@ async def update_camera(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> CameraOut:
     require_permission(context, "camera.manage")
-    await _load(db, camera_id)  # 404s before doing anything
+    await load_camera(db, camera_id)  # 404s before doing anything
 
     changes = body.model_dump(exclude_unset=True)
     if not changes:
-        return await _load(db, camera_id)
+        return await load_camera(db, camera_id)
 
     assignments = ", ".join(
         f"{field} = CAST(:{field} AS camera_status)" if field == "status" else f"{field} = :{field}"
@@ -292,7 +295,7 @@ async def update_camera(
         "camera_updated",
         extra={"camera_id": str(camera_id), "fields": sorted(changes)},
     )
-    return await _load(db, camera_id)
+    return await load_camera(db, camera_id)
 
 
 @router.delete("/{camera_id}", status_code=204)
@@ -348,7 +351,7 @@ async def set_credentials(
     work, replacing the credential to a device that watches people is not.
     """
     require_permission(context, "camera.credential.manage")
-    camera = await _load(db, camera_id)
+    camera = await load_camera(db, camera_id)
 
     keyring = keyring_from_settings(request.app.state.settings)
     try:
@@ -382,7 +385,7 @@ async def set_credentials(
             # No length, no prefix: a length alone narrows a brute force.
         },
     )
-    return await _load(db, camera_id)
+    return await load_camera(db, camera_id)
 
 
 @router.delete("/{camera_id}/credentials", status_code=204)
@@ -439,7 +442,7 @@ async def probe_camera(
     otherwise be the metadata service or an internal database.
     """
     require_permission(context, "camera.probe")
-    camera = await _load(db, camera_id)
+    camera = await load_camera(db, camera_id)
 
     path = camera.main_stream_path if stream == "main" else camera.sub_stream_path
     if not camera.hostname or not path:

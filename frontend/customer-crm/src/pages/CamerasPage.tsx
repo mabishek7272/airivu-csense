@@ -9,6 +9,7 @@ import {
   updateCamera,
 } from "../api/cameras";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
+import { LiveViewDialog } from "../components/LiveViewDialog";
 import {
   ErrorSummary,
   Field,
@@ -60,6 +61,7 @@ export function CamerasPage() {
   const [deleting, setDeleting] = useState<Camera | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
+  const [watching, setWatching] = useState<Camera | null>(null);
 
   const cameras = useResource(() => listCameras({ status: statusFilter || undefined }), [
     statusFilter,
@@ -286,6 +288,19 @@ export function CamerasPage() {
                     <button
                       type="button"
                       className="btn-quiet"
+                      onClick={() => setWatching(camera)}
+                      disabled={!online || camera.status !== "ready"}
+                      title={
+                        camera.status !== "ready"
+                          ? "Probe this camera successfully before it can be watched live."
+                          : undefined
+                      }
+                    >
+                      Watch live
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-quiet"
                       onClick={() => void handleProbe(camera)}
                       disabled={probing === camera.id || !online}
                     >
@@ -363,6 +378,8 @@ export function CamerasPage() {
           }}
         />
       )}
+
+      {watching && <LiveViewDialog camera={watching} onClose={() => setWatching(null)} />}
 
       {credentialsFor && (
         <CredentialDialog

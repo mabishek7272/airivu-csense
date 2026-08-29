@@ -126,13 +126,30 @@ services:
     networks: [csense]
 
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    # The `-ffmpeg` variant, not the bare tag: the plain image has no shell or ffmpeg at
+    # all (confirmed directly, not assumed - `docker exec ... which ffmpeg` fails because
+    # `which` itself isn't there), and WebRTC live view needs a real on-demand transcode
+    # (the deployment's real NVR streams H.265, which no mainstream browser's WebRTC stack
+    # can decode - see [[nvr-h265-constraint]] and media.py). Pinned to 1.20.1, not
+    # `:latest` - the HTTP auth webhook contract and Control API shape this stack depends
+    # on were verified against this exact version's real OpenAPI spec.
+    image: bluenviron/mediamtx:1.20.1-ffmpeg
     volumes:
       - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     ports:
-      - "8554:8554" # RTSP
-      - "8889:8889" # WebRTC
+      # RTSP (8554) is deliberately *not* published to the host - nothing in this design
+      # needs it from outside the Docker network (MediaMTX only ever pulls from a camera
+      # outbound, or receives the WebRTC transcode's own loopback publish, both from
+      # inside this network), and leaving it unpublished narrows the real reachability of
+      # the path-scoped `authHTTPExclude` for that loopback publish (see mediamtx.yml) to
+      # this compose network only, not the whole host.
+      - "8889:8889" # WebRTC (signaling)
+      - "8189:8189/udp" # WebRTC ICE - not published before this; a browser outside the
+        # Docker network cannot complete an ICE handshake without it.
       - "8888:8888" # HLS
+      - "9997:9997" # Control API - published for local introspection/e2e verification
+        # only, same convenience-port convention as MinIO's console (9001); tenant-api
+        # itself reaches this container-to-container and needs no published port.
     networks: [csense]
 
   migrate:

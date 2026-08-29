@@ -37,6 +37,25 @@ http:
       entryPoints: [web]
       middlewares: [security-headers, platform-cors, api-ratelimit]
 
+    media-hls:
+      # /media/** (TRD §6.3: "accepts only short-lived signed session tokens") - the
+      # token itself is the auth, checked by MediaMTX's own auth webhook
+      # (media.py:authenticate_media_request), not by anything here. No rate-limit: an
+      # active HLS viewer fetches a new segment every couple of seconds, and limiting that
+      # the way a REST endpoint is limited would just break playback.
+      rule: "PathPrefix(`/media/hls`)"
+      service: media-hls
+      entryPoints: [web]
+      middlewares: [security-headers, media-strip-hls]
+
+    media-webrtc:
+      # WHEP signaling only (a couple of small HTTP calls); the actual media flows over
+      # ICE/UDP straight to MediaMTX, never through Traefik.
+      rule: "PathPrefix(`/media/webrtc`)"
+      service: media-webrtc
+      entryPoints: [web]
+      middlewares: [security-headers, media-strip-webrtc]
+
     customer-crm:
       rule: "Host(`app.localhost`)"
       service: customer-crm
@@ -78,6 +97,14 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    media-hls:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8888"
+    media-webrtc:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8889"
 
   middlewares:
     security-headers:
@@ -116,3 +143,11 @@ http:
       rateLimit:
         average: 50
         burst: 100
+
+    media-strip-hls:
+      stripPrefix:
+        prefixes: ["/media/hls"]
+
+    media-strip-webrtc:
+      stripPrefix:
+        prefixes: ["/media/webrtc"]

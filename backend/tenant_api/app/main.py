@@ -13,6 +13,7 @@ from app.api import (
     health,
     incidents,
     ingest,
+    media,
     notification_policies,
     pipeline_assignments,
     realtime,
@@ -98,5 +99,6 @@ app.include_router(recipient_groups.router)
 app.include_router(notification_policies.router)
 app.include_router(pipeline_assignments.router)
 app.include_router(realtime.router)
+app.include_router(media.router)
 
 

@@ -760,3 +760,13 @@ html, body { max-width: 100%; overflow-x: hidden; }
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
+
+.live-view-picker button {
+  flex: 1;
+  height: auto;
+  min-height: 64px;
+  text-align: left;
+  white-space: normal;
+  padding: var(--space-3);
+}
+.live-view-player video { border-radius: var(--radius-sm); }

@@ -209,7 +209,7 @@ async def probe_stream(
     password: str | None = None
     if username:
         secret_row = await session.execute(
-            _camera_secret_query(), {"id": camera_id}
+            camera_secret_query(), {"id": camera_id}
         )
         secret_id = secret_row.scalar_one_or_none()
         if secret_id:
@@ -324,7 +324,9 @@ async def probe_stream(
                 pass
 
 
-def _camera_secret_query():
+def camera_secret_query():
+    """Shared with `camera_stream.py` - the live-view session resolver needs the same
+    lookup, and a duplicated SQL string is worse than one shared helper."""
     from sqlalchemy import text
 
     return text("SELECT endpoint_secret_id FROM cameras WHERE id = :id")

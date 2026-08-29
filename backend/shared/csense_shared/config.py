@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # defaults to us-east-1 unless configured otherwise.
     minio_region: str = "us-east-1"
 
+    # MediaMTX (live view)
+    # Control API, reached container-to-container - never exposed to a browser.
+    mediamtx_control_url: str = "http://mediamtx:9997"
+    # Same "not the container-network name" reasoning as `minio_public_endpoint`: the
+    # play_url handed to a browser has to name a host it can actually reach, i.e. through
+    # Traefik, not the `mediamtx` service name.
+    media_public_base_url: str = "http://app.localhost:8080"
+
     # JWT
     jwt_algorithm: str = "RS256"
     jwt_private_key_path: str = "/run/secrets/jwt_private.pem"
