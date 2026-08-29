@@ -156,13 +156,50 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
   - [x] `validate_allowlist_candidate` rejects ranges overlapping the host's own networks.
         A tenant declaring `172.18.0.0/16` looks ordinary but is Docker's bridge: traffic
         takes the local route and reaches our Postgres, not their tunnel.
-  - [ ] **[NEEDS PROCEDURE CHANGE]** The deployment guide's WireGuard templates pair
-        `AllowedIPs = 10.0.0.0/24` on every client with a blanket server-side FORWARD
-        accept, which lets one tenant's peer route to another's cameras. Needs per-peer
-        `/32` and a `wg0 → wg0` drop rule in the documented procedure.
-  - [ ] VPN address allocation from a pool — the template hardcodes `10.0.0.2`, so the
-        second site collides. A fleet-wide unique index makes a collision fail loudly, but
-        nothing allocates yet.
+  - [x] **The deployment guide's own templates closed, not just documented as risky.**
+        `AllowedIPs = 10.0.0.0/24` on every client, paired with a blanket server-side
+        FORWARD accept, let one tenant's peer route to another's cameras - and the guide's
+        `10.0.0.2` was hardcoded, so a second site collided with the first. Neither is a
+        "be careful when editing the template" problem now: `POST
+        /devices/{id}/vpn-provision` ([edge.py](backend/tenant_api/app/api/edge.py)) is
+        the only path that produces a peer entry, and it cannot reproduce either mistake.
+    - [x] [vpn_pool.py](backend/shared/csense_shared/security/vpn_pool.py) allocates a
+          fleet-wide-unique `/32` from a 10.8.0.0/16 pool (65k+ addresses vs. the guide's
+          ~253) - the existing DB unique index is the backstop, this is what makes hitting
+          it rare rather than routine.
+    - [x] The rendered server peer stanza's `AllowedIPs` is always exactly that device's
+          own `/32` (plus its own site LAN, never anyone else's) - never the `/24` every
+          peer used to share. This is what actually stops cross-tenant routing; a bigger
+          pool alone would just be the same flaw with more room to collide in.
+    - [x] **A second, previously-undiscovered flaw closed alongside it**: nothing stopped
+          two different tenants declaring overlapping site LANs (`192.168.1.0/24` is
+          common), which on a shared WireGuard server means the second peer configured
+          silently steals routing for the first - a functional bug, and a way for a
+          malicious tenant to hijack another's camera traffic. `edge_vpn_pool_snapshot()`
+          (migration 0029, `SECURITY DEFINER` - the same narrow-escape-hatch pattern as
+          `edge_enrolment_lookup`) lets the overlap check see the whole fleet without
+          widening row-level security anywhere, and returns only addresses/ranges, never
+          which tenant they belong to.
+    - [x] **A default that would have silently defeated this on deploy, fixed underneath
+          it**: `reserved_local_networks`' default value was effectively all of RFC1918 -
+          wired into a real check for the first time here, it would have rejected every
+          legitimate site LAN a tenant could ever declare. Narrowed to the deployment's
+          actual Docker bridge ranges.
+    - [x] A device's WireGuard public key is now validated as one (`^[A-Za-z0-9+/]{43}=$`)
+          at enrolment, not just length-bounded - it is later embedded verbatim into a
+          peer stanza an operator pastes into the platform's one shared server config, and
+          an unvalidated value could smuggle a newline and a forged second `[Peer]` block.
+    - [x] Verified through two separate tenants, because the property that matters -
+          "tenant A's provisioning can never collide with tenant B's" - cannot be shown
+          from inside one tenant's own view:
+          [scripts/e2e_vpn_provisioning.py](scripts/e2e_vpn_provisioning.py) (20 checks) and
+          [scripts/e2e_vpn_tunnel_dialog.py](scripts/e2e_vpn_tunnel_dialog.py) (browser).
+          7 new unit tests in
+          [test_vpn_pool.py](backend/tests/test_vpn_pool.py); suite at 185 passing.
+    - [x] CRM: a "Tunnel" action on the Edge page
+          ([EdgePage.tsx](frontend/customer-crm/src/pages/EdgePage.tsx)) allocates and
+          renders both config blocks, copy-to-clipboard, disabled until a device has
+          reported a WireGuard key.
 - [ ] Site/zone/edge schemas + Customer CRM screens
 - [ ] Camera CRUD, encrypted credential storage (envelope encryption), ONVIF discovery
       stub, manual RTSP entry, NVR adapter interface (one mock reference adapter)

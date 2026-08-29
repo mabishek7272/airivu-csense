@@ -5,6 +5,7 @@ import {
   deleteEdgeDevice,
   issueEnrolmentToken,
   listEdgeDevices,
+  provisionVpn,
   updateEdgeDevice,
 } from "../api/cameras";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
@@ -71,6 +72,7 @@ export function EdgePage() {
     null,
   );
   const [issuing, setIssuing] = useState<string | null>(null);
+  const [tunneling, setTunneling] = useState<EdgeDevice | null>(null);
 
   const devices = useResource(
     () => listEdgeDevices({ role: roleFilter || undefined }),
@@ -289,6 +291,19 @@ export function EdgePage() {
                     <button
                       type="button"
                       className="btn-quiet"
+                      onClick={() => setTunneling(device)}
+                      disabled={!online || !device.has_wireguard_key}
+                      title={
+                        device.has_wireguard_key
+                          ? undefined
+                          : "Enrol the device with a WireGuard key first"
+                      }
+                    >
+                      Tunnel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-quiet"
                       onClick={() => setEditing(device)}
                       disabled={!online}
                     >
@@ -348,6 +363,18 @@ export function EdgePage() {
       )}
 
       {token && <TokenDialog {...token} onClose={() => setToken(null)} />}
+
+      {tunneling && (
+        <VpnProvisionDialog
+          device={tunneling}
+          onClose={() => setTunneling(null)}
+          onProvisioned={(updated) =>
+            devices.mutate((current) =>
+              (current ?? []).map((d) => (d.id === updated.id ? updated : d)),
+            )
+          }
+        />
+      )}
 
       <ConfirmDialog
         open={deleting !== null}
@@ -536,6 +563,169 @@ function TokenDialog({
         Expires {new Date(token.expires_at).toLocaleString()}. It can be redeemed once, and
         after that the device authenticates with its own credential instead.
       </p>
+    </Dialog>
+  );
+}
+
+/* ---------------------------------------------------------------- VPN provisioning */
+
+/** Allocates and renders this device's WireGuard tunnel.
+ *
+ *  The deployment guide's own templates hardcode one address for every client and give
+ *  every peer the run of the whole /24 — harmless for one site, and a way for one
+ *  tenant's device to route to another's cameras once there is a second. This dialog is
+ *  built so nobody ever hand-copies those templates again: opening it allocates a real,
+ *  collision-free address and renders the two config blocks directly, each scoped to
+ *  exactly this one device.
+ */
+function VpnProvisionDialog({
+  device,
+  onClose,
+  onProvisioned,
+}: {
+  device: EdgeDevice;
+  onClose: () => void;
+  onProvisioned: (device: EdgeDevice) => void;
+}) {
+  const notify = useNotifications();
+  const [lanCidr, setLanCidr] = useState(device.lan_cidr ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | undefined>();
+  const [copied, setCopied] = useState<"server" | "client" | null>(null);
+
+  // Opening the dialog allocates the address (or re-renders the existing one) - that is
+  // the whole point of this screen, not a side effect of it, so it happens on mount
+  // rather than waiting for the operator to press something.
+  const provisioning = useResource(
+    () => provisionVpn(device.id, { lan_cidr: device.lan_cidr ?? undefined }),
+    [device.id],
+  );
+
+  async function copy(kind: "server" | "client", text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      window.setTimeout(() => setCopied((c) => (c === kind ? null : c)), 2500);
+    } catch {
+      notify.notify({
+        kind: "warning",
+        title: "Could not copy automatically",
+        detail: "Select the text and copy it manually.",
+      });
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError(undefined);
+    try {
+      const updated = await provisionVpn(device.id, { lan_cidr: lanCidr.trim() || undefined });
+      provisioning.mutate(() => updated);
+      onProvisioned(updated.device);
+      notify.success(`Tunnel updated for ${device.name}`, updated.warnings[0]);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not update the tunnel.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const result = provisioning.data;
+
+  return (
+    <Dialog
+      open
+      title={`Tunnel for ${device.name}`}
+      onClose={onClose}
+      footer={<button type="button" onClick={onClose}>Done</button>}
+    >
+      {provisioning.loading ? (
+        <InlineSpinner label="Allocating" />
+      ) : provisioning.error && !result ? (
+        <div className="notice notice-warning" role="alert">
+          <span aria-hidden="true">⚠</span>
+          <div>
+            <strong>Could not provision a tunnel.</strong>
+            <p>
+              {provisioning.error instanceof Error
+                ? provisioning.error.message
+                : "The request failed."}
+            </p>
+          </div>
+        </div>
+      ) : (
+        result && (
+          <>
+            {saveError && (
+              <div className="notice notice-warning" role="alert" style={{ marginBottom: 16 }}>
+                <span aria-hidden="true">⚠</span>
+                <div>
+                  <strong>Could not update the tunnel.</strong>
+                  <p>{saveError}</p>
+                </div>
+              </div>
+            )}
+
+            {result.warnings.map((w) => (
+              <div className="notice notice-info" role="status" key={w} style={{ marginBottom: 16 }}>
+                <span aria-hidden="true">ⓘ</span>
+                <p>{w}</p>
+              </div>
+            ))}
+
+            <p className="mono">
+              Address <strong>{result.device.vpn_address}</strong> — allocated from the
+              shared pool, never the guide&apos;s hardcoded one.
+            </p>
+
+            <label htmlFor="tunnel-lan-cidr">Site LAN this device tunnels (optional)</label>
+            <div className="token-display">
+              <input
+                id="tunnel-lan-cidr"
+                type="text"
+                placeholder="192.168.1.0/24"
+                value={lanCidr}
+                onChange={(e) => setLanCidr(e.target.value)}
+              />
+              <button type="button" onClick={() => void handleSave()} disabled={saving}>
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+            <p className="muted" style={{ marginTop: 4 }}>
+              Leave blank if the only address reachable through this device is its own. A
+              range already tunnelled by another device — including another tenant&apos;s
+              — is refused, not silently shared.
+            </p>
+
+            <h3 style={{ marginTop: 20 }}>Paste onto the device</h3>
+            <div className="token-display">
+              <code className="mono" style={{ whiteSpace: "pre-wrap" }}>
+                {result.client_config}
+              </code>
+              <button type="button" onClick={() => void copy("client", result.client_config)}>
+                {copied === "client" ? "Copied" : "Copy"}
+              </button>
+            </div>
+
+            <h3 style={{ marginTop: 16 }}>Paste into the platform&apos;s WireGuard server</h3>
+            <div className="token-display">
+              <code className="mono" style={{ whiteSpace: "pre-wrap" }}>
+                {result.server_peer_config}
+              </code>
+              <button
+                type="button"
+                onClick={() => void copy("server", result.server_peer_config)}
+              >
+                {copied === "server" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <p className="muted" style={{ marginTop: 8 }}>
+              <code className="mono">AllowedIPs</code> here is this device&apos;s own
+              address only — never a wider range another peer could also claim.
+            </p>
+          </>
+        )
+      )}
     </Dialog>
   );
 }

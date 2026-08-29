@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import hmac
+import ipaddress
 import logging
 import secrets
 import uuid
@@ -40,9 +41,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
 from app.deps_agent import AgentContext, agent_db_session, current_agent
+from csense_shared.config import get_settings
 from csense_shared.errors import ApiError, NotFoundError
+from csense_shared.security.outbound import (
+    BlockedAddressError,
+    parse_networks,
+    validate_allowlist_candidate,
+)
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.tenant_context import TenantContext
+from csense_shared.security.vpn_pool import next_free_address
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +136,11 @@ class DeviceOut(BaseModel):
     connectivity_method: str | None = None
     connectivity_reason: str | None = None
     vpn_address: str | None = None
+    lan_cidr: str | None = None
+    # Whether a tunnel *can* be provisioned - separate from whether one has been, because
+    # the key only arrives at enrolment and there is no way to infer its presence from
+    # anything else on this model.
+    has_wireguard_key: bool = False
     camera_count: int = 0
     enrolled_at: dt.datetime | None = None
     last_seen_at: dt.datetime | None = None
@@ -148,7 +161,8 @@ _SELECT = """
     SELECT d.id, d.tenant_id, d.site_id, s.name, d.name, d.serial_number, d.device_type,
            d.role, d.status, d.hardware, d.capabilities, d.os_name, d.os_version,
            d.agent_version, d.connectivity_method, d.connectivity_reason,
-           host(d.vpn_address), d.enrolled_at, d.last_seen_at, d.last_error, d.created_at,
+           host(d.vpn_address), text(d.lan_cidr), (d.wireguard_public_key IS NOT NULL),
+           d.enrolled_at, d.last_seen_at, d.last_error, d.created_at,
            (SELECT count(*) FROM cameras c
              WHERE c.edge_device_id = d.id AND c.deleted_at IS NULL)
     FROM edge_devices d
@@ -157,16 +171,17 @@ _SELECT = """
 
 
 def _to_device(row, now: dt.datetime) -> DeviceOut:
-    last_seen = row[18]
+    last_seen = row[20]
     return DeviceOut(
         id=row[0], tenant_id=row[1], site_id=row[2], site_name=row[3], name=row[4],
         serial_number=row[5], device_type=row[6], role=row[7], status=row[8],
         online=bool(last_seen and (now - last_seen) < OFFLINE_AFTER),
         hardware=row[9] or {}, capabilities=row[10] or {}, os_name=row[11],
         os_version=row[12], agent_version=row[13], connectivity_method=row[14],
-        connectivity_reason=row[15], vpn_address=row[16], enrolled_at=row[17],
-        last_seen_at=last_seen, last_error=row[19], created_at=row[20],
-        camera_count=row[21],
+        connectivity_reason=row[15], vpn_address=row[16], lan_cidr=row[17],
+        has_wireguard_key=bool(row[18]), enrolled_at=row[19],
+        last_seen_at=last_seen, last_error=row[21], created_at=row[22],
+        camera_count=row[23],
     )
 
 
@@ -343,7 +358,8 @@ async def delete_device(
             UPDATE edge_devices
             SET deleted_at = now(), status = 'retired',
                 agent_token_hash = NULL, agent_token_prefix = NULL,
-                vpn_address = NULL, wireguard_public_key = NULL, updated_at = now()
+                vpn_address = NULL, wireguard_public_key = NULL, lan_cidr = NULL,
+                updated_at = now()
             WHERE id = :id
             """
         ),
@@ -432,6 +448,251 @@ async def issue_enrolment_token(
     )
 
 
+# --- WireGuard provisioning -------------------------------------------------------------
+#
+# The deployment guide's own templates have two flaws: every client hardcodes
+# `10.0.0.2`, so the second site collides with the first, and every peer's
+# `AllowedIPs = 10.0.0.0/24` lets one tenant's device route to another tenant's cameras -
+# the /24 is shared by every peer on the one WireGuard server this platform runs, and
+# nothing about it keeps two tenants' traffic apart. This is the fix for both: the address
+# comes from a managed pool (vpn_pool.py) instead of being hand-picked, and the config this
+# renders is the only place a peer stanza is meant to come from - it is never anything
+# wider than that one device's own /32.
+
+
+def _safe_comment(value: str) -> str:
+    """Makes a tenant-controlled string safe to embed as a comment in a config an operator
+    pastes into the platform's one *shared* WireGuard server.
+
+    A device name is bounded in length elsewhere but not in character set, and this text
+    is not read back by us - it is meant to be copied verbatim into a real file. A newline
+    would end the comment early; a `[` could open what reads as a second, forged config
+    section. Stripping exactly those is enough to guarantee the rendered block is always
+    one comment line followed by one peer stanza, whatever a device is named.
+    """
+    cleaned = "".join(ch for ch in value if ch not in "\r\n[]").strip()
+    return cleaned[:120] or "edge device"
+
+
+def _render_server_peer_block(
+    *, name: str, public_key: str, vpn_address: str, lan_cidr: str | None
+) -> str:
+    """The stanza an operator pastes into the shared server's `wg0.conf`.
+
+    `AllowedIPs` is deliberately just this device's own address, plus its own site LAN if
+    it has one - never the pool, never another device's range. That is what makes one
+    tenant's peer unable to route to another's cameras: WireGuard enforces AllowedIPs as
+    both the accepted source and the routed destination for a peer, so a peer whose
+    AllowedIPs names only its own /32 (and its own LAN) has nothing else it *can* reach.
+    """
+    allowed = f"{vpn_address}/32" if not lan_cidr else f"{vpn_address}/32, {lan_cidr}"
+    return (
+        f"# {_safe_comment(name)}\n"
+        "[Peer]\n"
+        f"PublicKey = {public_key}\n"
+        f"AllowedIPs = {allowed}\n"
+    )
+
+
+def _render_client_config(*, vpn_address: str, settings) -> str:
+    """What goes on the device. It never learns the pool or any other peer's address -
+    only its own address and the one peer it is allowed to talk to: the server."""
+    lines = [
+        "[Interface]",
+        "# Paste the private key generated on this device - it never leaves the device,",
+        "# and CSense neither sees nor stores it.",
+        "PrivateKey = <paste your private key here>",
+        f"Address = {vpn_address}/32",
+        "",
+        "[Peer]",
+    ]
+    if settings.wireguard_server_public_key:
+        lines.append(f"PublicKey = {settings.wireguard_server_public_key}")
+    else:
+        lines.append("# PublicKey = <not configured - set WIREGUARD_SERVER_PUBLIC_KEY>")
+    if settings.wireguard_server_endpoint:
+        lines.append(f"Endpoint = {settings.wireguard_server_endpoint}")
+    else:
+        lines.append("# Endpoint = <not configured - set WIREGUARD_SERVER_ENDPOINT>")
+    if settings.wireguard_server_address:
+        lines.append(f"AllowedIPs = {settings.wireguard_server_address}")
+    else:
+        lines.append("# AllowedIPs = <not configured - set WIREGUARD_SERVER_ADDRESS>")
+    lines.append("PersistentKeepalive = 25")
+    return "\n".join(lines)
+
+
+class VpnProvisionIn(BaseModel):
+    lan_cidr: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "The site network this device's tunnel routes, e.g. 192.168.1.0/24. Omit if "
+            "the only address reachable through this device is its own."
+        ),
+    )
+
+
+class VpnProvisionOut(BaseModel):
+    device: DeviceOut
+    server_peer_config: str
+    client_config: str
+    warnings: list[str] = []
+
+
+@router.post("/devices/{device_id}/vpn-provision", response_model=VpnProvisionOut)
+async def provision_vpn(
+    device_id: uuid.UUID,
+    body: VpnProvisionIn,
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> VpnProvisionOut:
+    """Allocates this device's tunnel address and renders the config for it.
+
+    Exists so nobody hand-edits the deployment guide's templates again: this is now the
+    only path that produces a peer entry, and it cannot produce the two mistakes that made
+    the guide's own version unsafe - a colliding address or an over-broad `AllowedIPs`.
+
+    Idempotent on the address: calling this again for a device that already has one
+    re-renders its config rather than allocating a second address, so re-running it to
+    change `lan_cidr` (or just to fetch the config text again) is always safe.
+    """
+    require_permission(context, "edge.manage")
+
+    row = (
+        await db.execute(
+            text(
+                "SELECT wireguard_public_key, host(vpn_address), text(lan_cidr), name, status "
+                "FROM edge_devices WHERE id = :id AND deleted_at IS NULL"
+            ),
+            {"id": device_id},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError("No such edge device.")
+    public_key, existing_address, existing_lan, name, status = row
+
+    if not public_key:
+        raise ApiError(
+            status_code=409,
+            code="no_wireguard_key",
+            message=(
+                "This device has not reported a WireGuard public key yet. It needs to "
+                "enrol with one - generated on the device, never sent to us as anything "
+                "but the public half - before a tunnel can be provisioned."
+            ),
+        )
+    if status in ("disabled", "retired"):
+        raise ApiError(
+            status_code=409,
+            code="device_not_provisionable",
+            message=f"This device is {status}.",
+        )
+
+    settings = get_settings()
+    reserved = parse_networks(settings.reserved_local_networks.split(","))
+
+    lan_cidr: str | None = None
+    if body.lan_cidr and body.lan_cidr.strip():
+        try:
+            lan_cidr = str(validate_allowlist_candidate(body.lan_cidr, reserved=reserved))
+        except BlockedAddressError as exc:
+            raise ApiError(
+                status_code=422, code="lan_cidr_rejected", message=str(exc)
+            ) from exc
+
+    # This is an admin action taken once per device, not a hot path - locking the table
+    # for the moment it takes to check for a collision and write the result is what makes
+    # "no two peers ever end up with an overlapping route" true, rather than merely
+    # unlikely under concurrent provisioning. The lock is table-level, not row-level, so
+    # it serializes across tenants too - which matters, since the checks below deliberately
+    # need to see every tenant's allocation, not just this one's.
+    await db.execute(text("LOCK TABLE edge_devices IN SHARE ROW EXCLUSIVE MODE"))
+
+    # Row-level security scopes an ordinary query to the calling tenant, which is right
+    # everywhere else and wrong here: a collision with *another* tenant's device is
+    # exactly what these two checks exist to catch, on the one WireGuard server the whole
+    # fleet shares. `edge_vpn_pool_snapshot` (migration 0029) is a narrow SECURITY DEFINER
+    # read built for exactly this - it returns addresses and ranges, never who they
+    # belong to.
+    fleet_vpn_addresses: set[str] = set()
+    fleet_lan_cidrs: list[str] = []
+    for vpn_addr, lan in (
+        await db.execute(text("SELECT host(vpn_address), text(lan_cidr) FROM edge_vpn_pool_snapshot()"))
+    ).all():
+        if vpn_addr:
+            fleet_vpn_addresses.add(vpn_addr)
+        if lan:
+            fleet_lan_cidrs.append(lan)
+
+    if lan_cidr:
+        candidate_net = ipaddress.ip_network(lan_cidr, strict=False)
+        # This device's own current lan_cidr (if any) is in the snapshot too - comparing
+        # a range against itself would always "overlap" and block re-provisioning with
+        # the same value.
+        for other_cidr in fleet_lan_cidrs:
+            if other_cidr == existing_lan:
+                continue
+            if candidate_net.overlaps(ipaddress.ip_network(other_cidr, strict=False)):
+                raise ApiError(
+                    status_code=409,
+                    code="lan_cidr_overlap",
+                    message=(
+                        f"{lan_cidr} overlaps a network another device already tunnels. "
+                        "Two peers on the same WireGuard server cannot share an "
+                        "overlapping route - the second one configured would silently "
+                        "take traffic meant for the first. Declare a narrower range that "
+                        "covers just the cameras, or renumber the site LAN."
+                    ),
+                )
+
+    vpn_address = existing_address
+    if vpn_address is None:
+        pool = ipaddress.ip_network(settings.wireguard_pool_cidr)
+        allocated = next_free_address(pool, fleet_vpn_addresses)
+        if allocated is None:
+            raise ApiError(
+                status_code=409,
+                code="vpn_pool_exhausted",
+                message="Every address in the tunnel pool is already allocated.",
+            )
+        vpn_address = str(allocated)
+
+    await db.execute(
+        text(
+            "UPDATE edge_devices SET vpn_address = :addr, lan_cidr = :lan, "
+            "updated_at = now(), version = version + 1 WHERE id = :id"
+        ),
+        {"addr": vpn_address, "lan": lan_cidr, "id": device_id},
+    )
+
+    logger.info(
+        "edge_device_vpn_provisioned",
+        extra={
+            "device_id": str(device_id),
+            "vpn_address": vpn_address,
+            "has_lan_cidr": bool(lan_cidr),
+        },
+    )
+
+    warnings = []
+    if not settings.wireguard_server_public_key or not settings.wireguard_server_endpoint:
+        warnings.append(
+            "The platform's own WireGuard server identity is not configured "
+            "(WIREGUARD_SERVER_PUBLIC_KEY / WIREGUARD_SERVER_ENDPOINT), so the client "
+            "config below is incomplete."
+        )
+
+    return VpnProvisionOut(
+        device=await _load(db, device_id),
+        server_peer_config=_render_server_peer_block(
+            name=name, public_key=public_key, vpn_address=vpn_address, lan_cidr=lan_cidr,
+        ),
+        client_config=_render_client_config(vpn_address=vpn_address, settings=settings),
+        warnings=warnings,
+    )
+
+
 # --- Device-facing ---------------------------------------------------------------------
 
 class EnrolIn(BaseModel):
@@ -447,7 +708,14 @@ class EnrolIn(BaseModel):
     os_name: str | None = Field(default=None, max_length=80)
     os_version: str | None = Field(default=None, max_length=80)
     agent_version: str | None = Field(default=None, max_length=40)
-    wireguard_public_key: str | None = Field(default=None, max_length=120)
+    # A Curve25519 public key, base64-encoded: exactly 44 characters. Enforced here, not
+    # just checked for length, because this value is later embedded verbatim into a
+    # server-side config an operator pastes into the platform's one shared WireGuard
+    # server - a value that did not have to look like a key could smuggle a newline and a
+    # second, forged `[Peer]` stanza into what looks like a single line.
+    wireguard_public_key: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9+/]{43}=$"
+    )
 
 
 class EnrolOut(BaseModel):

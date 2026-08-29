@@ -122,6 +122,8 @@ export interface EdgeDevice {
   connectivity_method?: string | null;
   connectivity_reason?: string | null;
   vpn_address?: string | null;
+  lan_cidr?: string | null;
+  has_wireguard_key: boolean;
   camera_count: number;
   enrolled_at?: string | null;
   last_seen_at?: string | null;
@@ -176,6 +178,23 @@ export function deleteEdgeDevice(id: string) {
 export function issueEnrolmentToken(id: string) {
   return apiFetch<EnrolmentToken>(`${EDGE}/devices/${id}/enrolment-token`, {
     method: "POST",
+  });
+}
+
+export interface VpnProvisionResult {
+  device: EdgeDevice;
+  server_peer_config: string;
+  client_config: string;
+  warnings: string[];
+}
+
+// Allocates this device's tunnel address (once - safe to call again to re-render the
+// config or change the LAN it tunnels) and returns the exact text to paste onto the
+// device and into the shared server, so nobody hand-edits either from memory.
+export function provisionVpn(id: string, body: { lan_cidr?: string }) {
+  return apiFetch<VpnProvisionResult>(`${EDGE}/devices/${id}/vpn-provision`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

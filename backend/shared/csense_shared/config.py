@@ -80,7 +80,32 @@ class Settings(BaseSettings):
     # A tenant must never be able to allowlist one of these for tunnel access: traffic to
     # such an address takes the local route, not their tunnel, so "reach my camera at
     # 172.18.0.5" would reach our own Postgres instead. Comma-separated CIDRs.
-    reserved_local_networks: str = "172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+    #
+    # Deliberately narrow, not "all of RFC1918": the whole point of this check is to catch
+    # the *specific* ranges this host's own networking uses, and 10.0.0.0/8 plus
+    # 192.168.0.0/16 are exactly the address spaces the WireGuard deployment guide expects
+    # tenants to declare as their camera-side LAN. A default this broad would silently
+    # reject every legitimate site LAN a tenant could ever provision - a self-defeating
+    # default for a check whose entire purpose is to let tunnels through while catching
+    # the one that isn't one. Set this to whatever the deployment's actual bridge and LAN
+    # ranges are; the two given here are Docker's own default bridge and this project's
+    # Compose-created one.
+    reserved_local_networks: str = "172.17.0.0/16,172.18.0.0/16"
+
+    # WireGuard: the one shared tunnel every tenant's edge devices provision into. A
+    # device's /32 is allocated from this pool (see vpn_pool.py); the server identity below
+    # is what a generated client config points at. Both are blank by default - a local dev
+    # stack has no real WireGuard server, and a rendered config says so rather than
+    # emitting a plausible-looking but useless placeholder.
+    wireguard_pool_cidr: str = "10.8.0.0/16"
+    wireguard_server_public_key: str = ""
+    wireguard_server_endpoint: str = ""
+    # The server's own address inside the tunnel, e.g. "10.8.0.1/32" - what a device's
+    # client config routes to. Deliberately not the whole pool: a device only ever talks to
+    # the server, and giving its own routing table a claim on every other peer's address is
+    # the same over-broad-AllowedIPs mistake this whole mechanism exists to avoid, just on
+    # the client side instead of the server's.
+    wireguard_server_address: str = ""
 
     # Envelope encryption for stored credentials (camera RTSP passwords and the like).
     # A directory rather than a single file, so a rotation is "add the new key, restart,
