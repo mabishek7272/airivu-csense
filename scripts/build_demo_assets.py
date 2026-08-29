@@ -181,6 +181,7 @@ def main() -> int:
     if "--output" in args:
         output_dir = args[args.index("--output") + 1]
 
+    manifest: dict[str, list[str]] = {}
     categories = [*PASSTHROUGH_CATEGORIES, PLATE_CATEGORY]
     for category in categories:
         src_dir = os.path.join(input_dir, category)
@@ -192,6 +193,7 @@ def main() -> int:
 
         files = sorted(f for f in os.listdir(src_dir) if f.lower().endswith(".jpg"))
         print(f"\n[{category}] {len(files)} source frame(s)")
+        manifest[category] = [f"{i:02d}.jpg" for i in range(1, len(files) + 1)]
         for index, filename in enumerate(files, start=1):
             with open(os.path.join(src_dir, filename), "rb") as handle:
                 raw = handle.read()
@@ -205,7 +207,12 @@ def main() -> int:
             with open(out_path, "wb") as handle:
                 handle.write(rendered)
 
-    print("\nDone.")
+    manifest_path = os.path.join(output_dir, "manifest.json")
+    with open(manifest_path, "w") as handle:
+        json.dump(manifest, handle, indent=2)
+    print(f"\nWrote {manifest_path}")
+
+    print("Done.")
     return 0
 
 

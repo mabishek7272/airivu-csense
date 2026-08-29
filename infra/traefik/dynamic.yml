@@ -49,6 +49,14 @@ http:
       entryPoints: [web]
       middlewares: [security-headers]
 
+    demo-site:
+      rule: "Host(`demo.localhost`)"
+      service: demo-site
+      entryPoints: [web]
+      # security-headers only — no CORS (this site calls no API) and no rate-limit (a
+      # static site behind nginx has nothing worth rate-limiting).
+      middlewares: [security-headers]
+
   services:
     tenant-api:
       loadBalancer:
@@ -66,6 +74,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://developer-console:3000"
+    demo-site:
+      loadBalancer:
+        servers:
+          - url: "http://demo-site:8080"
 
   middlewares:
     security-headers:

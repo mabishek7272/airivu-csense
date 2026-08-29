@@ -309,6 +309,58 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         this all exists to be centralized - asserts no download URL, presigned URL,
         object key, or bucket name ever appears in a response body or the rendered page
         across the whole run.
+- [x] **Public demo site** (`frontend/demo-site/`, `demo.localhost`) — a standalone,
+      unauthenticated marketing surface, separate from both the Customer CRM and the
+      Developer Console, so sales can show a prospect real detections without exposing
+      either. Built around a real, out-of-repo reference: SSH access to the production
+      server (granted 2026-08-25) turned up the still-live legacy deployment's own
+      camera archive — one real customer's vehicle-lot camera, 203,000+ real snapshots —
+      which is where every frame on this site actually comes from.
+  - [x] **Offline-rendered, not live inference.** AI Runtime's `/internal/v1/infer` is
+        deliberately not exposed publicly (see its own docstring, and the Phase 4 note
+        above it). `scripts/build_demo_assets.py` runs once, against curated real
+        frames, and bakes the finished, redacted JPEGs into the static build
+        (`public/showcase/{category}/`, plus a `manifest.json` the page reads instead of
+        hardcoding frame counts) — the deployed site calls no backend at all.
+  - [x] Three categories shipped: Vehicle & Object Detection (`yolov8n-general`, 12
+        frames), Person Detection (`yolov8n-person`, 2 frames — the archive turned out
+        vehicle-heavy, so this category shipped smaller rather than force weak examples
+        in), License Plate Detection (`license-plate-detector`, 5 frames) — framed as a
+        feature ("detected — and automatically redacted"), not just a privacy fix.
+        Fire/smoke, PPE, and kitchen-safety have no real footage available yet and wait
+        for a later pass. Biometric models are excluded regardless, per the same
+        governance as the registry UI above.
+  - [x] **General/person frames keep the legacy system's own drawn boxes as-is**, rather
+        than this project re-rendering them. Re-running inference and drawing a second
+        box style on top was the first thing tried; rendered and actually looked at, it
+        was a cluttered double layer, not a professional single one. The legacy boxes
+        are kept instead — legitimately, since the weights that drew them were migrated
+        1:1 into this project's own registry (SHA-256-verified) — and only the plates
+        category adds this project's own `draw_detections` output, styled in muted grey
+        specifically to read as distinct from the legacy green.
+  - [x] **A real bug in `license-plate-detector` found and fixed while building this** —
+        see the decoder note under the model's own entry above. Reliable plate-blurring
+        across every category (not just the plates showcase) depends on it; verified
+        with a real curated frame where a visible plate went from fully unblurred to
+        correctly detected and blurred.
+  - [x] Auto-advancing crossfade carousel (`ModelShowcase.tsx`) — keyboard nav
+        (arrows), pause on hover/focus, dot navigation, and `prefers-reduced-motion`
+        genuinely stops the auto-advance timer, not just its transition (CSS alone can
+        silence a fade; it can't stop a `setInterval`).
+  - [x] Verified with a real browser, not just a build —
+        [scripts/e2e_demo_site.py](scripts/e2e_demo_site.py) (9 checks): categories
+        switch, real images render, keyboard nav advances the frame, reduced motion is
+        respected in both directions, and — the check specific to this site's privacy
+        requirement — samples pixel-luminance variance inside the flagship plate frame's
+        actual detected bbox versus a same-size region right beside it, confirming the
+        region is *measurably* blurred rather than merely boxed.
+  - [x] A dark-mode contrast bug (hero heading rendering dark-on-dark, caught in a manual
+        screenshot review rather than by typecheck/lint/the e2e script) fixed before
+        shipping — `--text-inverse` flips per theme for other uses on this page, but the
+        hero's own background never does, so it needed its own theme-independent token.
+      Real, uncurated source frames for this (`curate-review/`, `smoke-test*/`) live
+      outside the repo entirely and are gitignored as a safety net; only the finished,
+      reviewed, redacted output under `public/showcase/` reaches git.
 - [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
 - [~] Pipeline stages: **infer** is built (above). Remaining: ingest, preprocess,
       filter/ROI, tracking, rules, evidence-intent — these turn raw detections into

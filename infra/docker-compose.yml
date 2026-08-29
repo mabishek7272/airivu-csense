@@ -290,6 +290,14 @@ services:
       VITE_API_BASE: ""
     networks: [csense]
 
+  # Public marketing/demo site. Fully static - every image was rendered offline by
+  # scripts/build_demo_assets.py and baked into the build; no environment variables, no
+  # API calls at runtime, no auth. Reached only through Traefik like the other two.
+  demo-site:
+    build:
+      context: ../frontend/demo-site
+    networks: [csense]
+
 networks:
   csense:
     driver: bridge
