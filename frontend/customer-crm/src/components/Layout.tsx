@@ -22,6 +22,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/sites">Sites</NavLink>
           <NavLink to="/zones">Zones</NavLink>
           <NavLink to="/cameras">Cameras</NavLink>
+          <NavLink to="/rules">Rules</NavLink>
           <NavLink to="/edge">Edge</NavLink>
         </nav>
         <span className="mono" style={{ color: "var(--text-muted)" }} title="Tenant">

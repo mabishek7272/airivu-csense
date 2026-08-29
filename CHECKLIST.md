@@ -326,7 +326,32 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         against UTC shifts it by the site's offset, which reads as the rule being broken.
 - [ ] **Edge auth is interim.** Ingestion uses a bearer token scoped to one permission;
       Phase 3 replaces it with per-device mTLS issued at enrolment.
-- [ ] Rule CRUD API and CRM editor — rules are currently created by SQL
+- [x] **Rule CRUD API and CRM editor** — the last gap in "configure everything from the
+      UI, no SQL" for the detection pipeline. Camera→zone→rule→incident is now fully
+      operator-driven.
+  - [x] [rules.py](backend/tenant_api/app/api/rules.py): create/list/update/delete, scoped
+        to a site with optional camera/zone narrowing. A camera on a different site than
+        the rule is refused with 422 before saving, not left to fail silently at
+        evaluation time.
+  - [x] Server-side warnings, not silent acceptance: a confidence threshold above 0.45
+        is flagged as likely to miss detections at night (grounded in the NVR IR-darkness
+        benchmarking from Phase 2 — persons measured 0.09-0.21 confidence in the dark); a
+        rule with no zone, no camera, no cooldown, or an unusually high consecutive-frame
+        requirement is explained, not just accepted.
+  - [x] Delete is a hard delete (no FK references `detection_rules`, confirmed via
+        `pg_constraint`) — unlike cameras/sites, which soft-delete.
+  - [x] [RulesPage.tsx](frontend/customer-crm/src/pages/RulesPage.tsx): cascading
+        site→camera/zone pickers, object-class chip selector, live night-confidence
+        warning shown while the threshold is being typed (not just after submit),
+        enable/disable toggle.
+  - [x] **Verified against the real pipeline**, not just the API surface —
+        [scripts/e2e_rule_to_incident.py](scripts/e2e_rule_to_incident.py): a rule built
+        over HTTP opens an incident when a matching detection lands in its zone, stays
+        silent for one outside it, and stops firing once disabled.
+  - [x] **Verified in the browser** —
+        [scripts/e2e_rule_editor.py](scripts/e2e_rule_editor.py): empty state explains
+        the consequence of having no rules, the night-confidence warning appears while
+        setting the threshold, and enable/disable is reflected in the listing.
 - [ ] Quiet hours and per-tenant notification policy editing in the CRM (`within_quiet_hours`
       is implemented and tested but not yet consulted by the dispatcher)
 - [x] **Customer CRM UI** — incident inbox, incident detail with evidence strip and
