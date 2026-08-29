@@ -287,8 +287,18 @@ class OnnxEngine:
         Two column layouts appear in the wild for `end2end` ONNX exports, and the legacy
         licence-plate detector uses the 7-column one:
 
-            6 columns: x1, y1, x2, y2, score, class
-            7 columns: batch_index, x1, y1, x2, y2, score, class
+            6 columns: x1, y1, x2, y2, class, score
+            7 columns: batch_index, x1, y1, x2, y2, class, score
+
+        Class before score, not the other way round - confirmed against the actual
+        licence-plate detector artifact (yolo-v9-t-384-license-plates-end2end.onnx):
+        probing its raw output directly showed the "score" column read as a constant 0.0
+        across every candidate box (impossible for real confidence values on boxes an
+        end2end NMS already chose to keep) while the "class" column varied plausibly with
+        how well-framed each box was (0.80 on a tight crop centred on a plate, 0.03-0.15
+        on the same plate distant and partial in a full 640x480 frame). Reading it the
+        other way silently zeroed every detection - the plate detector never found a
+        single plate, at any confidence threshold, until this was caught.
 
         Both may arrive as (batch, N, cols) or flattened to (N, cols) - a zero-detection
         frame commonly comes back as (0, 7), which is a valid empty result and must not be
@@ -306,10 +316,10 @@ class OnnxEngine:
             offset = 1 if rows.shape[-1] == 7 else 0
             detections = []
             for row in rows:
-                score = float(row[offset + 4])
+                score = float(row[offset + 5])
                 if score < confidence:
                     continue
-                cid = int(row[offset + 5])
+                cid = int(row[offset + 4])
                 x1, y1, x2, y2 = (float(v) for v in row[offset : offset + 4])
                 detections.append(
                     Detection(

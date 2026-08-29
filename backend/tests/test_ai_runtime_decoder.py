@@ -17,10 +17,19 @@ AI_RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "ai_runtime"
 if str(AI_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(AI_RUNTIME_ROOT))
 
-from app.engines import decode_raw_yolo  # noqa: E402
+from app.engines import OnnxEngine, decode_raw_yolo  # noqa: E402
 
 LABELS = {0: "person", 1: "helmet"}
 INPUT_SIZE = (640, 640)
+
+
+def _onnx_engine(labels=None):
+    """Builds an OnnxEngine for testing `_decode` without loading a real ONNX model -
+    `__init__` needs onnxruntime and an artifact file, and `_decode` only touches
+    `self._labels`."""
+    engine = OnnxEngine.__new__(OnnxEngine)
+    engine._labels = labels if labels is not None else {0: "license_plate"}
+    return engine
 
 
 def _head(boxes_and_scores, num_classes=2, num_anchors=100, channels_first=True):
@@ -131,3 +140,77 @@ def test_unknown_class_id_falls_back_to_its_index():
     raw = _head([(320.0, 320.0, 64.0, 64.0, 1, 0.9)], num_classes=2)
     detections = decode_raw_yolo(raw, confidence=0.25, labels={}, input_size=INPUT_SIZE)
     assert detections[0].class_name == "1"
+
+
+# --- OnnxEngine._decode: end-to-end (post-NMS) export layouts -----------------------
+#
+# These pin the licence-plate detector's real contract - class before score, not score
+# before class - after probing the actual artifact
+# (yolo-v9-t-384-license-plates-end2end.onnx) showed the column read as "score" was a
+# constant 0.0 across every candidate while the column read as "class" varied plausibly
+# (0.03-0.80 depending on how large the plate was in frame). Reading it the wrong way
+# round silently zeroed every detection - see engines.py's _decode docstring.
+
+
+def test_end2end_seven_column_reads_class_before_score():
+    engine = _onnx_engine()
+    # batch_index, x1, y1, x2, y2, class, score - a single "license_plate" candidate.
+    rows = np.array([[0.0, 10.0, 20.0, 30.0, 40.0, 0.0, 0.80]], dtype=np.float32)
+    detections = engine._decode([rows], confidence=0.25, target_size=(100, 100))
+
+    assert len(detections) == 1
+    d = detections[0]
+    assert d.class_name == "license_plate"
+    assert d.confidence == pytest.approx(0.80, abs=1e-6)
+    assert d.bbox == pytest.approx((0.10, 0.20, 0.30, 0.40), abs=1e-6)
+
+
+def test_end2end_six_column_reads_class_before_score():
+    engine = _onnx_engine()
+    # x1, y1, x2, y2, class, score - no leading batch-index column.
+    rows = np.array([[10.0, 20.0, 30.0, 40.0, 0.0, 0.80]], dtype=np.float32)
+    detections = engine._decode([rows], confidence=0.25, target_size=(100, 100))
+
+    assert len(detections) == 1
+    assert detections[0].confidence == pytest.approx(0.80, abs=1e-6)
+
+
+def test_end2end_candidates_the_export_already_filtered_are_not_dropped_as_zero_score():
+    """The regression this pins: a real end2end export narrows its output to genuine
+    candidates before the runtime ever sees them. If the runtime reads the class column
+    (always 0.0 for a single-class model) as the score, every one of those genuine
+    candidates silently evaluates to confidence 0.0 and gets dropped - the model looks
+    like it never detects anything, at any threshold, even though it is working."""
+    engine = _onnx_engine()
+    rows = np.array(
+        [
+            [0.0, 6.3, 4.3, 93.7, 26.7, 0.0, 0.1564],
+            [0.0, 330.3, 310.3, 383.4, 381.9, 0.0, 0.0630],
+        ],
+        dtype=np.float32,
+    )
+    detections = engine._decode([rows], confidence=0.01, target_size=(384, 384))
+    assert len(detections) == 2
+    assert {round(d.confidence, 4) for d in detections} == {0.1564, 0.0630}
+
+
+def test_end2end_below_threshold_is_still_dropped():
+    engine = _onnx_engine()
+    rows = np.array([[10.0, 20.0, 30.0, 40.0, 0.0, 0.10]], dtype=np.float32)
+    assert engine._decode([rows], confidence=0.25, target_size=(100, 100)) == []
+
+
+def test_end2end_empty_output_is_a_valid_zero_detection_result():
+    engine = _onnx_engine()
+    rows = np.zeros((0, 7), dtype=np.float32)
+    assert engine._decode([rows], confidence=0.25, target_size=(100, 100)) == []
+
+
+def test_end2end_falls_back_to_raw_yolo_head_for_unrecognised_column_count():
+    """A plain (non-end2end) export in disguise - `_decode` must hand off to
+    `decode_raw_yolo` rather than misreading it as a 6/7-column end2end result."""
+    engine = _onnx_engine(labels=LABELS)
+    raw = _head([(320.0, 320.0, 64.0, 64.0, 0, 0.9)])
+    detections = engine._decode([raw], confidence=0.25, target_size=INPUT_SIZE)
+    assert len(detections) == 1
+    assert detections[0].class_name == "person"

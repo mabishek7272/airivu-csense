@@ -234,6 +234,31 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       three frameworks. Verified live against a real photograph:
   - [x] 6 Ultralytics models - detection + pose with keypoints (177ms-720ms warm, CPU)
   - [x] `license-plate-detector` - ONNX end-to-end decoder (6- and 7-column layouts)
+    - [x] **The decoder had the score and class columns swapped**, found while building a
+          demo site around this exact model: it returned zero detections on every real
+          frame tried, at any confidence down to 0.01, which is itself the tell (a
+          genuine zero-candidate frame from an end2end export doesn't look like that).
+          Probing the raw ONNX output directly (`OnnxEngine._decode`'s bypass,
+          `raw_infer`) showed the column read as "score" was a constant `0.0` on every
+          candidate box the export had already chosen to keep, while the column read as
+          "class" varied plausibly with framing (0.03-0.15 on a small, distant plate at
+          this camera's native 640x480; 0.80 on the same plate cropped in close) - i.e.
+          class and score were transposed. Fixed in
+          [engines.py](backend/ai_runtime/app/engines.py), pinned with six new decoder
+          tests exercising the real column layout, the below-threshold and empty-output
+          cases, and the raw-head fallback
+          ([test_ai_runtime_decoder.py](backend/tests/test_ai_runtime_decoder.py)).
+    - [x] **Fixing the decoder wasn't enough on its own for a privacy-safe blur pass.**
+          Even correctly decoded, this model's own confidence values run low at this
+          camera's actual resolution (a real, plainly-visible plate scored 0.06) — a
+          usual operating threshold (0.4) would still miss real plates. Blurring now
+          runs at a low, recall-favouring confidence (0.03) with every candidate kept
+          regardless of category; a single degenerate candidate covering ~90% of the
+          frame that shows up at that confidence is rejected by box-area, not by raising
+          the confidence back up (which would silently drop the real low-confidence plate
+          again too). Verified against a real curated frame: the plate visible on a
+          parked car went from fully unblurred (missed at confidence 0.4) to correctly
+          detected and blurred (`scripts/build_demo_assets.py`).
   - [x] `kitchen-safety-y8` - TFLite via ai-edge-litert, raw YOLOv8 head + NMS
   - [ ] 5 InsightFace models load and execute, but their SCRFD/ArcFace output needs the
         `insightface` package's decoding rather than a generic detector decode. Tracked
