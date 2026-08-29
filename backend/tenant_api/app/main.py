@@ -14,6 +14,7 @@ from app.api import (
     incidents,
     ingest,
     notification_policies,
+    realtime,
     recipient_groups,
     rules,
     sites,
@@ -94,5 +95,6 @@ app.include_router(cameras.router)
 app.include_router(edge.router)
 app.include_router(recipient_groups.router)
 app.include_router(notification_policies.router)
+app.include_router(realtime.router)
 
 

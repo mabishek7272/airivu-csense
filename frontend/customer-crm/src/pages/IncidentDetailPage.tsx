@@ -8,6 +8,7 @@ import { CountBadge, SeverityBadge, StatusBadge } from "../components/Badges";
 import { EvidenceThumb } from "../components/EvidenceThumb";
 import { Layout, SiteTime, relativeTime } from "../components/Layout";
 import { ErrorPanel } from "../components/States";
+import { useIncidentSocket } from "../hooks/useIncidentSocket";
 
 /** The action that produces each target status. Closing actions are separated because
  *  they require a resolution code, and the state machine treats them as terminal. */
@@ -62,6 +63,18 @@ export function IncidentDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The same live feed the inbox uses, filtered to this one incident - if someone else
+  // (or this same rule, folding in another frame) changes it while it's open on screen,
+  // the status and timeline update without a manual reload.
+  useIncidentSocket(
+    useCallback(
+      (event) => {
+        if (event.incident_id === incidentId) void load();
+      },
+      [incidentId, load],
+    ),
+  );
 
   async function runAction(target: IncidentStatus) {
     if (!incidentId) return;

@@ -618,6 +618,25 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .pill-provisioning, .pill-pending, .pill-enrolled { color: var(--medium); background: var(--medium-subtle); }
 .pill-disabled, .pill-retired, .pill-offline { color: var(--text-muted); background: var(--surface-sunken); }
 
+/* Incidents page: WebSocket connection state. Text-labelled, same as every other status
+ * in this app - the dot is decorative (aria-hidden), never the only signal. */
+.live-indicator {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  white-space: nowrap;
+}
+.live-indicator-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.live-indicator-open { color: var(--low); background: var(--low-subtle); }
+.live-indicator-connecting { color: var(--medium); background: var(--medium-subtle); }
+.live-indicator-closed { color: var(--text-muted); background: var(--surface-sunken); }
+@media (prefers-reduced-motion: no-preference) {
+  .live-indicator-open .live-indicator-dot { animation: live-pulse 2s ease-in-out infinite; }
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 .btn-quiet {
   background: none; border: 1px solid transparent; color: var(--accent);
   padding: 4px 8px; cursor: pointer; font-size: 13px; border-radius: var(--radius-sm);

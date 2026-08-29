@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.notifications.escalation import schedule_incident_notifications
 from csense_shared.pipeline.detections import (
     DetectionDocument,
@@ -342,6 +343,28 @@ async def ingest_detection(
             session, incident_id=record.id, correlation_id=correlation_id, now=moment
         )
         scheduled = len(notification_ids)
+
+        # An outbox event, not just the incident_events row `upsert_incident_from_match`
+        # already appended - incident_events is this incident's own append-only history,
+        # not something anything outside it polls. The realtime relay (WebSocket updates
+        # to the Customer CRM) reads outbox_events exclusively, the same as every other
+        # cross-service signal in this codebase, so creation has to produce one too or a
+        # brand new incident would never reach a live inbox until someone refreshed.
+        await record_audit_and_outbox(
+            session,
+            tenant_id=tenant_id,
+            actor_type="pipeline",
+            actor_id=rule.type_code,
+            action="incident.created",
+            outcome="success",
+            target_type="incident",
+            target_id=str(record.id),
+            correlation_id=correlation_id,
+            event_type="incident.created.v1",
+            event_payload={"incident_id": str(record.id), "previous_status": None},
+            aggregate_type="incident",
+            aggregate_id=str(record.id),
+        )
 
     return IngestResult(
         detection_id=str(stored.detection_id),

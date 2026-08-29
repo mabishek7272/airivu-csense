@@ -75,6 +75,14 @@ export TEST_POSTGRES_PLATFORM_DSN="host=localhost port=5432 dbname=csense user=c
 pytest
 ```
 
+The WebSocket ticket tests additionally need Redis (`localhost:6379`, the same instance
+Compose already runs):
+
+```bash
+export TEST_REDIS_PASSWORD="$REDIS_PASSWORD"
+pytest
+```
+
 ## Database identities
 
 Three separate Postgres roles, because PostgreSQL superusers bypass row-level security

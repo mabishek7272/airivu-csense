@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { listIncidents } from "../api/resources";
@@ -6,6 +6,8 @@ import type { IncidentSummary } from "../api/types";
 import { CountBadge, SeverityBadge, StatusBadge } from "../components/Badges";
 import { Layout, relativeTime } from "../components/Layout";
 import { EmptyPanel, ErrorPanel, LoadingList } from "../components/States";
+import { useNotifications } from "../components/Notifications";
+import { useIncidentSocket } from "../hooks/useIncidentSocket";
 
 // "Active" is the default: everything not yet closed. Defaulting to `open` alone means
 // an incident disappears from the queue the moment someone acknowledges it — exactly when
@@ -74,8 +76,11 @@ export function IncidentsPage() {
   const [status, setStatus] = useState("active");
   const [severity, setSeverity] = useState("");
 
-  const load = useCallback(async () => {
-    setIncidents(null);
+  // `clearFirst`: the manual "Refresh" button and a filter change should show the
+  // familiar loading skeleton - but a live update arriving from the socket should not
+  // flash the whole list to a skeleton just because one row changed underneath it.
+  const load = useCallback(async (clearFirst = true) => {
+    if (clearFirst) setIncidents(null);
     setError(null);
     try {
       const page = await listIncidents({
@@ -93,6 +98,29 @@ export function IncidentsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const notifications = useNotifications();
+  const reloadTimer = useRef<number | null>(null);
+
+  const socketStatus = useIncidentSocket(
+    useCallback(
+      (event) => {
+        if (event.type === "incident.created.v1") {
+          notifications.notify({
+            kind: "info",
+            title: "New incident",
+            detail: "The list below has been updated.",
+            durationMs: 6000,
+          });
+        }
+        // A burst of events (several transitions landing in the same second) collapses
+        // into one reload rather than one fetch per event.
+        if (reloadTimer.current !== null) window.clearTimeout(reloadTimer.current);
+        reloadTimer.current = window.setTimeout(() => void load(false), 300);
+      },
+      [load, notifications],
+    ),
+  );
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -117,6 +145,20 @@ export function IncidentsPage() {
           <h1>Incidents</h1>
           <p>Detections the rules escalated into something worth a human decision.</p>
         </div>
+        <span
+          className={`live-indicator live-indicator-${socketStatus}`}
+          role="status"
+          aria-label={
+            socketStatus === "open"
+              ? "Live updates connected"
+              : socketStatus === "connecting"
+                ? "Live updates connecting"
+                : "Live updates disconnected, retrying"
+          }
+        >
+          <span aria-hidden="true" className="live-indicator-dot" />
+          {socketStatus === "open" ? "Live" : socketStatus === "connecting" ? "Connecting…" : "Reconnecting…"}
+        </span>
       </div>
 
       <div className="toolbar">

@@ -449,7 +449,49 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       byte-identical duplicate of the masked variant.
 - [x] Unmasked `original` withheld from roles lacking `evidence.download` — verified live
       against a `tenant_member` account, which receives only `annotated` and `masked`
-- [ ] WebSocket real-time incident updates to the CRM
+- [x] **WebSocket real-time incident updates to the CRM.** The Incidents inbox and detail
+      page update live — a new incident from the real pipeline, or a status change from
+      the API, appears with no manual refresh.
+  - [x] **Short-lived, single-use WS tickets**
+        ([ws_tickets.py](backend/shared/csense_shared/security/ws_tickets.py)), not the
+        real access token, on the WS handshake — a browser's native WebSocket API cannot
+        set the `Authorization` header this API otherwise requires for every other call,
+        and the two common workarounds (a query-string token, or putting the long-lived
+        token there instead) both put something worth protecting somewhere a log or
+        browser history can capture it. A ticket is good for 20 seconds, exactly one
+        connection attempt, and is deleted from Redis the moment it's read (`GETDEL`),
+        so a captured ticket is already useless by the time anyone could replay it.
+  - [x] **Polls `outbox_events` per-tenant inside that tenant's own `tenant_session()`,
+        not a Redis pub/sub relay** — even though `OutboxEvent`'s own docstring describes
+        that shape. The Tenant API's database role deliberately cannot read across
+        tenants (not a member of the `csense_platform` group — see the role table
+        above), and reaching for the Admin API's `platform_session()` from here would
+        cross the exact boundary its own docstring rules out. Scoping the poll to one
+        tenant, inside its own RLS session, needs no privileged role at all, and it
+        naturally costs nothing for a tenant with no open tab — nobody's watching, so
+        nothing polls. A relay is the right call *if* this ever needs to fan out across
+        multiple API replicas serving the same tenant; building it now would have meant
+        opening a privileged cross-tenant read path for a feature that doesn't need one.
+  - [x] Incident **creation** now writes an `incident.created.v1` outbox event
+        ([ingest.py](backend/shared/csense_shared/pipeline/ingest.py)) alongside the
+        `incident_events` row it already wrote — that row is this incident's own
+        append-only history, not something anything outside it polls, so creation had no
+        outbox event at all before this and a brand new incident would never have
+        reached a live inbox.
+  - [x] `ModelShowcase`-style discipline carried over: a visible **connection
+        indicator** (text-labelled, never colour-only), reconnect with exponential
+        backoff, and events collapse into one debounced list reload rather than one
+        fetch per event landing in the same second.
+  - [x] Verified against the real pipeline in a real browser, not a mock socket —
+        [scripts/e2e_incident_realtime.py](scripts/e2e_incident_realtime.py) (7 checks):
+        a detection posted through the actual ingestion endpoint appears in the inbox
+        with **no `page.reload()` anywhere in the script**, an API-driven acknowledgement
+        updates the same row live, and — the security properties, not just the happy
+        path — a ticket cannot be reused for a second connection, a connection with no
+        ticket is refused, and a connection from an origin outside the CORS allowlist is
+        refused (exercised via a raw `new WebSocket(...)` from inside the browser,
+        bypassing the app's own hook, so the check doesn't just trust the UI to reflect
+        what actually happened at the protocol level).
 - [x] **Notification policies, recipient groups, provider adapters, escalation** — the
       dispatcher, retry policy and provider adapters existed but nothing drove them, so
       no alert could ever leave the building. Now closed end to end:
