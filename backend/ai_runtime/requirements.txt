@@ -18,3 +18,19 @@ ai-edge-litert>=1.0 ; python_version < "3.13"
 # the PyTorch CPU wheel index before this file is processed; naming them here as well
 # risks pip re-resolving against PyPI and pulling the ~2.5 GB CUDA build. ultralytics
 # depends on torch, and finds the CPU wheel already satisfied.
+
+# insightface's own decode (SCRFD detection + ArcFace recognition) for the two quarantined
+# face models this runtime can now load - decode only, they stay `revoked` in the registry
+# and get_deployable_by_name() still refuses to serve them. insightface itself is installed
+# separately in the Dockerfile with --no-deps: its declared dependency is `opencv-python`
+# (the GUI build), not `-headless`, and the two packages occupy the same `cv2` import path -
+# installing both and then removing either leaves `cv2` unimportable (confirmed by trying
+# it). Its real, non-cv2 dependencies are listed here explicitly instead, mirroring the
+# CPU-only torch precedent above. Confirmed this set is sufficient: `import
+# insightface.model_zoo` and `insightface.utils.face_align` both succeed with exactly these
+# packages present and no `opencv-python`.
+onnx>=1.16
+scikit-image>=0.22
+scipy>=1.11
+tqdm>=4.66
+requests>=2.31

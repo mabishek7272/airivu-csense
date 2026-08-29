@@ -405,6 +405,165 @@ class OnnxEngine:
         return self._session.run(None, {self._input.name: self._preprocess(image)})
 
 
+# --- InsightFace ONNX (SCRFD detection / ArcFace recognition) -----------------------
+
+class InsightFaceEngine:
+    """Wraps the `insightface` package's own SCRFD detector / ArcFace recognizer decode.
+
+    Two of the five quarantined InsightFace artifacts route here instead of the generic
+    OnnxEngine - see `build_engine`'s `task_code` dispatch. SCRFD's real output is multi-
+    scale anchor boxes across three strides plus a separate landmark head; ArcFace's is a
+    512-d embedding. Neither fits `OnnxEngine._decode`'s two known layouts (end2end,
+    raw YOLOv8 head), and reimplementing either by hand from the anchor/alignment maths
+    would be exactly the guessed-decode failure mode `OutputContractUnknownError` exists to
+    avoid - doubly so here, where a wrong guess produces a wrong face match rather than a
+    misplaced box. `insightface.model_zoo` is the reference implementation these two
+    artifacts were trained and exported against, so it is used directly rather than
+    re-derived from scratch.
+
+    Loading via this engine does not change anything about deployability: these two models
+    stay `revoked` in the registry, and `app/registry.py`'s `get_deployable_by_name()` only
+    ever returns validated/staging/production versions - the same gate that already blocks
+    every other model blocks these regardless of this class existing. This is decode-only;
+    nothing here persists, matches, or exposes the output.
+    """
+
+    def __init__(
+        self,
+        artifact_path: Path,
+        label_map: dict[int, str] | None,
+        task_code: str | None = None,
+    ) -> None:
+        try:
+            import insightface.model_zoo as model_zoo
+        except ImportError as exc:  # pragma: no cover - depends on image contents
+            raise EngineUnavailableError(
+                "insightface is not installed in this image; cannot load a face_detection/"
+                "face_recognition artifact"
+            ) from exc
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:  # pragma: no cover
+            raise EngineUnavailableError(
+                "onnxruntime is not installed in this image; cannot load a .onnx artifact"
+            ) from exc
+
+        providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.insert(0, "CUDAExecutionProvider")
+
+        # insightface's own ModelRouter picks SCRFD/ArcFaceONNX/etc. by inspecting the
+        # artifact's real input/output shapes, not by filename - confirmed against its
+        # actual source rather than assumed. `task_code` here only decides which public
+        # method this engine exposes, not which decode runs.
+        self._model = model_zoo.get_model(str(artifact_path), providers=providers)
+        if self._model is None:
+            raise OutputContractUnknownError(
+                f"insightface could not classify the artifact at {artifact_path} as a known "
+                "model type (its own model router returned None). Record an output_schema "
+                "on this model version before the runtime can interpret it."
+            )
+        self._model.prepare(ctx_id=0 if "CUDAExecutionProvider" in providers else -1)
+        self._task_code = task_code
+        self._labels = label_map or {}
+        self._providers = providers
+
+    def info(self) -> EngineInfo:
+        return EngineInfo(
+            framework="onnx",
+            runtime="onnxruntime",
+            available=True,
+            labels=self._labels,
+            detail=(
+                f"insightface_model={type(self._model).__name__} "
+                f"providers={','.join(self._providers)}"
+            ),
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        """Face detection only. The recognition engine raises here on purpose - a 512-d
+        embedding does not fit the `Detection` shape; use `embed()` instead, with a
+        `Detection` produced by the paired face_detection engine."""
+        if self._task_code != "face_detection":
+            raise OutputContractUnknownError(
+                f"{type(self._model).__name__} produces embeddings, not detections - call "
+                "embed() with a Detection from the paired face_detection model instead."
+            )
+
+        height, width = image.shape[:2]
+        # SCRFD's own `.detect()` does its own letterbox/resize/blob construction against
+        # the raw frame - unlike OnnxEngine, this must NOT be pre-resized or normalised
+        # first, confirmed against the real source (`SCRFD.forward` builds its own blob).
+        self._model.det_thresh = confidence
+        bboxes, kpss = self._model.detect(image)
+
+        detections: list[Detection] = []
+        for i in range(bboxes.shape[0]):
+            x1, y1, x2, y2, score = (float(v) for v in bboxes[i])
+            keypoints = None
+            if kpss is not None:
+                # SCRFD emits no separate per-landmark confidence; the box's own detection
+                # score is reused for all five points, same convention as everywhere else in
+                # this file that a keypoint set shares its box's confidence.
+                keypoints = [
+                    (float(kx) / width, float(ky) / height, score) for kx, ky in kpss[i]
+                ]
+            detections.append(
+                Detection(
+                    class_id=0,
+                    class_name=self._labels.get(0, "face"),
+                    confidence=score,
+                    bbox=(
+                        float(np.clip(x1 / width, 0.0, 1.0)),
+                        float(np.clip(y1 / height, 0.0, 1.0)),
+                        float(np.clip(x2 / width, 0.0, 1.0)),
+                        float(np.clip(y2 / height, 0.0, 1.0)),
+                    ),
+                    keypoints=keypoints,
+                )
+            )
+        return detections
+
+    def embed(self, image: np.ndarray, detection: Detection) -> np.ndarray:
+        """512-d ArcFace embedding for one already-detected face.
+
+        The estate's second two-stage vision pipeline - the plate detector/OCR pair is the
+        first, described in the migration manifest as exactly that. `detection` must carry
+        the 5-point keypoints the paired face_detection engine's own SCRFD output produces;
+        alignment (`insightface.utils.face_align.norm_crop`) needs all five, in the
+        detector's own order, or the crop this hands to the recognition model is wrong.
+
+        Returns the raw feature vector `ArcFaceONNX.get_feat` itself returns - **not
+        L2-normalised**, confirmed against the real source rather than assumed:
+        normalisation only happens at comparison time, inside the package's own
+        `compute_sim` (a plain cosine similarity that normalises both sides itself).
+        Callers comparing two embeddings must divide by each vector's own norm; this output
+        is not already unit length.
+
+        This is a biometric template. The runtime does not persist it, match it, or expose
+        it through any API - callers must not do so either without the promotion plus
+        privacy/legal sign-off the migration manifest already requires for this model
+        (`backend/migrations/legacy_model_manifest.py`).
+        """
+        if self._task_code != "face_recognition" or detection.keypoints is None:
+            raise OutputContractUnknownError(
+                "embed() needs a face_recognition engine and a Detection carrying 5-point "
+                "keypoints from the paired face_detection model."
+            )
+
+        from insightface.utils import face_align
+
+        height, width = image.shape[:2]
+        landmarks = np.array(
+            [(kx * width, ky * height) for kx, ky, _ in detection.keypoints],
+            dtype=np.float32,
+        )
+        aligned = face_align.norm_crop(
+            image, landmark=landmarks, image_size=self._model.input_size[0]
+        )
+        return self._model.get_feat(aligned).flatten()
+
+
 # --- TFLite (.tflite) ---------------------------------------------------------------
 
 class TfliteEngine:
@@ -493,8 +652,20 @@ ENGINES_BY_RUNTIME: dict[str, type] = {
     "tflite": TfliteEngine,
 }
 
+# The two InsightFace artifacts this runtime can decode carry runtime="onnxruntime", same
+# as the plate detector/OCR pair - dispatched by task_code instead of a new runtime value,
+# so every other onnxruntime model is untouched by this.
+_INSIGHTFACE_TASK_CODES = ("face_detection", "face_recognition")
 
-def build_engine(runtime: str, artifact_path: Path, label_map: dict[int, str] | None = None):
+
+def build_engine(
+    runtime: str,
+    artifact_path: Path,
+    label_map: dict[int, str] | None = None,
+    task_code: str | None = None,
+):
+    if task_code in _INSIGHTFACE_TASK_CODES:
+        return InsightFaceEngine(artifact_path, label_map, task_code)
     engine_cls = ENGINES_BY_RUNTIME.get(runtime)
     if engine_cls is None:
         raise EngineUnavailableError(f"No engine registered for runtime '{runtime}'")

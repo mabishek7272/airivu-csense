@@ -13,8 +13,15 @@ COPY ai_runtime/requirements.txt ./ai_runtime/requirements.txt
 
 # CPU-only torch: the default wheel pulls ~2.5 GB of CUDA libraries this deployment
 # cannot use. Installed first so the heavy layer caches independently of app code.
+#
+# insightface with --no-deps: its own declared dependency is `opencv-python` (the GUI
+# build), which shares an import path with `opencv-python-headless` (used everywhere else
+# in this image) and cannot coexist with it - confirmed empirically, not assumed (installing
+# both then removing either leaves `cv2` unimportable). Its real dependencies other than
+# opencv are listed in requirements.txt instead.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
         torch torchvision \
+    && pip install --no-cache-dir --no-deps insightface==1.0.1 \
     && pip install --no-cache-dir -r ai_runtime/requirements.txt \
     && pip install --no-cache-dir ./shared
 

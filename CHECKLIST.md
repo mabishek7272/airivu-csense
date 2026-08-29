@@ -222,8 +222,13 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       imported with licence + provenance metadata
       ([backend/migrations/legacy_model_manifest.py](backend/migrations/legacy_model_manifest.py),
       [import_legacy_models.py](backend/migrations/import_legacy_models.py) — idempotent, re-runnable)
-- [x] Biometric quarantine: InsightFace models registered `revoked` / `biometric`, and the
-      promotion API refuses a deployable state without explicit acknowledgement
+- [x] Biometric quarantine: InsightFace models imported `revoked` / `biometric`, and the
+      promotion API refuses a deployable state without explicit acknowledgement. That
+      acknowledgement was subsequently given - **all 5 are `production` today**, promoted
+      2026-08-26 by owner direction alongside the rest of the legacy estate (CLARIFICATIONS
+      #16). The `access_classification=biometric` tag is retained through promotion rather
+      than cleared, so it stays visible for a future privacy review rather than becoming
+      indistinguishable from any other production model.
 - [x] Admin API: `GET /api/v1/admin/models`, `POST /api/v1/admin/model-versions/{id}/promote`
       with a validated state machine, permission gating, and full audit + outbox events
 - [x] Registry regression tests (10) — immutability, duplicate-digest rejection, malformed
@@ -264,9 +269,34 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         `no_hairnet`) - CLARIFICATIONS #18 and this checklist both said this was still
         missing; it wasn't, found while checking the OCR item below against the real
         database rather than trusting the doc.
-  - [ ] 5 InsightFace models load and execute, but their SCRFD/ArcFace output needs the
-        `insightface` package's decoding rather than a generic detector decode. Tracked
-        below.
+  - [~] 5 InsightFace models load; 2 now decode correctly. All 5 are `production`
+        (CLARIFICATIONS #16), so this was reachable through the real internal API before
+        this work, just returning `OutputContractUnknownError` - decoding closes a real gap,
+        it doesn't newly expose anything. `insightface-buffalo-l-detect` (SCRFD) and
+        `insightface-buffalo-l-recognition` (ArcFace) now decode via a new
+        `InsightFaceEngine`, dispatched by `task_code` rather than a new `runtime` value so
+        every other `onnxruntime` model (plate detector, plate OCR) is untouched. Delegates
+        the actual decode to the `insightface` package itself - re-deriving SCRFD's
+        multi-scale anchor maths or ArcFace's alignment by hand would be exactly the
+        guessed-decode failure mode `OutputContractUnknownError` exists to avoid, doubly so
+        here where a wrong guess means a wrong face match rather than a misplaced box.
+        Verified against the real artifacts through the real internal API, not just
+        synthetic unit tests: `insightface-buffalo-l-detect` found all 6 faces in a real
+        multi-face photo (insightface's own bundled test image, never committed here) at
+        0.87-0.92 confidence with correct 5-point landmarks; `insightface-buffalo-l-
+        recognition`'s embeddings scored self-similarity 1.0 (same face re-embedded) against
+        0.064 for a different face in the same photo - real evidence the alignment and
+        embedding are actually correct, not just shaped correctly.
+        `insightface-buffalo-l-genderage` and the two landmark models are deliberately left
+        undecoded: no caller/use case for them exists anywhere in the codebase yet (unlike
+        detection+recognition, which any face-matching use case would need), so there is
+        nothing to build against; the same pattern (`InsightFaceEngine`, `task_code`
+        dispatch) extends to them later with no new design work. **This is decode only** -
+        nothing here adds a pipeline stage, persists an embedding, or exposes a new API
+        route; `embed()` is an in-process escape hatch (mirrors `OnnxEngine.raw_infer`), not
+        wired to any endpoint.
+        ([engines.py](backend/ai_runtime/app/engines.py),
+        [test_insightface_engine.py](backend/tests/test_insightface_engine.py))
   - [~] **`license-plate-ocr` didn't actually run at all** - found while wiring it in.
         Two real bugs in `OnnxEngine`, both in shared preprocessing code every ONNX
         model goes through, not something specific to this one model:
@@ -306,8 +336,16 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       `/engines`. Deliberately **not** exposed through Traefik - it takes raw frames and
       returns raw detections with no tenant scoping, so it is called by the pipeline
       layer, never by a browser.
-- [ ] InsightFace decoding via the `insightface` FaceAnalysis wrapper (SCRFD anchors +
-      ArcFace embeddings)
+- [~] InsightFace decoding: detection (SCRFD) + recognition (ArcFace) done via the
+      `insightface` package's own `model_zoo`, not `FaceAnalysis` (which expects a
+      directory-based model pack; `model_zoo.get_model()` works directly against this
+      estate's content-addressed artifact paths). Landmarks/genderage not yet decoded - see
+      the detailed entry above. Runtime dependency note: `insightface`'s own declared
+      dependency is `opencv-python` (the GUI build), which cannot coexist with
+      `opencv-python-headless` (used everywhere else in this image, and confirmed
+      empirically - not assumed - that having both installed and then removing either
+      leaves `cv2` unimportable); installed with `--no-deps` in the Dockerfile instead,
+      with its real non-cv2 dependencies listed explicitly in `requirements.txt`.
 - [x] ~~Label maps for `kitchen-safety-y8` and the plate models~~ — stale: checked
       against the real database rather than trusting this line, and `kitchen-safety-y8`
       and `license-plate-detector` both already carry real label maps (see above). What
