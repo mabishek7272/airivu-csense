@@ -16,7 +16,6 @@ published nothing that matches.
 """
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import uuid
 
@@ -25,6 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from csense_shared.notifications.dispatcher import EscalationStep, PolicyDefinition
 from csense_shared.notifications.providers import Channel
+
+# Re-exported for backward compatibility - callers and tests that import quiet-hours
+# helpers from this module keep working. The implementation lives in schedule.py because
+# dispatcher.py needs it too, and dispatcher.py importing from here would be circular.
+from csense_shared.notifications.schedule import (  # noqa: F401
+    quiet_hours_end,
+    within_quiet_hours,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,35 +241,3 @@ async def resolve_policy(
         )
         return None
     return ResolvedPolicy(default_policy(groups), None, "Default (no policy configured)")
-
-
-def within_quiet_hours(
-    moment: dt.datetime, quiet: object, *, tz_offset_minutes: int = 0
-) -> bool:
-    """Whether a moment falls inside a configured quiet window.
-
-    Handles windows that wrap midnight (22:00-06:00), which is the common case and the one
-    a naive start <= t < end comparison gets exactly backwards.
-    """
-    if not isinstance(quiet, dict):
-        return False
-    start = quiet.get("start")
-    end = quiet.get("end")
-    if not isinstance(start, str) or not isinstance(end, str):
-        return False
-    try:
-        start_h, start_m = (int(p) for p in start.split(":", 1))
-        end_h, end_m = (int(p) for p in end.split(":", 1))
-    except (ValueError, TypeError):
-        return False
-
-    local = moment + dt.timedelta(minutes=tz_offset_minutes)
-    minutes = local.hour * 60 + local.minute
-    start_total = start_h * 60 + start_m
-    end_total = end_h * 60 + end_m
-
-    if start_total == end_total:
-        return False
-    if start_total < end_total:
-        return start_total <= minutes < end_total
-    return minutes >= start_total or minutes < end_total

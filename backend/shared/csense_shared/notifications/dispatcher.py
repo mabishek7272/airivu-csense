@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import uuid
+import zoneinfo
 from dataclasses import dataclass, field
 
 from sqlalchemy import text
@@ -37,8 +38,16 @@ from csense_shared.notifications.providers import (
     mask_recipient,
 )
 from csense_shared.notifications.retry import schedule_next_attempt
+from csense_shared.notifications.schedule import quiet_hours_end
 
 logger = logging.getLogger(__name__)
+
+# "Quiet hours etc. A fire alarm ignores them; a housekeeping alert should not" (migration
+# 0015's own words for `recipient_group_members.active_schedule`). A recipient's own quiet
+# hours hold back a routine notification so a phone is not lit up at 2am for something that
+# can wait until morning - but never one at these severities, which is exactly the case
+# someone needs waking for.
+QUIET_HOURS_EXEMPT_SEVERITIES = frozenset({"high", "critical"})
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,10 @@ class Recipient:
     email: str | None
     phone_e164: str | None
     channels: tuple[Channel, ...]
+    # {"start": "22:00", "end": "06:00", "timezone": "Asia/Kolkata"} or None. This
+    # person's own do-not-disturb window - not a step's, not the policy's. Two people in
+    # the same escalation step can be reached at different times because of it.
+    active_schedule: dict | None = None
 
     def address_for(self, channel: Channel) -> str | None:
         if channel is Channel.EMAIL:
@@ -121,10 +134,15 @@ async def load_recipients(
         await session.execute(
             text(
                 """
-                SELECT m.display_name, m.email, m.phone_e164, m.channels,
+                SELECT m.display_name, m.email, m.phone_e164, m.channels, m.active_schedule,
                        u.display_name AS user_name, u.email_display AS user_email
                 FROM recipient_group_members m
                 LEFT JOIN users u ON u.id = m.user_id
+                -- An archived group must stop notifying its members, not just hide from
+                -- listings - joining on the group's own status (not only the member's)
+                -- is what makes "archive" actually mean "nobody in here is told anymore".
+                JOIN recipient_groups g
+                     ON g.id = m.recipient_group_id AND g.status = 'active'
                 WHERE m.tenant_id = :tenant_id
                   AND m.recipient_group_id = ANY(:group_ids)
                   AND m.status = 'active'
@@ -135,7 +153,7 @@ async def load_recipients(
     ).all()
 
     recipients = []
-    for display_name, email, phone, channels, user_name, user_email in rows:
+    for display_name, email, phone, channels, active_schedule, user_name, user_email in rows:
         recipients.append(
             Recipient(
                 name=display_name or user_name,
@@ -144,9 +162,39 @@ async def load_recipients(
                 email=email or user_email,
                 phone_e164=phone,
                 channels=_parse_channels(channels),
+                active_schedule=active_schedule if isinstance(active_schedule, dict) else None,
             )
         )
     return recipients
+
+
+def _quiet_hours_delay(
+    recipient: Recipient, severity: str, scheduled_at: dt.datetime
+) -> dt.datetime | None:
+    """When this recipient's own quiet hours push a delivery back, or None to send it as
+    scheduled.
+
+    Evaluated against `scheduled_at`, not "now" - an escalation step already delayed by
+    ten minutes should be judged against when it would actually reach someone, not when
+    the incident opened.
+    """
+    if severity in QUIET_HOURS_EXEMPT_SEVERITIES:
+        return None
+    schedule = recipient.active_schedule
+    if not isinstance(schedule, dict):
+        return None
+
+    offset_minutes = 0
+    tz_name = schedule.get("timezone")
+    if tz_name:
+        try:
+            offset = zoneinfo.ZoneInfo(str(tz_name)).utcoffset(scheduled_at)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError, KeyError, OSError):
+            offset = None
+        if offset is not None:
+            offset_minutes = int(offset.total_seconds() // 60)
+
+    return quiet_hours_end(scheduled_at, schedule, tz_offset_minutes=offset_minutes)
 
 
 async def create_notification(
@@ -212,6 +260,10 @@ async def create_notification(
             address = recipient.address_for(channel)
             if not address:
                 continue
+            # Held past scheduled_at if it falls inside this recipient's own quiet hours
+            # and the severity is not one that overrides them - the delivery row still
+            # exists (queued, not skipped), it just is not due yet.
+            held_until = _quiet_hours_delay(recipient, severity, scheduled_at)
             await session.execute(
                 text(
                     """
@@ -232,7 +284,7 @@ async def create_notification(
                     # Resolved at send time; recorded now so an unconfigured channel is
                     # visible as a queued delivery rather than a missing row.
                     "provider_code": "pending",
-                    "next_attempt_at": scheduled_at,
+                    "next_attempt_at": held_until or scheduled_at,
                 },
             )
 

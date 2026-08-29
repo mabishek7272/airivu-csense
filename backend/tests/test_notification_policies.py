@@ -21,6 +21,7 @@ from csense_shared.notifications.policies import (
     MAX_DELAY_SECONDS,
     default_policy,
     parse_definition,
+    quiet_hours_end,
     within_quiet_hours,
 )
 from csense_shared.notifications.providers import Channel
@@ -249,6 +250,44 @@ def test_malformed_quiet_hours_are_not_quiet():
     assert not within_quiet_hours(
         dt.datetime.now(dt.UTC), {"start": "10:00", "end": "10:00"}
     )
+
+
+def test_quiet_hours_end_on_the_evening_side_of_a_wrap_is_tomorrow():
+    quiet = {"start": "22:00", "end": "06:00"}
+    end = quiet_hours_end(dt.datetime(2026, 8, 26, 23, 30, tzinfo=dt.UTC), quiet)
+    assert end == dt.datetime(2026, 8, 27, 6, 0, tzinfo=dt.UTC)
+
+
+def test_quiet_hours_end_on_the_morning_side_of_a_wrap_is_today():
+    quiet = {"start": "22:00", "end": "06:00"}
+    end = quiet_hours_end(dt.datetime(2026, 8, 26, 2, 0, tzinfo=dt.UTC), quiet)
+    assert end == dt.datetime(2026, 8, 26, 6, 0, tzinfo=dt.UTC)
+
+
+def test_quiet_hours_end_for_a_same_day_window():
+    quiet = {"start": "09:00", "end": "17:00"}
+    end = quiet_hours_end(dt.datetime(2026, 8, 26, 10, 0, tzinfo=dt.UTC), quiet)
+    assert end == dt.datetime(2026, 8, 26, 17, 0, tzinfo=dt.UTC)
+
+
+def test_quiet_hours_end_applies_the_timezone_offset():
+    # 23:30 UTC is 05:00 the next day at UTC+5:30 - past the 22:00-06:00 window's start
+    # but still inside it locally, ending at 00:30 UTC (06:00 local).
+    quiet = {"start": "22:00", "end": "06:00"}
+    end = quiet_hours_end(
+        dt.datetime(2026, 8, 26, 23, 30, tzinfo=dt.UTC), quiet, tz_offset_minutes=330
+    )
+    assert end == dt.datetime(2026, 8, 27, 0, 30, tzinfo=dt.UTC)
+
+
+def test_quiet_hours_end_is_none_outside_the_window():
+    quiet = {"start": "22:00", "end": "06:00"}
+    assert quiet_hours_end(dt.datetime(2026, 8, 26, 12, 0, tzinfo=dt.UTC), quiet) is None
+
+
+def test_quiet_hours_end_is_none_for_unusable_configuration():
+    assert quiet_hours_end(dt.datetime.now(dt.UTC), None) is None
+    assert quiet_hours_end(dt.datetime.now(dt.UTC), {"start": "nope", "end": "06:00"}) is None
 
 
 # --- Rendering ------------------------------------------------------------------------

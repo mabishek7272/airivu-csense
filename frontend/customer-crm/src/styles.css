@@ -723,3 +723,21 @@ html, body { max-width: 100%; overflow-x: hidden; }
   margin-top: 2px;
   cursor: default;
 }
+
+/* --- Recipient groups / notification policies ----------------------------------- */
+
+.member-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; }
+.member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.member-row:first-child { border-top: 1px solid var(--border); }
+.member-form {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}

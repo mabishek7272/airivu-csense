@@ -389,8 +389,44 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         [scripts/e2e_rule_editor.py](scripts/e2e_rule_editor.py): empty state explains
         the consequence of having no rules, the night-confidence warning appears while
         setting the threshold, and enable/disable is reflected in the listing.
-- [ ] Quiet hours and per-tenant notification policy editing in the CRM (`within_quiet_hours`
-      is implemented and tested but not yet consulted by the dispatcher)
+- [x] **Recipient groups and notification policies — the last "configure alerting from
+      the UI" gap closed, and quiet hours actually wired in.** `within_quiet_hours` was
+      implemented and tested since Phase 4 but never called from anywhere; both
+      `recipient_groups` and `notification_policies` have existed since the dispatcher
+      was built but were SQL-only.
+  - [x] [recipient_groups.py](backend/tenant_api/app/api/recipient_groups.py): group and
+        member CRUD. A member's own `active_schedule` is their quiet hours - not the
+        group's, not the policy's - because two people in the same escalation step can
+        legitimately want to be reached at different hours.
+  - [x] [notification_policies.py](backend/tenant_api/app/api/notification_policies.py):
+        policy CRUD plus `POST .../versions` to publish - the only path that ever writes
+        an escalation ladder, matching the immutable-version design from migration 0015.
+        A policy with no published version is a deliberate draft: `resolve_policy` inner
+        -joins to `active_version_id`, so it exists but reaches nobody until published.
+  - [x] **Quiet hours wired into the dispatcher**: `_quiet_hours_delay` in
+        [dispatcher.py](backend/shared/csense_shared/notifications/dispatcher.py) holds a
+        recipient's delivery until their window ends - `high` and `critical` always
+        bypass it (migration 0015's own words: "a fire alarm ignores them; a housekeeping
+        alert should not"). `quiet_hours_end` (new, alongside `within_quiet_hours`) computes
+        exactly when to release it, correct across a wrap-midnight window and a
+        recipient's own IANA timezone. Moved to a new `schedule.py` module shared by
+        `policies.py` and `dispatcher.py` without a circular import.
+  - [x] **A second gap closed alongside it**: `load_recipients` never actually checked
+        `recipient_groups.status` - archiving a group (now possible for the first time)
+        would not have stopped it notifying anyone.
+  - [x] Verified through the real ingestion pipeline, not just the API surface —
+        [scripts/e2e_notification_config.py](scripts/e2e_notification_config.py): a
+        medium-severity incident holds a quiet-hours recipient's delivery and does not
+        touch an always-reachable one; a high-severity incident reaches both regardless.
+        Plus the CRUD guards: a group referenced by a published policy cannot be deleted,
+        a policy with delivery history cannot be deleted (disable instead).
+  - [x] Browser coverage —
+        [scripts/e2e_notification_pages.py](scripts/e2e_notification_pages.py): empty
+        states, adding a member with quiet hours, publishing an escalation step,
+        enable/disable reflected in the listing.
+  - [x] CRM: **Recipients** and **Notifications** pages — group/member management with a
+        quiet-hours picker (reusing the timezone list built for Sites), and a policy
+        editor with a step builder (delay, channels, recipient groups).
 - [x] **Customer CRM UI** — incident inbox, incident detail with evidence strip and
       history timeline, detections feed with annotated thumbnails. Design tokens with
       light/dark, WCAG 2.2 AA contrast, keyboard focus, skip link, reduced-motion support.

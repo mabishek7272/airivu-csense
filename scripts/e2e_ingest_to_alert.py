@@ -238,13 +238,23 @@ async def main(recipient: str) -> int:
 
     step(7, "Acknowledge the incident - the escalation ladder must stop")
     api(f"/api/v1/tenant/incidents/{incident_id}/acknowledge", {}, owner_token)
-    async with factory() as session:
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        remaining = (await session.execute(
-            text("SELECT count(*) FROM notifications WHERE tenant_id = :t "
-                 "AND status IN ('pending','scheduled')"),
-            {"t": tenant_id},
-        )).scalar_one()
+    # The cancel runs in the same transaction as the status change (see
+    # transition_incident), so this is never actually pending by the time the HTTP
+    # response reaches us - but a fresh session can briefly not yet see a commit that a
+    # concurrent connection just made. A short poll is the correct way to read
+    # eventually-consistent state; a single immediate read is not.
+    remaining = None
+    for _ in range(10):
+        async with factory() as session:
+            await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
+            remaining = (await session.execute(
+                text("SELECT count(*) FROM notifications WHERE tenant_id = :t "
+                     "AND status IN ('pending','scheduled')"),
+                {"t": tenant_id},
+            )).scalar_one()
+        if remaining == 0:
+            break
+        await asyncio.sleep(0.2)
     print(f"    notifications still pending: {remaining}")
 
     accepted = [r for r in rows if r[0] == "accepted"]
