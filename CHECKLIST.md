@@ -200,12 +200,26 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           ([EdgePage.tsx](frontend/customer-crm/src/pages/EdgePage.tsx)) allocates and
           renders both config blocks, copy-to-clipboard, disabled until a device has
           reported a WireGuard key.
-- [ ] Site/zone/edge schemas + Customer CRM screens
-- [ ] Camera CRUD, encrypted credential storage (envelope encryption), ONVIF discovery
-      stub, manual RTSP entry, NVR adapter interface (one mock reference adapter)
+- [x] Site/zone/edge schemas + Customer CRM screens — stale, found while scoping "next":
+      done across three earlier commits this branch already has (`e0371e3` sites,
+      `8da6fb5` zones + a keyboard-operable polygon editor that surfaced a real timezone
+      bug, `7e1964c` edge). `SitesPage.tsx`/`ZonesPage.tsx`/`EdgePage.tsx` all exist and are
+      wired up; this line just never got checked off.
+- [~] Camera CRUD, encrypted credential storage (envelope encryption), manual RTSP entry —
+      done (`cameras.py`: full CRUD, credential set/clear, a real digest-auth RTSP/SDP
+      probe in `camera_probe.py`). **ONVIF discovery stub and NVR adapter interface are
+      still genuinely missing** — checked for both by name, neither exists yet. Splitting
+      this line out since it was previously all-or-nothing.
+- [ ] ONVIF discovery stub + NVR adapter interface (one mock reference adapter) — split out
+      of the line above; ONVIF discovery in particular blocks on real hardware/simulators to
+      test against (**[NEEDS EXTERNAL INPUT]**, see below), but a stub interface with a mock
+      adapter doesn't.
 - [ ] MediaMTX integration: short-lived signed media session, WebRTC/HLS, privacy masking
-      pipeline
-- [ ] Camera health current-state model + telemetry history (Mongo)
+      pipeline — confirmed still not built: infra config exists (`infra/mediamtx/`) but
+      nothing in tenant_api issues a media session or serves live video yet.
+- [ ] Camera health current-state model + telemetry history (Mongo) — note: MongoDB was
+      removed from the stack (CLARIFICATIONS #19/#20); this will land in PostgreSQL like
+      detections did, not Mongo as originally spec'd. Line stays open; wording is stale.
 - [ ] **[NEEDS EXTERNAL INPUT]** real camera/NVR hardware or RTSP test feeds for actual
       onboarding validation — will build against RTSP test streams / simulators otherwise
 
