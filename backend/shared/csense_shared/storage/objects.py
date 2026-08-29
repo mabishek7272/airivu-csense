@@ -107,6 +107,13 @@ def tenant_evidence_key(tenant_id: UUID, incident_id: UUID, evidence_id: UUID, v
     return f"{tenant_id}/incidents/{incident_id}/{evidence_id}/{variant}.jpg"
 
 
+def model_validation_report_key(model_version_id: UUID, run_id: UUID) -> str:
+    """A validation run's full JSON report (`model_validation_runs.result_object_id`) -
+    lives in the same `csense-models` bucket as the artifact it's evidence about, not a
+    separate bucket, since it's still model-registry data conceptually."""
+    return f"global/models/validation-runs/{model_version_id}/{run_id}.json"
+
+
 @dataclass(frozen=True)
 class UploadResult:
     bucket: str

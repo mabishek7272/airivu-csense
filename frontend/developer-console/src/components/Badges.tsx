@@ -26,6 +26,22 @@ export function StateBadge({ state }: { state: string }) {
   );
 }
 
+/** The most recent golden-dataset validation run for a version, if any - read-only
+ *  summary from `model_validation_runs`. `null` (no run ever recorded) is rendered
+ *  distinctly from "failed" - the two mean different things to an operator deciding
+ *  whether to trust a promotion. */
+export function ValidationBadge({ status }: { status: "passed" | "failed" | null }) {
+  if (status === null) {
+    return <span className="badge badge-neutral">No run recorded</span>;
+  }
+  return (
+    <span className={`badge ${status === "passed" ? "badge-low" : "badge-critical"}`}>
+      <span className="visually-hidden">Validation: </span>
+      {status}
+    </span>
+  );
+}
+
 export function ClassificationBadge({ classification }: { classification: string }) {
   if (classification === "biometric") {
     // Not just another badge colour: an icon prefix plus the word itself, so it reads

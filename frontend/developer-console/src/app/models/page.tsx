@@ -12,7 +12,7 @@ import {
 } from "@/api/modelRegistry";
 import { useAuth } from "@/auth/AuthContext";
 import { Layout } from "@/components/Layout";
-import { ClassificationBadge, StateBadge } from "@/components/Badges";
+import { ClassificationBadge, StateBadge, ValidationBadge } from "@/components/Badges";
 import { PromoteDialog } from "@/components/PromoteDialog";
 import { useNotifications } from "@/components/Notifications";
 import { EmptyPanel, FailureState, LoadingRows, NoResultsPanel } from "@/components/States";
@@ -115,7 +115,7 @@ export default function ModelsPage() {
       </div>
 
       {versions.loading ? (
-        <LoadingRows rows={4} columns={7} />
+        <LoadingRows rows={4} columns={8} />
       ) : Boolean(versions.error) && !versions.data ? (
         <FailureState
           error={versions.error}
@@ -160,6 +160,7 @@ export default function ModelsPage() {
                       <th scope="col">Runtime</th>
                       <th scope="col">Size</th>
                       <th scope="col">License</th>
+                      <th scope="col">Validation</th>
                       <th scope="col">Digest</th>
                       <th scope="col">
                         <span className="visually-hidden">Actions</span>
@@ -180,6 +181,15 @@ export default function ModelsPage() {
                         <td>{v.runtime}</td>
                         <td>{formatBytes(v.size_bytes)}</td>
                         <td>{v.license ?? "—"}</td>
+                        <td>
+                          <ValidationBadge status={v.latest_validation_status} />
+                          {v.latest_validation_metrics &&
+                            typeof v.latest_validation_metrics.recall === "number" && (
+                              <span className="muted" style={{ display: "block", fontSize: 11 }}>
+                                recall {(v.latest_validation_metrics.recall as number * 100).toFixed(0)}%
+                              </span>
+                            )}
+                        </td>
                         <td className="mono" title={v.artifact_sha256}>
                           {v.artifact_sha256.slice(0, 12)}…
                         </td>

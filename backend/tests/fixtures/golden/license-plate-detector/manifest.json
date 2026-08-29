@@ -1,0 +1,57 @@
+{
+  "model_name": "license-plate-detector",
+  "task": "presence: does this frame show at least one vehicle license plate",
+  "note": "Ground truth is hand-verified by actually viewing each frame (Claude, 2026-08-30), not inferred from which curated-review folder it came from - two of these images came from the 'person'/'general' folders and turned out to show a clearly visible plate anyway, and one from the 'plates' folder turned out not to (a distant night frame with no plate legible at any size). Labels are presence-only: 'is a plate visible', not a bounding box - see run_model_validation.py's own docstring for why an IoU-style ground truth isn't used here.",
+  "images": [
+    {
+      "file": "08738daf-1673-4f99-9136-765f62005108_20260728T221507378529.jpg",
+      "has_plate": true,
+      "note": "White car, rear plate visible at bottom-right of frame, small and not fully legible but present."
+    },
+    {
+      "file": "08f29758-32d2-46dc-a1eb-fdfecfa8ce0a_20260710T141847787304.jpg",
+      "has_plate": false,
+      "note": "Night IR, distant dark car - no plate discernible at any size."
+    },
+    {
+      "file": "b6941ca6-0f41-4358-9ebd-10e795ff6d80_20260826T051005238606.jpg",
+      "has_plate": true,
+      "note": "Silver SUV facing camera, front plate area visible on bumper."
+    },
+    {
+      "file": "d3a6aa09-52f2-444d-bbd4-ed9e0e8d15e4_20260803T030758711394.jpg",
+      "has_plate": true,
+      "note": "Silver SUV in foreground, clear front plate."
+    },
+    {
+      "file": "e904ccc6-151e-4ab9-b1c3-b900b6d5d96d_20260708T233655183853.jpg",
+      "has_plate": true,
+      "note": "White/silver SUV in foreground, clear front plate."
+    },
+    {
+      "file": "473bd3c4-9209-493e-ad26-c95b760f3e14_20260730T220721546987.jpg",
+      "has_plate": true,
+      "note": "From the 'person' folder, not 'plates' - the silver Mazda's front plate is clearly legible anyway."
+    },
+    {
+      "file": "c3f53050-e3f2-4844-a839-c70ff994f3a1_20260805T224547762308.jpg",
+      "has_plate": true,
+      "note": "From the 'person' folder, not 'plates' - the silver MG's front plate is clearly visible."
+    },
+    {
+      "file": "2b620501-8990-4336-b3c9-7ac0d376639c_20260729T093544380598.jpg",
+      "has_plate": false,
+      "note": "Night IR, distant van - no plate discernible."
+    },
+    {
+      "file": "5538387c-6094-431c-90af-a9f2e96f3901_20260720T080459826866.jpg",
+      "has_plate": false,
+      "note": "Night IR, distant delivery truck facing away - no plate visible."
+    },
+    {
+      "file": "7d41883d-f669-4815-88c1-7f59d98e2de0_20260810T100200063876.jpg",
+      "has_plate": false,
+      "note": "Night IR, van with headlight glare washing out the front - no plate discernible."
+    }
+  ]
+}

@@ -55,6 +55,12 @@ export interface ModelVersionOut {
   size_bytes: number;
   license: string | null;
   state_reason: string | null;
+  // The most recent golden-dataset validation run for this version, if any - read-only
+  // summary from model_validation_runs. null means no run has ever been recorded, which
+  // is itself meaningful (distinct from a run that failed).
+  latest_validation_status: "passed" | "failed" | null;
+  latest_validation_metrics: Record<string, unknown> | null;
+  latest_validation_report_key: string | null;
 }
 
 export interface PromoteInput {

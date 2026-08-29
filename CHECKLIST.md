@@ -435,7 +435,8 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       tracked in its own entry above under a more accurate description than "a label
       map" - a character-position softmax isn't the same shape of problem as a
       class-id map, and conflating them here was itself part of what made this stale.
-- [ ] Golden dataset + benchmark harness; `model_validation_runs` is still empty
+- [x] Golden dataset + benchmark harness (one reference use case) — see the detailed
+      entry below; `model_validation_runs` has its first real row.
 - [x] **Model registry UI in the Developer Console** — the registry (`GET
       /api/v1/admin/models`, `POST /model-versions/{id}/promote`) was fully built and
       tested since the AI runtime work, but the console had zero UI for it: a login
@@ -607,7 +608,45 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
     - Full JSON-Schema-draft validation of `tenant_overrides` against
           `allowed_overrides_schema` — a simple key/type check today
 - [ ] Redis config cache + invalidation, desired-state deployment to edge
-- [ ] Golden dataset + benchmark harness for at least one reference use case
+- [x] **Golden dataset + benchmark harness (one reference use case): `license-plate-detector`.**
+      TRD §15.2 has nine validation gates - this covers gates 2-4 (load/shape
+      compatibility, golden dataset functional tests, accuracy against declared
+      thresholds), not the other six (malware scan, adversarial/malformed-input testing,
+      thermal profile, edge hardware compatibility, signed release manifest, canary/shadow
+      deployment) - named explicitly rather than implied as done.
+  - [x] **Golden set: 10 real curated frames, hand-verified by actually looking at each
+        one** (`backend/tests/fixtures/golden/license-plate-detector/`), not inferred from
+        which curated-review folder they came from - two came from the `person`/`general`
+        folders and turned out to show a clearly visible plate anyway, one from the
+        `plates` folder turned out not to (a distant night frame, no plate legible at any
+        size). Ground truth is presence-only (`has_plate: true/false`), not bounding
+        boxes - pixel-accurate boxes by hand aren't something to claim confidence in, so
+        the metric is recall/false-positive-rate, not IoU.
+  - [x] **Real measured result, run for real against the real model** (not simulated):
+        **recall 1.0 (6/6), false positive rate 0.25 (1/4)** at this deployment's own
+        established confidence (0.03) - the one false positive was the same distant
+        night-IR frame already flagged as marginal during ground-truth review. Mean
+        inference 129ms, p95 662ms (CPU, no GPU in this environment - see the
+        `[NEEDS EXTERNAL INPUT]` line below). Recorded as a real
+        `model_validation_runs` row against the real, already-`production`
+        `license-plate-detector` version (`scripts/run_model_validation.py`), with the
+        full per-image report uploaded to MinIO alongside it.
+  - [x] **`validating → validated` promotion now requires a passing run on record** -
+        confirmed safe before adding: nothing previously promoted through that specific
+        transition via the API (`scripts/e2e_model_registry.py` only ever exercises
+        `uploaded → validating`; the DB-level immutability tests write state directly,
+        bypassing the API). Proven against the real running admin-api, not just unit
+        tests: refused with no run, still refused after a `failed` one, succeeds only
+        after a `passed` one (`scripts/e2e_model_validation_gate.py`).
+  - [x] Developer Console `/models` shows each version's latest validation status +
+        recall inline (`ValidationBadge`) - deliberately does **not** surface the raw
+        report object key/link, matching this same file's own established rule that the
+        registry UI never exposes an object key or bucket, only metadata.
+  - [ ] Deliberately not covered: every other of the 14 migrated models still has zero
+        validation runs (all reached `production` by owner direction, CLARIFICATIONS
+        #15/#16, never through this gate); a UI-driven way to *trigger* a run (today it's
+        a script, matching `import_legacy_models.py`'s own precedent for operator
+        tooling); the other six TRD §15.2 gates named above.
 - [ ] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
       Runtime reference numbers otherwise
 - [ ] **[NEEDS DECISION]** YOLOv8/AGPL-3.0 licensing for commercial hosting — see
