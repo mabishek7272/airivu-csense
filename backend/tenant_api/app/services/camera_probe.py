@@ -378,3 +378,34 @@ async def tunnel_networks(session: AsyncSession, *, camera_id: uuid.UUID) -> lis
             extra={"camera_id": str(camera_id)},
         )
     return parse_networks(candidates)
+
+
+async def device_tunnel_networks(session: AsyncSession, *, device_id: uuid.UUID) -> list:
+    """`tunnel_networks()`'s counterpart for NVR discovery (`nvr.py`): there is no camera
+    row yet at discovery time - nothing to join through - so this takes an edge device id
+    directly instead. Naming a specific device is itself the caller's assertion of intent
+    (there is no `connection_mode` gate to check the way `tunnel_networks` has, because
+    nothing else about the request implies VPN reachability the way an existing camera's
+    stored `connection_mode` does); row-level security still scopes the lookup, so one
+    tenant's discovery request can never pick up another tenant's device or tunnel.
+    """
+    from sqlalchemy import text
+
+    row = (
+        await session.execute(
+            text(
+                "SELECT host(vpn_address), text(lan_cidr) FROM edge_devices "
+                "WHERE id = :id AND deleted_at IS NULL"
+            ),
+            {"id": device_id},
+        )
+    ).first()
+    if row is None:
+        return []
+
+    candidates = []
+    if row[0]:
+        candidates.append(f"{row[0]}/32")
+    if row[1]:
+        candidates.append(row[1])
+    return parse_networks(candidates)

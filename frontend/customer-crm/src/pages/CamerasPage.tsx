@@ -10,6 +10,7 @@ import {
 } from "../api/cameras";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { LiveViewDialog } from "../components/LiveViewDialog";
+import { NvrDiscoveryDialog } from "../components/NvrDiscoveryDialog";
 import {
   ErrorSummary,
   Field,
@@ -62,6 +63,7 @@ export function CamerasPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
   const [watching, setWatching] = useState<Camera | null>(null);
+  const [discoveringNvr, setDiscoveringNvr] = useState(false);
 
   const cameras = useResource(() => listCameras({ status: statusFilter || undefined }), [
     statusFilter,
@@ -155,9 +157,14 @@ export function CamerasPage() {
             )}
           </p>
         </div>
-        <button type="button" onClick={() => setCreating(true)} disabled={!online}>
-          Add camera
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" className="btn-quiet" onClick={() => setDiscoveringNvr(true)} disabled={!online}>
+            Discover from NVR
+          </button>
+          <button type="button" onClick={() => setCreating(true)} disabled={!online}>
+            Add camera
+          </button>
+        </div>
       </div>
 
       <div className="filter-bar">
@@ -380,6 +387,16 @@ export function CamerasPage() {
       )}
 
       {watching && <LiveViewDialog camera={watching} onClose={() => setWatching(null)} />}
+
+      {discoveringNvr && (
+        <NvrDiscoveryDialog
+          onClose={() => setDiscoveringNvr(false)}
+          onCreated={() => {
+            setDiscoveringNvr(false);
+            cameras.reload();
+          }}
+        />
+      )}
 
       {credentialsFor && (
         <CredentialDialog

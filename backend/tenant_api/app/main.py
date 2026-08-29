@@ -15,6 +15,7 @@ from app.api import (
     ingest,
     media,
     notification_policies,
+    nvr,
     pipeline_assignments,
     realtime,
     recipient_groups,
@@ -100,5 +101,6 @@ app.include_router(notification_policies.router)
 app.include_router(pipeline_assignments.router)
 app.include_router(realtime.router)
 app.include_router(media.router)
+app.include_router(nvr.router)
 
 

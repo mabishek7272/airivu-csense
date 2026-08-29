@@ -205,15 +205,33 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       `8da6fb5` zones + a keyboard-operable polygon editor that surfaced a real timezone
       bug, `7e1964c` edge). `SitesPage.tsx`/`ZonesPage.tsx`/`EdgePage.tsx` all exist and are
       wired up; this line just never got checked off.
-- [~] Camera CRUD, encrypted credential storage (envelope encryption), manual RTSP entry —
-      done (`cameras.py`: full CRUD, credential set/clear, a real digest-auth RTSP/SDP
-      probe in `camera_probe.py`). **ONVIF discovery stub and NVR adapter interface are
-      still genuinely missing** — checked for both by name, neither exists yet. Splitting
-      this line out since it was previously all-or-nothing.
-- [ ] ONVIF discovery stub + NVR adapter interface (one mock reference adapter) — split out
-      of the line above; ONVIF discovery in particular blocks on real hardware/simulators to
-      test against (**[NEEDS EXTERNAL INPUT]**, see below), but a stub interface with a mock
-      adapter doesn't.
+- [x] Camera CRUD, encrypted credential storage (envelope encryption), manual RTSP entry,
+      ONVIF discovery stub, NVR adapter interface — done (`cameras.py`: full CRUD,
+      credential set/clear, a real digest-auth RTSP/SDP probe in `camera_probe.py`; NVR/
+      ONVIF below).
+- [x] NVR adapter interface (one mock reference adapter) + ONVIF discovery stub —
+      `nvr_adapter.py`'s `NVRAdapter` protocol + `MockNVRAdapter` (never opens a socket,
+      by design - real vendor NVRs speak wildly different channel-listing protocols and
+      exactly one, mock, adapter was scoped for this pass), wired to a real
+      `POST /nvr/discover` (`nvr.py`) that turns discovered channels into real cameras
+      through the existing `POST /cameras` - demoable today, no hardware needed
+      (`scripts/e2e_nvr_discovery.py`, `NvrDiscoveryDialog.tsx`).
+  - [x] **ONVIF discovery is honestly stubbed, not faked.** WS-Discovery is UDP multicast,
+        bound to one network segment - FLOW-05 already says discovery is an edge
+        responsibility for exactly this reason, and `edge/agent/` is empty (Phase 3+, not
+        started). A central endpoint that pretended to discover a customer's real LAN would
+        be actively misleading. `POST /sites/{id}/discover-cameras` says so plainly -
+        `available: false` with a real reason - rather than an empty list (reads as "no
+        cameras found", a different and false claim) or canned fake results.
+  - [x] The real WS-Discovery probe/ProbeMatch logic (`csense_shared/onvif/discovery.py`)
+        is built and unit-tested against real WS-Discovery/ONVIF XML shapes anyway -
+        ready for the edge agent to use directly once that phase starts, not unverified
+        code someone would otherwise trust later without ever having run it. Not called
+        from any Tenant API route (would only ever scan this container's own Docker
+        network, which is worthless for a real customer).
+  - [x] `camera.discover` permission (migration 0034), elevated, same tier and grant
+        pattern as `camera.probe` - both make the server open a connection to an address
+        the caller supplied.
 - [x] MediaMTX integration: short-lived signed media session, HLS + WebRTC live view.
   - [x] **HLS is the primary path, not WebRTC** - a scope reversal from the first pass at
         this plan, caught before any code was written: the deployment's real NVR streams
@@ -267,8 +285,11 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 - [~] **[NEEDS EXTERNAL INPUT]** real camera/NVR hardware or RTSP test feeds for actual
       onboarding validation — partially resolved: a real NVR (`autotek-dorani-nvr
       .dyndns.org`, see [[nvr-h265-constraint]]) was available and used to validate live
-      view end-to-end (`scripts/e2e_live_view.py`). Broader onboarding flows (ONVIF
-      discovery, the NVR adapter interface) still have nothing real to test against.
+      view end-to-end (`scripts/e2e_live_view.py`). The NVR adapter interface is scoped
+      mock-only for this pass (see above) so real hardware wouldn't add anything there
+      either way. What's still genuinely blocked: a real ONVIF-speaking device to validate
+      `csense_shared/onvif/discovery.py`'s WS-Discovery probe against, and the edge agent
+      it's waiting for.
 
 ## Phase 4 — AI Registry, Pipeline Runtime, and Control Plane
 
