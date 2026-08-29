@@ -339,6 +339,16 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         same transaction as the status change, and re-checked at send time to close the
         claim→send window. All five human-driven statuses stop the ladder.
   - [x] Annotated snapshots attached to email (never the unmasked `original`).
+  - [x] **The same snapshot reaches WhatsApp, not just email.** `Message.media_urls` and
+        the WhatsApp provider's `/send/media` path (checks `if message.media_urls`) had
+        existed since this section was built - nothing ever populated `media_urls`, so
+        every WhatsApp alert had silently been text-only. `load_media_urls`
+        ([worker.py](backend/notification_worker/app/worker.py)) presigns the annotated
+        evidence object against the *internal* MinIO endpoint (the gateway is a container
+        on this network, not a browser - a browser-signed URL would not resolve for it).
+        Verified live against a real WhatsApp number: the gateway's own log shows it
+        fetching the presigned URL and sending a real `ImageMessage`, with a delivery
+        receipt (`Receipt received ... type sender`) coming back.
   - [x] Migration 0017: `cancelled` added to `delivery_status`. Filing acknowledged
         alerts under `abandoned` would have made a success dashboard report failures
         during exactly the incidents handled best.

@@ -199,6 +199,57 @@ async def load_attachments(
     return attachments
 
 
+async def load_media_urls(
+    session: AsyncSession, object_store, *, incident_id: uuid.UUID | None
+) -> list[str]:
+    """A presigned URL for the incident's annotated snapshot - the counterpart to
+    `load_attachments`, for channels whose own server fetches the bytes rather than
+    carrying them (the WhatsApp gateway, from inside this Docker network).
+
+    Both exist because the two channels genuinely need different things (see
+    `providers.Message`'s own docstring) - this is not dead code, it was simply never
+    written until a WhatsApp alert was actually checked for the snapshot the equivalent
+    email already carries.
+
+    Signed against `object_store` - the same internal, server-side client
+    `load_attachments` reads bytes with - not the public endpoint a browser needs. The
+    WhatsApp gateway is a container on this network, not a browser; a browser-signed URL
+    would not resolve for it. Short-lived: it only has to survive the few seconds until
+    the gateway fetches it, not sit around as a standing link to evidence.
+    """
+    if incident_id is None or object_store is None:
+        return []
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT o.bucket, o.object_key
+                FROM evidence e
+                JOIN stored_objects o ON o.id = e.object_id
+                WHERE e.incident_id = :incident_id
+                  AND e.privacy_variant = 'annotated'
+                ORDER BY e.capture_time
+                LIMIT 1
+                """
+            ),
+            {"incident_id": incident_id},
+        )
+    ).first()
+    if row is None:
+        return []
+
+    bucket, key = row
+    try:
+        url = await asyncio.to_thread(
+            object_store.presigned_get_object, bucket, key, expires=dt.timedelta(minutes=10)
+        )
+    except Exception as exc:  # noqa: BLE001 - never lose the alert over a snapshot
+        logger.warning("media_url_presign_failed", extra={"key": key, "error": str(exc)[:200]})
+        return []
+    return [url]
+
+
 async def process_delivery(
     session: AsyncSession,
     registry: ProviderRegistry,
@@ -233,6 +284,9 @@ async def process_delivery(
     attachments = await load_attachments(
         session, object_store, incident_id=content["incident_id"]
     )
+    media_urls = await load_media_urls(
+        session, object_store, incident_id=content["incident_id"]
+    )
 
     return await send_delivery(
         session,
@@ -241,6 +295,7 @@ async def process_delivery(
         subject=content["subject"],
         body=content["body"],
         attachments=attachments,
+        media_urls=media_urls,
         now=moment,
     )
 
