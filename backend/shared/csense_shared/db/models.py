@@ -550,3 +550,68 @@ class ModelValidationRun(Base):
     runner_version: Mapped[str | None] = mapped_column(nullable=True)
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime.datetime] = _created_at()
+
+
+class Pipeline(Base):
+    """SCH §8.4 — platform-global pipeline family. No tenant_id, same reasoning as
+    `Model`: a pipeline definition is not tenant-owned data. Tenants reach it only
+    indirectly, through `pipeline_assignments`, which is tenant-owned."""
+
+    __tablename__ = "pipelines"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    code: Mapped[str] = mapped_column(unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(nullable=False)
+    use_case: Mapped[str] = mapped_column(nullable=False)
+    description: Mapped[str | None] = mapped_column(nullable=True)
+    owner_team: Mapped[str | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False, server_default="active")
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="1")
+    created_at: Mapped[datetime.datetime] = _created_at()
+    updated_at: Mapped[datetime.datetime] = _updated_at()
+
+
+class PipelineVersion(Base):
+    """SCH §8.5 — immutable pipeline version. `definition_json`'s stage list only has one
+    stage type any runtime actually interprets today (`infer`) — see
+    backend/admin_api/app/api/pipelines.py, not this module, for what's enforced.
+
+    `definition_sha256` is a canonical-JSON digest of `definition_json` (same
+    tamper-evidence idea as `ModelVersion.artifact_sha256`), and a database trigger
+    (migration 0031) rejects any UPDATE that would change the definition or its digest —
+    there is no update-draft endpoint; a version is created once, fully formed.
+    """
+
+    __tablename__ = "pipeline_versions"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pipelines.id", ondelete="RESTRICT"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(nullable=False)
+    schema_version: Mapped[int] = mapped_column(nullable=False, server_default="1")
+    definition_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    definition_sha256: Mapped[str] = mapped_column(nullable=False)
+    allowed_overrides_schema: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    runtime_target: Mapped[str] = mapped_column(nullable=False, server_default="cloud")
+    resource_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    state: Mapped[str] = mapped_column(
+        ENUM("draft", "published", "deprecated", name="pipeline_version_state", create_type=False),
+        nullable=False,
+        server_default="draft",
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime.datetime] = _created_at()
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    approved_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("pipeline_id", "version_number", name="uq_pipeline_version_number"),
+        UniqueConstraint("definition_sha256", name="uq_pipeline_version_definition_sha256"),
+        Index("ix_pipeline_versions_pipeline_state", "pipeline_id", "state"),
+    )
+
+# `pipeline_assignments` is tenant-owned and, like every other tenant-owned table in this
+# codebase (cameras, sites, incidents, rules...), is reached through raw SQL under RLS in
+# the Tenant API rather than an ORM class here — see
+# backend/tenant_api/app/api/pipeline_assignments.py.

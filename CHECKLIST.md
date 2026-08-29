@@ -371,19 +371,80 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       Real, uncurated source frames for this (`curate-review/`, `smoke-test*/`) live
       outside the repo entirely and are gitignored as a safety net; only the finished,
       reviewed, redacted output under `public/showcase/` reaches git.
-- [ ] Pipeline schema, stage registry, versioning, allowed tenant overrides
-- [~] Pipeline stages: **infer** is built (above). Remaining: ingest, preprocess,
-      filter/ROI, tracking, rules, evidence-intent — these turn raw detections into
-      tenant-scoped incidents and are the next real piece of work. **Note**: today's live
-      detection path (`POST /api/v1/tenant/.../detections`) takes detections an edge
-      device already computed - nothing in this repo yet calls AI Runtime's `/infer` for
-      a live stream, so "models never leave the central server" is proven for the
-      registry and runtime themselves but not yet *enforced* for that path. Not a leak
-      today (how an `inference`-role device gets its own model is outside this repo
-      entirely); a gap to close when this stage is built.
+- [x] **Pipeline schema, stage registry, versioning, tenant assignment** (migration
+      0031/0032; SCH §8.4, §8.5, §8.8). The one thing genuinely missing before this: a
+      `pipelines`/`pipeline_versions` concept at all. `detections.pipeline_version_id`
+      had sat as a bare nullable column with no FK since migration 0012 - deliberately,
+      for this migration to close, which it now does.
+  - [x] `pipelines` / `pipeline_versions` — platform-global, same pattern as
+        `models`/`model_versions` (no RLS, role grants only). A version is immutable
+        after creation (a DB trigger mirroring `model_versions_immutable` rejects any
+        change to `definition_json` or its digest), content-addressed the same way an
+        artifact is (`definition_sha256`, over a canonical serialization - identical
+        definitions can't become two versions), and moves `draft → published →
+        deprecated` — simpler than the model ladder on purpose, since there's no
+        validation-run step yet (`pipeline_test_runs`, deferred below).
+  - [x] **Only one stage type is interpreted anywhere in this codebase: `infer`.** The
+        TRD's own pipeline diagram (§16) has more (preprocess, filter, tracking...), and
+        `definition_json` is shaped to hold them later, but nothing executes a pipeline
+        at all yet — see the next point. Version creation validates the one real thing:
+        the named model has a version in a deployable state (the same
+        `DEPLOYABLE_STATES` bar the registry's own promote endpoint uses).
+  - [x] `pipeline_assignments` — tenant-owned, RLS, a published version bound to one of
+        the tenant's own cameras. **This records intent, not execution**: nothing pulls
+        a camera's stream and runs the assigned pipeline against it yet — that's a
+        materially different, larger piece of work (a gateway device pulling RTSP, or
+        the cloud doing so, and calling `/infer` continuously) than the registry itself,
+        and is still the real gap behind "models never leave the central server" being
+        proven for the registry/runtime but not yet *enforced* end-to-end. Tracked here,
+        not silently implied by the assignment endpoint existing. A partial unique index
+        on `(camera_id, priority) WHERE status = 'active'` enforces SCH §8.8's overlap
+        constraint (a simplified form of it — a full overlapping-time-range exclusion
+        would need `btree_gist` and buys nothing yet, since nothing reads
+        `effective_to`).
+  - [x] `pipeline.publish` and `pipeline.assign` were already seeded in migration 0007,
+        ahead of any table that made them do anything — but only ever granted to
+        `platform_admin`, and `pipeline.assign` is a *tenant* action
+        (`POST /api/v1/tenant/cameras/{id}/pipeline-assignments`, named in the TRD).
+        Migration 0032 adds the `tenant_owner` grant that was missing, plus the two
+        genuinely new permissions (`pipeline.read`, `pipeline.manage`).
+  - [x] **Developer Console pipeline builder** (`/pipelines`) — mirrors `/models`
+        closely: grouped-by-pipeline cards, state badges, publish/deprecate dialogs. The
+        "builder" is a model dropdown, not a stage editor — there's exactly one stage
+        type to configure right now, so a general-purpose DAG UI would be building
+        controls for stage types nothing executes. No Customer CRM page this pass —
+        tenant-facing assignment is API-only for now, verified by the e2e script, not
+        wrapped in a CRM page yet.
+    - [x] **A pipeline with no versions yet was invisible in the list** — found while
+          writing the e2e script: `GET /pipelines` inner-joined versions, so a pipeline
+          had nowhere to appear until its first version existed, and the "New version"
+          button that would create one lived inside the (non-rendering) pipeline
+          section. Fixed with an outer join and a nullable version half of the response
+          shape; the frontend then briefly double-counted a version (an optimistic
+          update appending the real version without dropping the version-less
+          placeholder row already in local state) — caught by the same e2e run, fixed,
+          and pinned with its own check.
+  - [x] Verified against the real registry and a real camera —
+        [scripts/e2e_pipeline_registry.py](scripts/e2e_pipeline_registry.py) (16
+        checks): author and publish a version against one of the 14 real registered
+        models, confirm immutability holds at the database level (not just the UI),
+        assign it to a real camera through the tenant API, confirm the overlap
+        constraint refuses a second active assignment at the same priority, and confirm
+        deprecating a version blocks a new assignment without touching an existing one.
+  - [~] Deliberately deferred, each because it depends on something that doesn't exist
+        yet or is a scale optimization with no current need:
+    - Actually executing an assignment against live camera frames (see above)
+    - `pipeline_deployments` (canary/rollout across a fleet) — no real fleet to canary
+          across yet; `pipeline_assignments.deployment_id` stays NULL throughout, which
+          SCH §8.8 itself treats as a valid shape
+    - `pipeline_test_runs` / golden-dataset benchmark harness — same gap
+          `model_validation_runs` already has, tracked below
+    - Redis 3-layer distributed cache (TRD §16) — Postgres-authoritative direct reads
+          are enough at this scale, same reasoning already used for the WS-realtime
+          feature's relay decision
+    - Full JSON-Schema-draft validation of `tenant_overrides` against
+          `allowed_overrides_schema` — a simple key/type check today
 - [ ] Redis config cache + invalidation, desired-state deployment to edge
-- [ ] Developer Console: pipeline builder, version comparison (registry + model detail
-      done above)
 - [ ] Golden dataset + benchmark harness for at least one reference use case
 - [ ] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
       Runtime reference numbers otherwise

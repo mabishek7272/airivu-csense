@@ -15,6 +15,7 @@ import { useAuth } from "../auth/AuthContext";
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/models", label: "Models" },
+  { href: "/pipelines", label: "Pipelines" },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

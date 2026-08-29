@@ -11,6 +11,10 @@ const STATE_CLASS: Record<string, string> = {
   uploaded: "badge-medium",
   deprecated: "badge-neutral",
   revoked: "badge-critical",
+  // Pipeline version states (backend/admin_api/app/api/pipelines.py) share this badge -
+  // "deprecated" above already covers both registries' identical use of the word.
+  published: "badge-low",
+  draft: "badge-medium",
 };
 
 export function StateBadge({ state }: { state: string }) {

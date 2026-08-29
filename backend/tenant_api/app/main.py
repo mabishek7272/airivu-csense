@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
@@ -14,6 +14,7 @@ from app.api import (
     incidents,
     ingest,
     notification_policies,
+    pipeline_assignments,
     realtime,
     recipient_groups,
     rules,
@@ -95,6 +96,7 @@ app.include_router(cameras.router)
 app.include_router(edge.router)
 app.include_router(recipient_groups.router)
 app.include_router(notification_policies.router)
+app.include_router(pipeline_assignments.router)
 app.include_router(realtime.router)
 
 
