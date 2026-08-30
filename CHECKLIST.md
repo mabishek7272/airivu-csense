@@ -1530,7 +1530,49 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         SARIF output to GitHub code scanning (findings currently only visible in the
         workflow's own log/artifact); a Dependabot/Renovate config to keep the frontend
         baselines from silently drifting further.
-- [ ] DAST baseline scan against local stack (automatable now)
+- [x] DAST baseline scan against local stack, two real findings found and fixed
+  - [x] `scripts/dast_baseline.py`: OWASP ZAP's own `zap-api-scan.py`, driven from
+        `tenant-api`/`admin-api`'s real, already-live OpenAPI documents, against the real
+        running containers on the real docker network - not a mocked target. `-I`
+        (non-blocking) matches this session's own CI security-scanning precedent
+        (bandit/npm audit): findings are reported, not gated on. Reports land in
+        `reports/dast/` (gitignored - point-in-time artifacts).
+  - [x] **The first real run found two real, fixable issues**: `X-Content-Type-Options
+        Header Missing` and `Cross-Origin-Resource-Policy Header Missing` (Low, on every
+        endpoint of both services). A third finding, `Private IP Disclosure` (evidence
+        `192.168.1.0`), was reviewed and confirmed a false positive - it's an `e.g.
+        192.168.1.0/24` example string in a Pydantic field description
+        (`edge.py`'s tunnel-network field), surfaced in the auto-generated OpenAPI
+        document ZAP scanned, not a real leak of any actual internal address.
+  - [x] **Fixed for real**: `SecurityHeadersMiddleware` (new, `csense_shared.middleware`,
+        installed on both services) sets both headers on every response.
+        `Cross-Origin-Resource-Policy: same-origin` is correct (not the more permissive
+        `same-site`/`cross-origin`) specifically because Traefik serves each frontend and
+        its own API on the same origin - the one legitimate cross-origin caller (a local
+        Vite dev server) uses CORS `fetch()`, which CORP does not govern.
+  - [x] **A real Starlette gotcha surfaced and was fixed properly, not routed around**:
+        `BaseHTTPMiddleware` does not reliably see responses an `add_exception_handler`
+        handler produces - the middleware was rewritten as a plain ASGI class (mutating
+        the raw `http.response.start` message) so the headers apply to `ApiError`-typed
+        error responses too (every 401/402/404/422/429 this session has built), not just
+        200s. One genuine, named architectural boundary remains: a response from a
+        catch-all `Exception`-keyed handler (this codebase's own
+        `unhandled_exception_handler`, truly unexpected bugs) is routed by Starlette to
+        `ServerErrorMiddleware`, which sits outside *all* `add_middleware` layers -
+        structurally unreachable by any middleware, asserted explicitly in its own test
+        rather than silently assumed away.
+  - [x] `backend/tests/test_security_headers_middleware.py` (4 tests): both headers set
+        on a normal response, both still set on an `ApiError`-shaped error response
+        (the realistic case), and the catch-all-500 boundary is asserted as a known gap,
+        not hidden. Full backend pytest suite green (405 passed, 30 skipped).
+  - [x] **Verified twice against the real rebuilt/restarted services, individually
+        (a combined-run script invocation hit real Docker Desktop RAM-pressure
+        instability partway through a second full run - the same class of environment
+        issue already documented earlier in this session, unrelated to the fix itself;
+        each service was confirmed clean via its own separate scan instead)**: `tenant-api`
+        went from 3 real+1 false-positive Low findings to exactly the 1 false positive;
+        `admin-api` went from 2 Low findings to **zero** Low/Medium/High findings, 118/118
+        checks passing.
 - [!] Independent penetration test — **[NEEDS HUMAN/EXTERNAL INPUT]** requires a
       contracted third party; not something I can perform or substitute for
 - [ ] Load/spike/endurance/failure-injection test suite (automatable, local-scale)

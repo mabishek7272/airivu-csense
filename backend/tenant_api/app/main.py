@@ -37,7 +37,7 @@ from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
 from csense_shared.errors import ApiError, api_error_handler, unhandled_exception_handler
 from csense_shared.logging import configure_logging, get_logger
-from csense_shared.middleware import CorrelationIdMiddleware
+from csense_shared.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 from csense_shared.storage.objects import create_client
 
 settings = get_settings()
@@ -84,6 +84,7 @@ app = FastAPI(
 )
 
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.customer_crm_origins,

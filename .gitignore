@@ -54,3 +54,6 @@ artifacts/
 /curate-review/
 /smoke-test/
 /smoke-test-out/
+
+# scripts/dast_baseline.py's own output - point-in-time scan artifacts, not source.
+/reports/
