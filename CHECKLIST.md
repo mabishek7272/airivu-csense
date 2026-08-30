@@ -1575,7 +1575,43 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         checks passing.
 - [!] Independent penetration test — **[NEEDS HUMAN/EXTERNAL INPUT]** requires a
       contracted third party; not something I can perform or substitute for
-- [ ] Load/spike/endurance/failure-injection test suite (automatable, local-scale)
+- [x] Load/spike/endurance/failure-injection test suite (automatable, local-scale), one
+      real bug found and fixed by the failure-injection phase
+  - [x] `scripts/load_test.py`: a plain `asyncio` worker-pool against a real throwaway
+        tenant's own real, authenticated, DB-backed endpoints - no new load-testing tool
+        pulled in. Concurrency/duration are named, honest local-scale numbers (10
+        baseline / 30 spike / sustained 45s endurance), not what a dedicated-
+        infrastructure production load test would use. Four phases: baseline (p50/p95/
+        p99 + error rate), spike (a sudden 3x burst, a looser but still bounded error-
+        rate ceiling), endurance (same load sustained, first-bucket-vs-last-bucket p95
+        compared to catch drift a short burst can't), and failure injection (stops the
+        real redis container mid-run, restarted in a `finally` so it's never left down).
+  - [x] **The failure-injection phase found a real, fixable bug**: `GET /readyz` (built
+        specifically to report a dependency outage gracefully) instead **hung for ~26
+        seconds** when redis was down, traced to redis-py 8.x's own default connection
+        retry policy (10 retries with exponential backoff) applying independently of
+        `retry_on_timeout` - setting `socket_connect_timeout`/`socket_timeout` alone
+        (the first fix attempted) was not enough, confirmed by timing a real failed
+        connect before concluding retries were the actual cause, not guessed.
+  - [x] **Fixed for real, in the one shared place** (`csense_shared.db.redis.
+        create_redis_client`, used by both `tenant-api` and `admin-api`): `retry=Retry(
+        NoBackoff(), 0)` plus `retry_on_timeout=False`/`retry_on_error=[]` - a Redis
+        outage now fails in the configured 2s, not ~26s, for every caller of this shared
+        client (the rate limiter and `/readyz` alike), not just the one endpoint that
+        happened to surface it.
+  - [x] Verified twice, honestly: first by direct reproduction from a plain Python
+        process using the exact same client-construction code against the real stopped
+        redis container (confirmed the bug at ~26s, then confirmed the fix at exactly
+        2.0s) when repeated Docker Desktop instability (this dev machine's own recurring
+        RAM-pressure issue this session - 12GB total, measured down to 0.66GB free mid-
+        session, unrelated to the production server spec) blocked a full container
+        rebuild; then for real end-to-end once the stack was rebuilt and stable - full
+        PASS, all four phases, `readyz` confirmed reporting `degraded`
+        with `redis: unavailable` (not a hang) and recovering to `ok` within 30s of
+        restart. Full backend pytest suite green (405 passed, 30 skipped; one argon2
+        `HashingError: Memory allocation error` seen during the same RAM-pressure window
+        - confirmed a transient environment condition, not a code issue, on immediate
+        retry). `ruff check backend scripts` clean.
 - [x] Backup automation + restore-exercise scripts (MongoDB is no longer part of this
       stack, CLARIFICATIONS #19/#20 - Postgres and MinIO are what actually needs backing
       up now)
