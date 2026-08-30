@@ -15,6 +15,7 @@ from csense_shared.db.models import (
     Permission,
     PlatformDeveloper,
     PlatformRoleAssignment,
+    Role,
     RolePermission,
     User,
 )
@@ -23,6 +24,16 @@ from csense_shared.db.models import (
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     result = await session.execute(select(User).where(User.email_normalized == email.lower()))
     return result.scalar_one_or_none()
+
+
+async def get_role_by_name(session: AsyncSession, name: str, audience: str) -> Role:
+    """For provisioning a new organization's owner membership - mirrors
+    tenant_api/repositories/identity.py's own copy (TRD §7.2 keeps the two services from
+    sharing an import path for anything beyond `csense_shared`)."""
+    result = await session.execute(
+        select(Role).where(Role.tenant_id.is_(None), Role.name == name, Role.audience == audience)
+    )
+    return result.scalar_one()
 
 
 async def get_platform_developer(session: AsyncSession, user_id: UUID) -> PlatformDeveloper | None:

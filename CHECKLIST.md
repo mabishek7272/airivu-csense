@@ -153,7 +153,50 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         than the existing `tenant_owner`/`tenant_member` pair; a separate read permission
         for members who aren't owners to see their own team roster (today `membership.
         manage` gates both read and write).
-- [ ] Reseller relationship + child tenant foundation
+- [~] Reseller relationship + child tenant foundation
+  - [x] Schema needed no migration (`organization_relationships`, `organization_type`'s
+        `reseller`/`reseller_customer` values - migration 0001); this shipped its first
+        API + real provisioning mechanism against it. New: migration 0037 -
+        `reseller.manage_children`, granted broadly to `tenant_owner` like
+        `membership.manage` is - the business rule ("only an actual reseller org may use
+        this") is enforced at the endpoint via `organizations.organization_type`, not by
+        which roles hold the permission.
+  - [x] `csense_shared.tenancy.provisioning` (new, shared) - creates an organization +
+        tenant with an *invited* (not active) owner. Neither caller (a platform admin, or
+        a reseller) ever learns the new owner's password, unlike `/register` - the owner
+        activates through the existing, unmodified `POST /api/v1/auth/accept-invitation`,
+        which needed zero changes to support this.
+  - [x] `POST /api/v1/admin/organizations` (TRD §10.2's own representative endpoint,
+        previously unbuilt) - a platform admin provisions a `direct_customer` or
+        `reseller` organization. This is how a reseller comes into being in the first
+        place (TRD §8.2).
+  - [x] `POST` / `GET /api/v1/tenant/child-tenants` - a reseller creates and lists its own
+        `reseller_customer` child tenants, each an independent tenant boundary (TRD §8.2:
+        "records are not stored in a shared reseller tenant") linked via a real
+        `organization_relationships` row. A non-reseller tenant_owner (a `direct_customer`,
+        or even a `reseller_customer` itself) is refused with a clear `403
+        not_a_reseller`, not a bare permission denial.
+  - [x] **Real bug found and fixed during e2e verification**: the child-tenant list
+        endpoint's first draft joined `memberships` to show each child's owner email -
+        `memberships` is RLS-protected per-tenant, so that join was silently emptied by
+        RLS under the reseller's own tenant scope, making every child tenant invisible in
+        its own parent's list. Fixed by dropping the cross-tenant join entirely (TRD
+        §8.2's "aggregate views are computed from authorized child relationships" -
+        `organizations`/`tenants`/`organization_relationships` carry no RLS at all, so the
+        list reads only what a reseller is actually authorized to see); owner email is
+        returned once, at creation time, from data already in hand.
+  - [x] Verified for real: `scripts/e2e_reseller.py` - a platform admin provisions a
+        reseller, its invited owner accepts and creates a child tenant, the child's own
+        invited owner accepts independently and lands in the *child* tenant (not the
+        reseller's), the child tenant (a `reseller_customer`) is refused when it tries to
+        create children of its own, an ordinary `direct_customer` tenant is refused the
+        same way, and the `organization_relationships` row is confirmed by direct query.
+        Full PASS.
+  - [ ] **Deliberately deferred, and not silently**: no UI yet for any of this - the two
+        related, still-open CHECKLIST lines below (`Principal Administrator org/license
+        screens`, `Customer guided onboarding`) are exactly where that belongs, not
+        duplicated here. No reseller aggregate rollups (usage/billing across children) -
+        blocked on the licensing/quota item below existing first.
 - [ ] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
 - [ ] Principal Administrator org/license screens (Developer Console)

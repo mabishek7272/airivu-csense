@@ -21,6 +21,7 @@ from app.api import (
     pipeline_assignments,
     realtime,
     recipient_groups,
+    reseller,
     rules,
     sites,
     zones,
@@ -106,5 +107,6 @@ app.include_router(realtime.router)
 app.include_router(media.router)
 app.include_router(nvr.router)
 app.include_router(memberships.router)
+app.include_router(reseller.router)
 
 
