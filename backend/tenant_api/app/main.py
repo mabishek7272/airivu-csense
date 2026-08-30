@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    api_clients,
     audit,
     auth,
     cameras,
@@ -118,5 +119,6 @@ app.include_router(license.router)
 app.include_router(mfa.router)
 app.include_router(support.router)
 app.include_router(webhooks.router)
+app.include_router(api_clients.router)
 
 

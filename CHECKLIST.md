@@ -1280,7 +1280,50 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         UI yet either (request/approve/deny/revoke are exercised for real by the e2e
         script and are fully usable via the API - just no dialog-driven page in front of
         them this pass).
-- [ ] Scoped API keys, rate limits, usage metering, developer API docs
+- [x] Scoped API keys, rate limits, usage metering, developer API docs
+  - [x] `api_clients`/`api_keys` (SCH §10.5, previously spec'd but never built - migration
+        0047). Tenant-owned only this pass (SCH's `tenant_id null` implies a future
+        platform-level client, not needed by anything today - widening it later is a
+        small additive migration). `rate_policy_id` is shipped as a direct
+        `rate_limit_per_minute` column instead of a not-yet-existing shared policy table
+        - the same simplification `webhook_endpoints` already made for its own
+        `rate_policy` field (migration 0045).
+  - [x] `api_key_lookup` (migration 0047) mirrors `edge_agent_lookup` (0026) exactly - a
+        `SECURITY DEFINER` prefix-lookup function, because resolving a credential is what
+        discovers the tenant and RLS cannot scope that. `deps_api_client.py` (new) is the
+        same shape as `deps_agent.py`: constant-time digest comparison, "every failure
+        looks the same" 401, its own `ApiClientContext` type (not folded into
+        `TenantContext`/`PlatformContext` - `require_permission()` is deliberately typed
+        to only those two).
+  - [x] **Scopes are capped at issuance**: a key's `scopes` must be a subset of the
+        issuing user's own `context.permissions` at creation time (`api_clients.py`,
+        `create_api_client`) - a key can never be issued more power than the person
+        issuing it currently holds. What that person holds later is not re-checked (the
+        same relationship any OAuth token already has to its grantor), named rather than
+        silently assumed.
+  - [x] Real Redis-backed fixed-window rate limiting + usage metering
+        (`csense_shared.security.rate_limit`, new) - `enforce_rate_limit` is a FastAPI
+        dependency every API-key route opts into explicitly, returning `429` with
+        `retry_after_seconds` in `details` once a client's own configured
+        `rate_limit_per_minute` is exceeded. Fixed-window imprecision (up to ~2x burst at
+        a minute boundary) is a named, accepted tradeoff over a sliding-window/token-
+        bucket limiter - real cost this pass doesn't need to pay, since the limit is a
+        per-client operator-set ceiling, not a platform-wide guarantee.
+  - [x] `GET /api/v1/tenant/integrations/whoami` (new, isolated demonstrator route) proves
+        the full credential -> rate-limit -> usage-metering path end to end without
+        touching any existing tested endpoint - deliberate, not a stub: it is exactly the
+        shape a real integration route would take once one exists.
+  - [x] "Developer API docs" was already satisfied for free - FastAPI's own
+        `/api/v1/tenant/docs` and `/api/v1/tenant/openapi.json` are live with zero
+        additional code (confirmed via the e2e script).
+  - [x] `backend/tests/test_api_keys.py` (4 tests), `backend/tests/test_rate_limit.py` (7
+        tests, real Redis). `scripts/e2e_api_clients.py`: scope-exceeds-issuer refused,
+        real key issuance/list/whoami, tampered and unknown keys refused identically,
+        the real configured rate limit (3/minute) actually hit over real HTTP (3
+        succeed, 2 refused with 429), usage metering counts every call including the
+        refused ones, immediate revocation, gap-free second-key rotation, both docs
+        endpoints live. Full PASS. `ruff check backend scripts` clean; full backend
+        pytest suite green (379 passed, 30 skipped).
 - [~] Webhook signing, verification, replay protection
   - [x] `webhook_endpoints`/`webhook_deliveries` (SCH §10.6/§10.7, previously spec'd but
         never built - migration 0045). Both the URL and the signing secret are
