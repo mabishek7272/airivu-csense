@@ -81,7 +81,7 @@ def _digest_header(user: str, password: str, method: str, uri: str, challenge: s
         raise ValueError("Malformed digest challenge from the camera.")
 
     def md5(value: str) -> str:
-        return hashlib.md5(value.encode()).hexdigest()  # noqa: S324 - required by RFC 2617
+        return hashlib.md5(value.encode()).hexdigest()  # noqa: S324 # nosec B324 - required by RFC 2617
 
     ha1 = md5(f"{user}:{realm.group(1)}:{password}")
     ha2 = md5(f"{method}:{uri}")

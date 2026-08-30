@@ -65,16 +65,28 @@ jobs:
           pip install -r backend/admin_api/requirements.txt
           pip install -r backend/tests/requirements.txt
           pip install -r backend/notification_worker/requirements.txt
-          pip install ruff mypy pip-audit
+          pip install ruff mypy pip-audit bandit
 
       - name: Lint (ruff)
         # `scripts/` too: the e2e and operational scripts are how this system gets
         # verified and recovered, so they are not somewhere lint should be optional.
         run: ruff check backend scripts
 
-      - name: Dependency vulnerability scan
+      - name: Dependency vulnerability scan (SCA)
         run: pip-audit -r backend/tenant_api/requirements.txt -r backend/admin_api/requirements.txt || true
         # TODO(Phase 8): remove `|| true` once the baseline is clean and this can gate merges.
+
+      - name: Static analysis (SAST)
+        # Non-blocking, same reasoning as the SCA step above: this surfaces real findings
+        # (mostly low-confidence pattern matches - dynamic-SQL PATCH endpoints building a
+        # column list from a Pydantic model's own fixed field names, which bandit cannot
+        # tell apart from user-controlled input) rather than gating merges on a baseline
+        # nobody has triaged yet.
+        run: bandit -r backend scripts -ll -x '**/tests/**,**/node_modules/**,**/__pycache__/**' || true
+        # TODO(Phase 8): triage the baseline (mostly PATCH-endpoint false positives,
+        # `psql()` cleanup helpers in e2e scripts with no attacker-controlled input, and
+        # `urlopen` calls against hardcoded operator-configured hosts) and turn this
+        # blocking once it's actually clean rather than merely quiet.
 
       - name: Bootstrap non-superuser application roles
         working-directory: backend/migrations
@@ -102,6 +114,11 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+      - name: Dependency vulnerability scan (SCA)
+        run: npm audit --audit-level=high || true
+        # TODO(Phase 8): react-router 6->7 and vite 6->8 both carry real, non-breaking-
+        # patch fixes here - the available fix is a major-version bump for each, which
+        # needs its own dedicated testing pass, not a side effect of wiring the scan.
 
   frontend-developer-console:
     runs-on: ubuntu-latest
@@ -117,6 +134,14 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+      - name: Dependency vulnerability scan (SCA)
+        run: npm audit --audit-level=high || true
+        # TODO(Phase 8): the remaining findings here are eslint/typescript-eslint's own
+        # build-time dependency chain (glob/minimatch) - a fix needs eslint-config-next
+        # 16, itself a breaking change against this app's current eslint config, so it
+        # needs its own pass rather than a side effect of wiring the scan. next.js itself
+        # was already bumped to 14.2.35 (the latest 14.x patch) as part of adding this -
+        # a real, low-risk fix, not merely a baseline note.
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -150,3 +175,31 @@ jobs:
           name: gitleaks-report
           path: gitleaks.sarif
           if-no-files-found: ignore
+
+  container-and-iac-scan:
+    # Trivy in filesystem mode, not image mode: this workflow doesn't build any of the
+    # service Docker images (that happens in infra/, not CI), so there's no built image
+    # to scan yet. Filesystem mode still covers real ground without needing one - known-
+    # vulnerable versions in every requirements.txt/package.json/package-lock.json across
+    # every service (the same class of finding SCA/container scanning both care about),
+    # plus a config scan of every Dockerfile and docker-compose.yml for real
+    # misconfigurations (running as root, missing HEALTHCHECK, a mounted secret with
+    # over-broad permissions). Non-blocking for the same reason pip-audit/bandit/npm
+    # audit all are above - a first run against an unreviewed baseline.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem + config scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,config,secret
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+        # TODO(Phase 8): triage the baseline, upload SARIF to code scanning, and turn
+        # exit-code to "1" once it's actually clean rather than merely quiet. `scanners:
+        # secret` overlaps with the dedicated `secret-scan` job above by design - two
+        # different tools agreeing is more reassuring than either running alone, not
+        # redundant.

@@ -1261,7 +1261,37 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
 
 ## Phase 8 — Production Hardening
 
-- [ ] SAST/SCA/secret/container/IaC scan wired into CI (automatable now)
+- [~] SAST/SCA/secret/container/IaC scan wired into CI (automatable now)
+  - [x] Secret scanning already existed (gitleaks, full history). Added: SAST (`bandit`
+        against `backend`/`scripts`), SCA for Python (`pip-audit`, already existed) and
+        for both frontend apps (`npm audit --audit-level=high`, new), and a Trivy
+        filesystem + config scan covering dependency manifests across every service plus
+        every Dockerfile/`docker-compose.yml` for real misconfigurations - container/IaC
+        scanning without needing to build any image in CI (this workflow doesn't build
+        service images at all; that happens in `infra/`, not here).
+  - [x] **A real fix landed alongside wiring the scan, not just a report**: Developer
+        Console's `next.js` was pinned at `14.2.5`, vulnerable to a real critical CVE
+        (cache poisoning) plus several high-severity ones; bumped to `14.2.35` (the
+        latest 14.x patch - a real, low-risk fix, not a side effect of forcing the audit
+        tool's own suggestion). Verified: `typecheck`/`lint`/`build` all still pass, and
+        the running container confirmed serving `200` through Traefik afterward.
+  - [x] Every new scan step is **non-blocking**, the same discipline `pip-audit`'s own
+        `TODO(Phase 8)` already established for this repo - a first run against a baseline
+        nobody has triaged should surface real findings, not fail every future PR on day
+        one. Each has its own TODO naming what's actually left in its baseline:
+        `bandit`'s is mostly PATCH-endpoint false positives (a dynamic column list built
+        from a Pydantic model's own fixed field names, which the tool can't tell apart
+        from user-controlled input - confirmed by hand for the one specific line this
+        session's own PATCH pattern touches, `zones.py`); the Customer CRM's `npm audit`
+        baseline is `react-router` 6→7 and `vite` 6→8, both real fixes that need a
+        breaking-change major-version bump and their own dedicated testing pass, not a
+        side effect of wiring the scan; the Developer Console's remaining baseline is
+        `eslint-config-next`'s own build-time tooling chain (`glob`/`minimatch`), fixed
+        only by an `eslint-config-next` major bump.
+  - [ ] **Deliberately deferred**: turning any of these blocking once triaged; uploading
+        SARIF output to GitHub code scanning (findings currently only visible in the
+        workflow's own log/artifact); a Dependabot/Renovate config to keep the frontend
+        baselines from silently drifting further.
 - [ ] DAST baseline scan against local stack (automatable now)
 - [!] Independent penetration test — **[NEEDS HUMAN/EXTERNAL INPUT]** requires a
       contracted third party; not something I can perform or substitute for
