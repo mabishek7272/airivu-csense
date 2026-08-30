@@ -158,7 +158,35 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
 - [ ] Principal Administrator org/license screens (Developer Console)
 - [ ] Customer guided onboarding + tenant settings (Customer CRM)
-- [ ] Central append-only audit query/search foundation
+- [~] Central append-only audit query/search foundation
+  - [x] `audit.read` permission (migration 0036), granted to both `tenant_owner`
+        (customer) and `platform_admin` (platform) - the same permission code safely
+        shared across audiences since `TenantContext`/`PlatformContext` are resolved from
+        separate audience-scoped JWTs and `require_permission()` only ever checks the
+        caller's own resolved context.
+  - [x] `GET /api/v1/tenant/audit-events` - one tenant's own history, filters `action`/
+        `target_type`/`outcome`/`since`/`until`, keyset-paginated (same cursor shape as
+        `incidents.py`: base64 `{occurred_at, id}`, `ORDER BY occurred_at DESC, id DESC`).
+  - [x] `GET /api/v1/admin/audit-events` - same shape, platform-wide, plus an optional
+        `tenant_id` filter to narrow to one tenant without leaking others' rows (proven,
+        not assumed - `scripts/e2e_audit_log.py` checks every returned row matches).
+  - [x] Both endpoints query `audit_events` as it already stood - no backfill, no schema
+        change. Every feature built this session already writes through
+        `record_audit_and_outbox()`, so real history existed before either endpoint did.
+  - [x] Customer CRM `/audit` (action/outcome filters, "Load more" cursor pagination) and
+        Developer Console `/audit` (tenant_id/action filters) - both confirmed serving
+        `200` through Traefik after rebuild.
+  - [x] Verified for real: `scripts/e2e_audit_log.py` registers a tenant (a real
+        `tenant.created` event), confirms the tenant's own endpoint sees it, confirms the
+        `action` filter narrows, confirms a `limit=1` cursor page returns a different row
+        next time, bootstraps a throwaway platform admin, confirms the admin endpoint
+        finds the same event when `tenant_id`-filtered with no cross-tenant leakage - full
+        PASS against the real running stack.
+  - [ ] **Deliberately deferred**: no friendly actor-name join (actor shown as
+        type + id, not display name); `previous_hash`/`event_hash` hash-chain integrity
+        columns remain unpopulated (a pre-existing gap, not introduced or closed this
+        slice - tamper-evidence would need a backfill + a hashing point on write, both
+        out of scope here).
 - [ ] Step-up authentication for high-risk actions
 - [ ] Vertical-slice test: reseller → child tenant → MFA enrollment → empty dashboard →
       quota-exceeded rejection

@@ -27,6 +27,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/recipient-groups">Recipients</NavLink>
           <NavLink to="/notification-policies">Notifications</NavLink>
           <NavLink to="/team">Team</NavLink>
+          <NavLink to="/audit">Audit</NavLink>
         </nav>
         <span className="mono" style={{ color: "var(--text-muted)" }} title="Tenant">
           {tenantId ? `${tenantId.slice(0, 8)}…` : ""}

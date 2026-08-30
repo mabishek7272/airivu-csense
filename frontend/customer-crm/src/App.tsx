@@ -15,6 +15,7 @@ import { IncidentsPage } from "./pages/IncidentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
+import { AuditPage } from "./pages/AuditPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -41,6 +42,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <TeamPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/audit"
+        element={
+          <RequireAuth>
+            <AuditPage />
           </RequireAuth>
         }
       />

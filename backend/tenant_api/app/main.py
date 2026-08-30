@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    audit,
     auth,
     cameras,
     detections,
@@ -88,6 +89,7 @@ app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(health.router)
+app.include_router(audit.router)
 app.include_router(auth.router)
 app.include_router(incidents.router)
 app.include_router(detections.router)

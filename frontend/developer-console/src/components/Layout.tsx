@@ -16,6 +16,7 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/models", label: "Models" },
   { href: "/pipelines", label: "Pipelines" },
+  { href: "/audit", label: "Audit" },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
