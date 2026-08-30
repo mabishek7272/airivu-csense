@@ -7,6 +7,7 @@ interface AuthState {
   tenantId: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (organizationName: string, email: string, password: string, displayName: string) => Promise<void>;
+  acceptInvitation: (token: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -61,6 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const acceptInvitation = useCallback(async (token: string, password: string) => {
+    const data = await apiFetch<AuthResponse>("/api/v1/auth/accept-invitation", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
+    setAccessToken(data.access_token, data.expires_in);
+    setTenantId(data.tenant_id);
+    setIsAuthenticated(true);
+  }, []);
+
   const logout = useCallback(() => {
     clearAccessToken();
     setIsAuthenticated(false);
@@ -68,7 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, tenantId, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ isAuthenticated, isLoading, tenantId, login, register, acceptInvitation, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

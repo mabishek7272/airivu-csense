@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from csense_shared.db.models import Membership, Organization, Permission, Role, RolePermission, Tenant, User
@@ -103,3 +103,67 @@ async def create_organization_tenant_owner(
     session.add(membership)
     await session.flush()
     return membership
+
+
+async def count_active_owners(session: AsyncSession, tenant_id: UUID) -> int:
+    """For the "don't lock a tenant out of its own account" guard - `memberships.py`
+    refuses a revoke/role-change that would bring this to zero."""
+    owner_role = await get_role_by_name(session, "tenant_owner", "customer")
+    result = await session.execute(
+        select(Membership).where(
+            Membership.tenant_id == tenant_id,
+            Membership.role_id == owner_role.id,
+            Membership.status == "active",
+        )
+    )
+    return len(result.all())
+
+
+async def create_invited_membership(
+    session: AsyncSession, *, tenant_id: UUID, email: str, display_name: str, role: Role,
+    site_scope_mode: str, invited_by: UUID,
+) -> tuple[User, Membership]:
+    """Runs inside an already tenant-scoped session (`tenant_session()`, the same as any
+    other write in this API) - unlike `create_organization_tenant_owner`, there is no
+    tenant to create here, so no mid-transaction scope change is needed.
+
+    A brand-new email gets a real `User` row with `status='invited'` and
+    `password_hash=None` - the schema already treats both as first-class values (not a
+    placeholder hack), and `login()`'s own checks (`user.status != "active"`, plus its
+    dummy-hash comparison when `password_hash` is falsy) already refuse it correctly with
+    no extra code needed here. An email that already has an account is reused as-is - a
+    second membership for an existing user, not a second identity.
+    """
+    existing = await get_user_by_email(session, email)
+    if existing is not None:
+        user = existing
+    else:
+        user = User(
+            email_normalized=email.lower(), email_display=email,
+            password_hash=None, status="invited", display_name=display_name,
+        )
+        session.add(user)
+        await session.flush()
+
+    membership = Membership(
+        tenant_id=tenant_id, user_id=user.id, role_id=role.id,
+        status="invited", site_scope_mode=site_scope_mode,
+        invited_by=invited_by, invited_at=func.now(),
+    )
+    session.add(membership)
+    await session.flush()
+    return user, membership
+
+
+async def activate_membership(
+    session: AsyncSession, *, membership: Membership, user: User, password_hash: str,
+) -> None:
+    """The accept-invitation counterpart to `create_invited_membership` - sets the real
+    password, flips both the user and the membership from their `invited` placeholders to
+    real, usable ones."""
+    user.password_hash = password_hash
+    user.status = "active"
+    user.email_verified_at = func.now()
+    membership.status = "active"
+    membership.accepted_at = func.now()
+    await session.flush()

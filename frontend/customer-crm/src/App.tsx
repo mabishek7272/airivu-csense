@@ -13,6 +13,8 @@ import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
+import { TeamPage } from "./pages/TeamPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -33,6 +35,15 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+      <Route
+        path="/team"
+        element={
+          <RequireAuth>
+            <TeamPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/incidents"
         element={

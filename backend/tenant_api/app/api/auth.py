@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.deps import get_app_settings
 from app.repositories.identity import (
+    activate_membership,
     create_organization_tenant_owner,
     get_first_active_membership,
     get_role_by_name,
@@ -26,9 +27,10 @@ from app.repositories.identity import (
 from app.services.sessions import create_session, revoke_session, rotate_session
 from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.config import Settings
-from csense_shared.db.models import Organization, Tenant, User
-from csense_shared.db.postgres import bootstrap_session
+from csense_shared.db.models import Membership, Organization, Tenant, User
+from csense_shared.db.postgres import bootstrap_session, set_tenant_scope
 from csense_shared.errors import ApiError, AuthenticationError, ConflictError
+from csense_shared.security.invitation_tickets import consume_invitation_ticket
 from csense_shared.security.passwords import hash_password, verify_password
 from csense_shared.security.tokens import AUDIENCE_CUSTOMER, issue_access_token
 
@@ -128,6 +130,77 @@ async def register(
 
         permissions = await get_role_permissions(db, owner_role.id)
         user_id, tenant_id, membership_id = user.id, tenant.id, membership.id
+
+    return await _issue_tokens(
+        request, response, settings,
+        user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
+    )
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=12, max_length=256)
+
+
+@router.post("/accept-invitation", response_model=AuthResponse)
+async def accept_invitation(
+    body: AcceptInvitationRequest,
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_app_settings),
+) -> AuthResponse:
+    """The counterpart to `memberships.py`'s `invite_member` - runs pre-auth, same as
+    `/register` and `/login`, since by definition there is no session yet."""
+    session_factory: async_sessionmaker = request.app.state.session_factory
+
+    ticket = await consume_invitation_ticket(request.app.state.redis, settings, body.token)
+    if ticket is None:
+        raise AuthenticationError("This invitation link is invalid or has expired.")
+
+    async with bootstrap_session(session_factory) as db:
+        # RLS-protected tables (memberships) need tenant scope set before they can be
+        # read or written, same as create_organization_tenant_owner already does - the
+        # ticket's own tenant_id is what authorizes this, not anything the caller supplied.
+        await set_tenant_scope(db, ticket.tenant_id)
+
+        membership = await db.get(Membership, ticket.membership_id)
+        user = await db.get(User, ticket.user_id)
+        if (
+            membership is None or user is None
+            or membership.tenant_id != ticket.tenant_id
+            or membership.user_id != user.id
+            or membership.status != "invited"
+        ):
+            # Covers an already-accepted, revoked, or otherwise no-longer-invited
+            # membership indistinguishably from a forged ticket - none of those cases
+            # should be redeemable, and the visible failure is the same either way.
+            raise AuthenticationError("This invitation is no longer valid.")
+
+        await activate_membership(
+            db, membership=membership, user=user, password_hash=hash_password(body.password, settings),
+        )
+
+        await record_audit_and_outbox(
+            db,
+            tenant_id=ticket.tenant_id,
+            actor_type="user",
+            actor_id=str(user.id),
+            action="membership.accept",
+            outcome="success",
+            target_type="membership",
+            target_id=str(membership.id),
+            reason="Invitation accepted",
+            before_patch={"status": "invited"},
+            after_patch={"status": "active"},
+            correlation_id=None,
+            event_type="membership.accepted.v1",
+            event_payload={"membership_id": str(membership.id), "user_id": str(user.id)},
+            aggregate_type="membership",
+            aggregate_id=str(membership.id),
+        )
+
+        permissions = await get_role_permissions(db, membership.role_id)
+        user_id, tenant_id, membership_id = user.id, membership.tenant_id, membership.id
 
     return await _issue_tokens(
         request, response, settings,

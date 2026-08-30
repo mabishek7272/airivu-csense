@@ -113,8 +113,46 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 ## Phase 2 — Tenant, License, and Operator Foundation
 
-- [ ] Organization/tenant creation + owner invitation flow
-- [ ] Memberships, system roles, granular permissions, site scopes (seed data + API)
+- [x] Organization/tenant creation — was already done (`/api/v1/auth/register`, used by
+      every e2e script all session) but never checked off; owner invitation flow is new,
+      see the detailed entry below.
+- [~] **Memberships + invitation flow.** The schema (migration 0001: `memberships`,
+      `membership_resource_scopes`, `status: invited/active/suspended/revoked`,
+      `site_scope_mode: all/selected/none`) existed since Phase 1 with zero API against
+      it until now.
+  - [x] `POST /api/v1/tenant/memberships` (invite), `GET` (list), `PATCH` (role/status/
+        scope) — `membership.manage`, `tenant_owner`-only (migration 0035) - identity/
+        access control is more sensitive than any resource permission granted to
+        `tenant_member` so far.
+  - [x] Real invitation emails via the existing Resend integration
+        (`csense_shared.notifications.bootstrap`/`ResendEmailProvider` - already verified
+        sending, CLARIFICATIONS #26) - reused, not a new email path. A new Redis-backed
+        token (`invitation_tickets.py`, sibling to `ws_tickets.py` - long-lived (7 days)
+        and single-use, deliberately unlike a WS ticket's 20-second lifetime) is only ever
+        returned in the API response when sending actually failed - otherwise it goes out
+        in the email alone and the API never holds it again.
+  - [x] `POST /api/v1/auth/accept-invitation` sets the real password and activates the
+        membership, then logs the person straight in (issues real tokens), same as a
+        fresh registration does.
+  - [x] **Zero-owners lockout guard**: nothing in the schema itself stops a tenant
+        revoking or demoting its last active `tenant_owner`, which would lock the tenant
+        out of its own account permanently. Refused with a clear `422`; proven against
+        the real running API, not just as a schema constraint (`scripts/e2e_memberships.py`
+        - refuses with one owner, succeeds once a second exists).
+  - [x] Customer CRM: `/team` (list, invite dialog, role/status actions,
+        `ConfirmDialog` for revoke) and `/accept-invitation` (the one page in this app
+        reachable without already being signed in).
+  - [x] Verified for real, not simulated: `scripts/e2e_memberships.py` sends a real
+        invitation through Resend, reads the real token out of Redis (never asked of the
+        API - matches how the token behaves once an email actually sends), accepts it,
+        confirms the new member can log in independently, confirms a reused token is
+        refused (401), and confirms the lockout guard both blocks and un-blocks correctly
+        over real HTTP calls.
+  - [ ] **Deliberately deferred**: `site_scope_mode: selected` (per-site scoping via
+        `membership_resource_scopes` - real schema, no picker UI); finer role granularity
+        than the existing `tenant_owner`/`tenant_member` pair; a separate read permission
+        for members who aren't owners to see their own team roster (today `membership.
+        manage` gates both read and write).
 - [ ] Reseller relationship + child tenant foundation
 - [ ] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
