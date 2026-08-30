@@ -27,6 +27,7 @@ from app.api import (
     reseller,
     rules,
     sites,
+    support,
     zones,
 )
 from csense_shared.config import get_settings
@@ -114,5 +115,6 @@ app.include_router(memberships.router)
 app.include_router(reseller.router)
 app.include_router(license.router)
 app.include_router(mfa.router)
+app.include_router(support.router)
 
 

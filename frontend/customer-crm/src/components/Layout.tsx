@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { SupportGrantBanner } from "./SupportGrantBanner";
 
 export function Layout({ children }: { children: ReactNode }) {
   const { logout, tenantId } = useAuth();
@@ -11,6 +12,10 @@ export function Layout({ children }: { children: ReactNode }) {
       <a className="skip-link" href="#main">
         Skip to content
       </a>
+
+      {/* Layout only ever renders once RequireAuth has let a page through, so this never
+          fetches on the unauthenticated login/accept-invitation screens. */}
+      <SupportGrantBanner />
 
       <header className="app-header">
         <div className="app-brand">

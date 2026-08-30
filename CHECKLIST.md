@@ -1235,7 +1235,51 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 - [ ] Edge encrypted offline spool, reconnect cursor, batch resync, dedup
 - [ ] WireGuard/relay integration design + time-limited diagnostic access
-- [ ] Support grant request/approve/active-banner/expiry/revoke + audit
+- [~] Support grant request/approve/active-banner/expiry/revoke + audit
+  - [x] `support_grants` (SCH §5.10, previously spec'd but never built - migration 0043).
+        `support_grant_id` had already existed on `TenantContext`/`PlatformContext` and
+        `record_audit_and_outbox` since early in this build, with nothing to populate it
+        until now - this is the table those fields were always meant to point at.
+  - [x] Migration 0044: `support.request`/`support.approve` (platform-only, `critical`
+        risk for approve); `support.revoke`/`support.read` granted to **both** audiences
+        - the same safe sharing `audit.read` (migration 0036) already established, since
+        a permission code is just a string each audience's own `require_permission()`
+        checks against its own already-resolved context.
+  - [x] `backend/admin_api/app/api/support.py` (new): request/list/approve/deny/revoke.
+        **Self-approval is refused in code, deliberately** - a platform developer cannot
+        approve their own request; a real peer must. `backend/tenant_api/app/api/
+        support.py` (new): a tenant's own read (`?active_only=true` is what the "active
+        support session" banner polls) and its **own real right to revoke a session
+        early**, independent of the platform side's own revoke.
+  - [x] **Expiry is lazy, not a scheduled job**: every read first runs a cheap
+        `UPDATE ... WHERE status='active' AND expires_at < now()` before returning
+        results - `status` in the database is never stale by more than the time until
+        the next request, without needing a cron job or worker this pass doesn't have
+        anywhere to run.
+  - [x] Customer CRM: a real, persistent top banner (`SupportGrantBanner.tsx`, mirroring
+        the existing offline banner's own shape and reasoning - a standing condition, not
+        a dismissible toast) shown on every authenticated page whenever a grant is active
+        against the tenant, naming who and which ticket, with an "End session now"
+        button wired to the tenant's own revoke. Polled every 60s - no realtime channel
+        exists for a platform-side event like this yet.
+  - [x] Verified for real: `scripts/e2e_support_grants.py` - request, a real peer's
+        approval, self-approval refused (403), the tenant's own banner data appearing
+        the moment a grant goes active, a *different* tenant seeing nothing (RLS
+        isolation), the tenant's own revoke clearing the banner immediately with the
+        platform side agreeing, denial as a real alternative to approval, and lazy expiry
+        (an active grant past `expires_at` flips to `expired` in the database on the very
+        next read, not merely hidden). Full PASS, first run. `npm run typecheck`/`lint`/
+        `build` clean; the running container confirmed serving `200` afterward.
+  - [ ] **Deliberately deferred, stated plainly**: this ships the full request/approve/
+        active-banner/expiry/revoke lifecycle and its audit trail - not yet the
+        *authorization* half (actually elevating a real access token's reach using an
+        active grant's `support_grant_id`, so a platform developer's session genuinely
+        gains the tenant access the grant approved). That's a materially bigger, riskier
+        change to the core token/auth layer that deserves its own dedicated pass, not a
+        side effect of building the governance workflow around it. No Developer Console
+        UI yet either (request/approve/deny/revoke are exercised for real by the e2e
+        script and are fully usable via the API - just no dialog-driven page in front of
+        them this pass).
 - [ ] Scoped API keys, rate limits, usage metering, developer API docs
 - [ ] Webhook signing, verification, replay protection
 - [ ] SMS/web-push provider adapters — **[NEEDS HUMAN INPUT: no provider contracted]**
