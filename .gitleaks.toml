@@ -30,6 +30,13 @@ regexes = [
   # Matching the exact literal keeps this as tight as possible: any other key-shaped
   # string, in this file or anywhere else, is still reported.
   '''sk_live_9f8a7b6c5d4e3f2a1b''',
+
+  # RFC 6238 Appendix B's own published TOTP test vector (base32 of the ASCII secret
+  # "12345678901234567890"), used in backend/tests/test_totp.py to prove the HMAC/
+  # counter/truncation steps are RFC-conformant, not merely self-consistent. This is a
+  # public, non-secret value defined in the RFC itself - the exact literal match keeps
+  # the allowlist as narrow as the Stripe one above.
+  '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
 ]
 
 paths = [
