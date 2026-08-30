@@ -9,6 +9,9 @@ describes for entitlement resolution up front, once, rather than at every quota 
 merged (overrides win) into `license_entitlements` rows, and every `limit_numeric`
 entitlement also gets a `quota_ledgers` row - the thing `csense_shared.licensing.quota`
 actually locks and increments at resource-creation time.
+
+Issuance also requires a recent step-up verification (TRD-SEC-010, see `mfa.py`) - the one
+real high-risk mutation this pass gates.
 """
 from __future__ import annotations
 
@@ -16,18 +19,25 @@ import datetime as dt
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import current_platform_context, platform_db_session
+from app.deps import current_platform_context, get_app_settings, platform_db_session
 from csense_shared.audit.outbox import record_audit_and_outbox
-from csense_shared.errors import ConflictError, NotFoundError
+from csense_shared.config import Settings
+from csense_shared.errors import ApiError, ConflictError, NotFoundError
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.step_up_tickets import has_recent_step_up
 from csense_shared.security.tenant_context import PlatformContext
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-licensing"])
+
+# Shared with mfa.py's own STEP_UP_SCOPE - kept as a plain matching string rather than an
+# import to avoid a licensing.py <-> mfa.py dependency in either direction; both are
+# leaves off the same "admin high-risk action" concept, not a shared object.
+STEP_UP_SCOPE = "admin-high-risk"
 
 
 class EntitlementSpec(BaseModel):
@@ -209,10 +219,26 @@ async def _load_entitlements(db: AsyncSession, *, license_id: uuid.UUID) -> dict
 @router.post("/licenses", response_model=LicenseOut, status_code=201)
 async def issue_license(
     body: IssueLicenseIn,
+    request: Request,
     context: PlatformContext = Depends(current_platform_context),
     db: AsyncSession = Depends(platform_db_session),
+    settings: Settings = Depends(get_app_settings),
 ) -> LicenseOut:
     require_permission(context, "license.manage")
+
+    # TRD-SEC-010: "High-risk actions require recent MFA/step-up" - issuing a license is
+    # a real financial/entitlement action, the concrete one this pass gates (see mfa.py's
+    # own docstring for why this endpoint specifically). A valid bearer token alone is not
+    # enough; the caller must have verified their second factor within the last few
+    # minutes (POST /api/v1/admin/auth/mfa/verify).
+    if not await has_recent_step_up(
+        request.app.state.redis, settings, scope=STEP_UP_SCOPE, principal_id=context.developer_user_id
+    ):
+        raise ApiError(
+            status_code=403, code="step_up_required",
+            message="Issuing a license requires a recent MFA verification. "
+            "Call POST /api/v1/admin/auth/mfa/verify, then retry.",
+        )
 
     plan_row = (
         await db.execute(

@@ -277,7 +277,45 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         columns remain unpopulated (a pre-existing gap, not introduced or closed this
         slice - tamper-evidence would need a backfill + a hashing point on write, both
         out of scope here).
-- [ ] Step-up authentication for high-risk actions
+- [~] Step-up authentication for high-risk actions
+  - [x] `csense_shared.security.totp` (new) - RFC 6238 TOTP implemented directly against
+        the stdlib (`hmac`/`hashlib`/`base64`/`struct`), not a dependency - conformance
+        proven against RFC 6238 Appendix B's own published test vector, not just
+        self-consistency. `csense_shared.security.step_up_tickets` (new) - a
+        checked-not-consumed Redis recency marker (unlike `invitation_tickets.py`'s
+        single-use shape - a step-up must cover several actions in its window, not be
+        burned on the first one), 5-minute TTL.
+  - [x] `backend/admin_api/app/api/mfa.py` (new): `GET /status`, `POST /totp/enroll`,
+        `POST /totp/confirm` (returns 10 hashed-at-rest, Argon2id recovery codes, shown
+        once), `POST /verify` (TOTP code or a single-use recovery code), `DELETE /totp`
+        (itself requires a fresh step-up). The TOTP secret is stored through the same
+        `encrypted_secrets` envelope-encryption path every other secret in this codebase
+        uses (`tenant_id=NULL` for a platform-owned secret - already-supported, not a new
+        capability).
+  - [x] **Scoped to TOTP + recovery codes, stated plainly**: WebAuthn/passkeys (TRD
+        §7.1's *preferred* option) needs a browser-side ceremony this pass doesn't build;
+        TOTP is explicitly "supported", not merely a fallback. Available and enforced as
+        a step-up gate on **one real high-risk mutation** (`POST /api/v1/admin/licenses`)
+        proving TRD-SEC-010 against something real, not a strawman endpoint - **not yet
+        mandatory at login for every platform session** (TRD §6.2's "mandatory" is a
+        separate, larger UX/policy decision: what happens to a developer who has never
+        enrolled - deferred, not silently answered).
+  - [x] Verified for real: `scripts/e2e_mfa.py` - enroll with a real secret, confirm with
+        a code computed the same way an authenticator app would, a wrong code is refused,
+        removing MFA before any step-up is refused (enrolling itself doesn't count as
+        one), issuing a license before any step-up is refused the same way, a correct
+        TOTP code verifies and the identical license request then fails downstream
+        instead (proving the gate specifically lifted), a recovery code verifies and is
+        confirmed single-use, and removing MFA succeeds once a fresh step-up exists. Full
+        PASS. `scripts/e2e_licensing.py` updated to step up before issuing - still full
+        PASS, confirming no regression on the already-shipped licensing flow.
+  - [x] `backend/tests/test_totp.py` (7 tests, including the RFC vector) and
+        `test_step_up_tickets.py` (5 tests) - both real unit-level coverage, not only
+        e2e.
+  - [ ] **Deliberately deferred**: WebAuthn/passkeys; mandatory-MFA-at-login policy; any
+        other high-risk mutation besides license issuance (model promotion to production,
+        organization creation - same gate, just not wired to them yet); step-up on the
+        Tenant API side (nothing there is scoped as "high-risk" yet in this codebase).
 - [ ] Vertical-slice test: reseller → child tenant → MFA enrollment → empty dashboard →
       quota-exceeded rejection
 

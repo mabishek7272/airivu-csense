@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import audit, auth, health, licensing, models, notifications, organizations, pipelines
+from app.api import audit, auth, health, licensing, mfa, models, notifications, organizations, pipelines
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
@@ -65,3 +65,4 @@ app.include_router(models.router)
 app.include_router(pipelines.router)
 app.include_router(notifications.router)
 app.include_router(licensing.router)
+app.include_router(mfa.router)

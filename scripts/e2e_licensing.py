@@ -19,6 +19,7 @@ import uuid
 import psycopg
 from csense_shared.config import get_settings
 from csense_shared.security.passwords import hash_password
+from csense_shared.security.totp import totp_now
 
 API = "http://localhost:8080"
 PLATFORM_ADMIN_PASSWORD = "LicensingE2E!Platform123"
@@ -98,6 +99,18 @@ def make_site(owner_token: str, suffix: str) -> str:
     return site["id"]
 
 
+def mfa_step_up(admin_token: str) -> None:
+    """License issuance is now step-up-gated (TRD-SEC-010 - see scripts/e2e_mfa.py for
+    the dedicated, thorough coverage of the MFA flow itself). This does the minimum real
+    enroll -> confirm -> verify round trip so this script's own license issuance below
+    isn't testing against a stale/decorative gate."""
+    _, enrolled = api("/api/v1/admin/auth/mfa/totp/enroll", token=admin_token, host="console.localhost", expect=(201,))
+    code = totp_now(enrolled["secret"])
+    api("/api/v1/admin/auth/mfa/totp/confirm", {"code": code}, admin_token, host="console.localhost", expect=(200,))
+    code = totp_now(enrolled["secret"])
+    api("/api/v1/admin/auth/mfa/verify", {"code": code}, admin_token, host="console.localhost", expect=(200,))
+
+
 def step(n, text):
     print(f"\n[{n}] {text}")
 
@@ -119,6 +132,7 @@ def main() -> int:
         host="console.localhost",
     )
     admin_token = admin_auth["access_token"]
+    mfa_step_up(admin_token)  # license issuance is step-up-gated - see mfa_step_up's own docstring
 
     plan_code = f"licensing-e2e-{suffix}"
     status, _plan = api(
