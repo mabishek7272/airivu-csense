@@ -24,7 +24,7 @@ export function LoginPage() {
       } else {
         await register(organizationName, email, password, displayName);
       }
-      navigate("/incidents");
+      navigate("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiRequestError ? err.body.message : "Something went wrong. Please try again.",

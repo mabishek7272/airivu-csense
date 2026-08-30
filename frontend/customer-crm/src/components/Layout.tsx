@@ -17,6 +17,7 @@ export function Layout({ children }: { children: ReactNode }) {
           AIRIVU <span>CSense</span>
         </div>
         <nav className="app-nav" aria-label="Main">
+          <NavLink to="/dashboard">Dashboard</NavLink>
           <NavLink to="/incidents">Incidents</NavLink>
           <NavLink to="/detections">Detections</NavLink>
           <NavLink to="/sites">Sites</NavLink>
@@ -28,6 +29,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/notification-policies">Notifications</NavLink>
           <NavLink to="/team">Team</NavLink>
           <NavLink to="/audit">Audit</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
         <span className="mono" style={{ color: "var(--text-muted)" }} title="Tenant">
           {tenantId ? `${tenantId.slice(0, 8)}…` : ""}

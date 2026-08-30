@@ -7,10 +7,11 @@ import { ApiRequestError } from "../api/client";
 /** The states a view can be in, each with its own treatment.
  *
  *  Trimmed port of frontend/customer-crm/src/components/States.tsx - `LoadingRows`,
- *  `EmptyPanel`, `NoResultsPanel`, `ErrorPanel`, `FailureState` and the panels it
- *  dispatches to. Dropped: `LoadingList`/`InlineSpinner`/`SlowNetworkNotice` - built for
+ *  `EmptyPanel`, `NoResultsPanel`, `ErrorPanel`, `FailureState`, `InlineSpinner` and the
+ *  panels it dispatches to. Still dropped: `LoadingList`/`SlowNetworkNotice` - built for
  *  the CRM's detection-card/thumbnail layout and slow-network affordance, neither of
- *  which this app has yet. Add them back if a future page needs them.
+ *  which this app has yet. `InlineSpinner` was added back for the Settings page's MFA
+ *  enroll/confirm flow - the CSS for it was already sitting unused in globals.css.
  *
  *  These are separated because collapsing them is how a UI lies to the person using it:
  *
@@ -48,6 +49,18 @@ export function LoadingRows({ rows = 5, columns = 4 }: { rows?: number; columns?
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** An in-progress action that isn't a whole-page load - confirming a code, saving a
+ *  form field. Port of frontend/customer-crm/src/components/States.tsx's own component;
+ *  see this file's own top comment for why it was re-added here. */
+export function InlineSpinner({ label = "Working…" }: { label?: string }) {
+  return (
+    <span className="inline-spinner" role="status">
+      <span className="spinner" aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
   );
 }
 

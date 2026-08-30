@@ -16,6 +16,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
 import { AuditPage } from "./pages/AuditPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -37,6 +39,22 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+      <Route
+        path="/dashboard"
+        element={
+          <RequireAuth>
+            <DashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <SettingsPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/team"
         element={
@@ -133,7 +151,7 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
-      <Route path="*" element={<Navigate to="/incidents" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }

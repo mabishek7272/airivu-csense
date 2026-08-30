@@ -246,8 +246,51 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         issues through it; the two-phase `reserved_value` → `consumed_value` path and
         `quota_reservations` rows stay unused - real schema for a future long-running
         create, not needed by the one synchronous flow (`camera.count`) this pass gates.
-- [ ] Principal Administrator org/license screens (Developer Console)
-- [ ] Customer guided onboarding + tenant settings (Customer CRM)
+- [x] Principal Administrator org/license screens (Developer Console)
+  - [x] `/dashboard` rebuilt from its Phase 1 placeholder into three real sections:
+        Organizations (list + "Create organization" - both `direct_customer` and
+        `reseller`, mirroring `POST /api/v1/admin/organizations` exactly), License plans
+        (list + "Create plan" with a numeric-entitlement editor - `boolean`/`json`
+        entitlement types have no UI yet, named as such in the dialog itself), and
+        Licenses (list + "Issue license", tenant picked from the organizations already
+        loaded rather than a raw id paste).
+  - [x] **Real gap found and closed along the way**: `GET /api/v1/admin/organizations`
+        never returned `tenant_id` - there was no way to find the tenant a license needs
+        from the organization list alone. Added via an outer join to `tenants` (nullable
+        in the response, defensively - organizations and tenants are 1:1 in practice but
+        nothing enforces it at the schema level).
+  - [x] Issuing a license is step-up-gated (migration from the step-up authentication
+        item above) - rather than detecting a `403 step_up_required` reactively, the
+        Issue dialog always collects a current MFA code alongside the tenant/plan and
+        verifies immediately before issuing, in one submit. A `401` from that step names
+        itself clearly when the admin isn't enrolled yet, pointing at Settings.
+  - [x] New `/settings` page: this platform developer's own MFA enroll/confirm (secret +
+        otpauth URI, real recovery codes shown once)/remove (itself step-up-gated) -
+        `components/States.tsx`'s `InlineSpinner` re-added for this (it was deliberately
+        trimmed from the Phase 1 port, with a note to add it back "if a future page needs
+        it" - this is that page; the CSS for it was already sitting unused).
+  - [x] Verified for real: `npm run typecheck`/`lint`/`build` clean, all four new/changed
+        routes (`/dashboard`, `/settings` on both apps) confirmed serving `200` through
+        Traefik after rebuild; the `tenant_id` addition and org-creation flow exercised
+        directly against the real running Admin API (not just the type layer).
+- [x] Customer guided onboarding + tenant settings (Customer CRM)
+  - [x] New `GET /api/v1/tenant/dashboard` (TRD §10.2's own representative endpoint,
+        previously unbuilt - migration 0040, `dashboard.read`) with a real Customer CRM
+        page at `/dashboard`, now the default landing route after login/accept-invitation
+        (previously fell through to `/incidents`, with no home page at all). Real stat
+        tiles (sites/cameras/open incidents/team members), each linking to its own page.
+  - [x] A guided-onboarding checklist renders under the stat tiles whenever any step is
+        incomplete, computed entirely from data the API already reports (dashboard
+        counts + MFA status) - there is no separate "onboarding progress" record to drift
+        out of sync with what's actually true. Disappears on its own once every step is
+        done.
+  - [x] New `/settings` page: this tenant's own license (plan, status, quota usage as
+        real progress bars) - `null` renders as "no license assigned yet", not an error -
+        and this account's own MFA enroll/confirm/remove, the identical mechanism the
+        Developer Console's own Settings page uses, mirrored for the Tenant API's session
+        shape.
+  - [x] Verified for real: `npm run typecheck`/`lint`/`build` clean, `/dashboard` and
+        `/settings` confirmed serving `200` through Traefik after rebuild.
 - [~] Central append-only audit query/search foundation
   - [x] `audit.read` permission (migration 0036), granted to both `tenant_owner`
         (customer) and `platform_admin` (platform) - the same permission code safely

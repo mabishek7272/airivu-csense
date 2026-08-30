@@ -28,7 +28,7 @@ export function AcceptInvitationPage() {
     setSubmitting(true);
     try {
       await acceptInvitation(token, password);
-      navigate("/incidents");
+      navigate("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiRequestError

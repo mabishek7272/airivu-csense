@@ -217,6 +217,49 @@ button.link {
 
 .card-list { display: flex; flex-direction: column; gap: var(--space-3); }
 
+/* --- Dashboard stat tiles / onboarding checklist ------------------------------ */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  text-decoration: none;
+  color: inherit;
+}
+.stat-tile:hover { border-color: var(--accent); }
+
+.stat-tile-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+.stat-tile-label { color: var(--text-muted); font-size: 13px; }
+
+.checklist { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.checklist li:last-child { border-bottom: none; }
+.checklist li span:first-child { color: var(--text-muted); width: 1.2em; }
+.checklist-done { color: var(--text-muted); text-decoration: line-through; }
+.checklist li > a { margin-left: auto; }
+
+.quota-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.quota-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
 .detection-card {
   display: grid;
   grid-template-columns: 220px 1fr;

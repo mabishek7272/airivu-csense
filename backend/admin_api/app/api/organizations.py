@@ -27,7 +27,7 @@ from app.deps import current_platform_context, get_app_settings, platform_db_ses
 from app.repositories.identity import get_role_by_name
 from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.config import Settings
-from csense_shared.db.models import Organization
+from csense_shared.db.models import Organization, Tenant
 from csense_shared.notifications.bootstrap import build_registry
 from csense_shared.notifications.providers import Message
 from csense_shared.security.invitation_tickets import create_invitation_ticket
@@ -43,8 +43,13 @@ class OrganizationOut(BaseModel):
     display_name: str
     organization_type: str
     status: str
-
-    model_config = {"from_attributes": True}
+    # Nullable defensively (organizations and tenants are 1:1 in practice - every
+    # provisioning path creates both together - but nothing enforces that at the schema
+    # level, so a future org without one yet must not crash this listing). This is what
+    # the Developer Console's own "issue a license" flow needs - licenses key off
+    # tenant_id, not organization_id, and there was previously no way to find one from the
+    # other without a direct SQL query.
+    tenant_id: str | None
 
 
 @router.get("", response_model=list[OrganizationOut])
@@ -53,12 +58,18 @@ async def list_organizations(
     db: AsyncSession = Depends(platform_db_session),
 ) -> list[OrganizationOut]:
     require_permission(context, "organization.manage")
-    result = await db.execute(select(Organization).order_by(Organization.created_at.desc()).limit(100))
+    result = await db.execute(
+        select(Organization, Tenant.id)
+        .outerjoin(Tenant, Tenant.organization_id == Organization.id)
+        .order_by(Organization.created_at.desc())
+        .limit(100)
+    )
     return [
         OrganizationOut(
-            id=str(org.id), display_name=org.display_name, organization_type=org.organization_type, status=org.status
+            id=str(org.id), display_name=org.display_name, organization_type=org.organization_type,
+            status=org.status, tenant_id=str(tenant_id) if tenant_id else None,
         )
-        for org in result.scalars().all()
+        for org, tenant_id in result.all()
     ]
 
 
