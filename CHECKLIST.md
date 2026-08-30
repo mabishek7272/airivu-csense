@@ -938,6 +938,15 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
     - Full JSON-Schema-draft validation of `tenant_overrides` against
           `allowed_overrides_schema` — a simple key/type check today
 - [ ] Redis config cache + invalidation, desired-state deployment to edge
+  - **Deliberately deferred, not silently dropped**: the Redis cache half is the same
+        TRD §16 3-layer distributed cache already deferred for pipeline config just above
+        (line ~935) - Postgres-authoritative direct reads are enough at this scale, same
+        reasoning as the WS-realtime relay decision. The desired-state-deployment half
+        needs a real edge agent to push to and verify against (`backend/edge/agent/` is
+        still empty) - `device_commands` (migration 0042) already ships the signed
+        transport this would ride on once an agent exists to consume it; building the
+        "deployment" half against no real consumer would be exactly the kind of
+        mocked/unverifiable work this session has avoided everywhere else.
 - [x] **Golden dataset + benchmark harness (one reference use case): `license-plate-detector`.**
       TRD §15.2 has nine validation gates - this covers gates 2-4 (load/shape
       compatibility, golden dataset functional tests, accuracy against declared
@@ -1364,7 +1373,66 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         e2e script.
 - [ ] SMS/web-push provider adapters — **[NEEDS HUMAN INPUT: no provider contracted]**
 - [ ] Async reports/exports with time-limited download
-- [ ] License grace/restriction + renewal flow
+- [x] License grace/restriction + renewal flow
+  - [x] `csense_shared.licensing.lifecycle` (new): `sync_license_status` computes and
+        persists `active -> grace -> expired` purely against `expires_at`/`grace_ends_at`
+        (SCH's own columns, migration 0038 - no new migration needed), **lazily on the
+        next read** - the same "flips to expired on the very next read, not merely
+        hidden" pattern this session already established for support-grant expiry, so no
+        new background worker/cron process is needed. `suspended`/`revoked` are left
+        alone by the clock (a human explicitly set those). `current_license` looks up
+        the tenant's most recent license row regardless of status - dropping the
+        `active`/`grace` filter deliberately, since a license that already lazily
+        flipped to `expired` has to stay findable by the next call, or restriction would
+        silently stop applying the moment nobody was looking.
+  - [x] **Restriction, wired into the one place quota enforcement already lives**
+        (`cameras.py`'s `create_camera`, alongside `reserve_quota`) rather than
+        blast-radius across every write endpoint this late in the session -
+        `require_license_not_restricted` refuses `expired`/`suspended`/`revoked` with a
+        real, distinct `402 license_restricted` (not `quota_exceeded` - a tenant past
+        that point should see "your license lapsed", not a limit-shaped error suggesting
+        raising a quota would help). `grace` and "no license at all" both pass through
+        un-restricted - grace is a reduced-friction warning window, not a hard stop, and
+        the same "no plan assigned = unlimited" fallback `reserve_quota` already uses.
+  - [x] **Renewal**: `POST /api/v1/admin/licenses/{id}/renew` (admin_api, `license.manage`,
+        same TRD-SEC-010 step-up gate `issue_license` already requires). Updates the
+        *same* license row rather than issuing a new one - quota usage already recorded
+        against it stays intact, which a fresh `issue_license` call would lose. Also
+        extends the tied `quota_ledgers.period_end` to the new expiry - without this, the
+        ledger's own "does this row currently cover now()" check in `reserve_quota` would
+        stop finding it once the old expiry passed, silently reading back as unlimited
+        rather than the tenant's real, renewed limit. `revoked` is a deliberate terminal
+        state, refused (409) rather than renewed.
+  - [x] `issue_license` now also accepts `grace_days` (default 14) and computes/stores
+        `grace_ends_at`; `GET /api/v1/tenant/license` and `GET /api/v1/admin/licenses`
+        both surface the freshly-synced status and `grace_ends_at` instead of the
+        `active`/`grace`-filtered, possibly-stale view they had before - a tenant whose
+        license lapsed can now actually see that, not have the endpoint quietly answer
+        `null` again as if nothing had ever been issued.
+  - [x] Customer CRM's `SettingsPage.tsx` license card: severity-correct status badge
+        (active=low, grace/scheduled=medium, expired/suspended/revoked=critical - mirrors
+        `TeamPage.tsx`'s own membership-status convention) and a "renew by" /
+        "contact your reseller" hint tied to the real status. Developer Console gets the
+        `renewLicense` API function and updated types, no dedicated renewal dialog yet -
+        named as a deferral, same shape as support grants' own missing UI.
+  - [x] `backend/tests/test_license_lifecycle.py` (13 tests, real DB): active-stays-
+        active, grace flip (and that it actually persists, not just returns), expired
+        flip both with and without a grace window, a term-less license never expires, a
+        suspended license is left alone by the clock, `current_license` keeps finding an
+        already-expired row, restriction passes no-license/grace and refuses
+        expired/suspended with the right code. `scripts/e2e_license_lifecycle.py`: two
+        real tenants, licenses issued already past expiry (no sleeps - the clock is
+        driven by a past `expires_at` at issuance, not by waiting) - one lands in grace
+        (still creates resources), one lands in expired (real 402, distinct from
+        `quota_exceeded`); renewal restores active + resource creation immediately and
+        the quota ledger period is verified extended via a direct query; a revoked
+        license refuses renewal (409). Full PASS on both scripts, first clean run (one
+        run of each hit an unrelated, already-known TOTP-window timing flake in
+        `mfa_step_up` - passed cleanly on immediate retry, same class of flake noted
+        elsewhere in this file). `ruff check backend scripts` clean; full backend pytest
+        suite green (392 passed, 30 skipped). `customer-crm` and `developer-console`
+        `typecheck`/`lint`/`build` all clean; both rebuilt containers confirmed serving
+        `200` through Traefik.
 - [ ] Camera health use cases: offline, obstruction, glare/night-vision, low FPS, network
 
 ## Phase 7 — Migration Tooling and Pilot Beta

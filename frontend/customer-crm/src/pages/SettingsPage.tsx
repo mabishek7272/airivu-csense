@@ -46,7 +46,15 @@ export function SettingsPage() {
           <div className="card" style={{ padding: "var(--space-4)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <strong>{license.data.plan_name}</strong>
-              <span className={`badge ${license.data.status === "active" ? "badge-low" : "badge-medium"}`}>
+              <span
+                className={`badge ${
+                  license.data.status === "active"
+                    ? "badge-low"
+                    : license.data.status === "grace" || license.data.status === "scheduled"
+                      ? "badge-medium"
+                      : "badge-critical"
+                }`}
+              >
                 {license.data.status}
               </span>
             </div>
@@ -55,6 +63,11 @@ export function SettingsPage() {
               {license.data.expires_at
                 ? ` · Expires ${new Date(license.data.expires_at).toLocaleDateString()}`
                 : " · No expiry"}
+              {license.data.status === "grace" && license.data.grace_ends_at
+                ? ` · Renew by ${new Date(license.data.grace_ends_at).toLocaleDateString()} to avoid interruption`
+                : null}
+              {(license.data.status === "expired" || license.data.status === "suspended") &&
+                " · Contact your reseller or AIRIVU to restore access"}
             </p>
 
             {license.data.quota_usage.length > 0 && (

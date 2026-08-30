@@ -28,9 +28,16 @@ from app.deps import current_platform_context, get_app_settings, platform_db_ses
 from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.config import Settings
 from csense_shared.errors import ApiError, ConflictError, NotFoundError
+from csense_shared.licensing import sync_license_status
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.step_up_tickets import has_recent_step_up
 from csense_shared.security.tenant_context import PlatformContext
+
+# Default grace window applied at issuance/renewal when the caller doesn't specify one -
+# a standard, reduced-friction warning period past a term's own expires_at before the
+# license becomes a hard stop (SCH's own grace_ends_at column; see
+# csense_shared.licensing.lifecycle for what grace actually does).
+DEFAULT_GRACE_DAYS = 14
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-licensing"])
 
@@ -147,6 +154,7 @@ class IssueLicenseIn(BaseModel):
     tenant_id: uuid.UUID
     plan_code: str
     expires_at: dt.datetime | None = None
+    grace_days: int = Field(default=DEFAULT_GRACE_DAYS, ge=0, le=365)
     entitlement_overrides: dict[str, EntitlementSpec] = Field(default_factory=dict)
 
 
@@ -157,6 +165,7 @@ class LicenseOut(BaseModel):
     status: str
     starts_at: str
     expires_at: str | None
+    grace_ends_at: str | None
     entitlements: dict
 
 
@@ -172,7 +181,7 @@ async def list_licenses(
     rows = (
         await db.execute(
             text(
-                "SELECT l.id, l.tenant_id, p.code, l.status::text, l.starts_at, l.expires_at "
+                "SELECT l.id, l.tenant_id, p.code, l.starts_at, l.expires_at, l.grace_ends_at "
                 "FROM licenses l JOIN license_plans p ON p.id = l.plan_id "
                 f"{where} ORDER BY l.created_at DESC LIMIT 200"
             ),
@@ -182,11 +191,17 @@ async def list_licenses(
 
     out: list[LicenseOut] = []
     for r in rows:
-        entitlements = await _load_entitlements(db, license_id=r[0])
+        license_id = r[0]
+        # Freshly synced, same as the tenant's own GET /license - a platform operator
+        # looking at this listing must see the real current status, not whatever was
+        # last written the moment someone happened to look before.
+        status = await sync_license_status(db, license_id=license_id)
+        entitlements = await _load_entitlements(db, license_id=license_id)
         out.append(
             LicenseOut(
-                id=str(r[0]), tenant_id=str(r[1]), plan_code=r[2], status=r[3],
-                starts_at=r[4].isoformat(), expires_at=r[5].isoformat() if r[5] else None,
+                id=str(license_id), tenant_id=str(r[1]), plan_code=r[2], status=status,
+                starts_at=r[3].isoformat(), expires_at=r[4].isoformat() if r[4] else None,
+                grace_ends_at=r[5].isoformat() if r[5] else None,
                 entitlements=entitlements,
             )
         )
@@ -276,15 +291,22 @@ async def issue_license(
     }
     merged.update(body.entitlement_overrides)
 
+    # A term-less license (no expires_at) has no meaningful grace window either - grace is
+    # a warning period *before* an expiry that never comes.
+    grace_ends_at = (
+        body.expires_at + dt.timedelta(days=body.grace_days) if body.expires_at is not None else None
+    )
+
     license_id = (
         await db.execute(
             text(
-                "INSERT INTO licenses (tenant_id, organization_id, plan_id, expires_at) "
-                "VALUES (:tenant_id, :organization_id, :plan_id, :expires_at) RETURNING id, starts_at"
+                "INSERT INTO licenses (tenant_id, organization_id, plan_id, expires_at, grace_ends_at) "
+                "VALUES (:tenant_id, :organization_id, :plan_id, :expires_at, :grace_ends_at) "
+                "RETURNING id, starts_at"
             ),
             {
                 "tenant_id": body.tenant_id, "organization_id": organization_id,
-                "plan_id": plan_id, "expires_at": body.expires_at,
+                "plan_id": plan_id, "expires_at": body.expires_at, "grace_ends_at": grace_ends_at,
             },
         )
     ).first()
@@ -344,5 +366,113 @@ async def issue_license(
         id=str(license_id), tenant_id=str(body.tenant_id), plan_code=body.plan_code,
         status="active", starts_at=starts_at.isoformat(),
         expires_at=body.expires_at.isoformat() if body.expires_at else None,
+        grace_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
+        entitlements=entitlements,
+    )
+
+
+class RenewLicenseIn(BaseModel):
+    expires_at: dt.datetime | None = None  # None = term-less (no expiry) going forward
+    grace_days: int = Field(default=DEFAULT_GRACE_DAYS, ge=0, le=365)
+
+
+@router.post("/licenses/{license_id}/renew", response_model=LicenseOut)
+async def renew_license(
+    license_id: uuid.UUID,
+    body: RenewLicenseIn,
+    request: Request,
+    context: PlatformContext = Depends(current_platform_context),
+    db: AsyncSession = Depends(platform_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> LicenseOut:
+    """Extends an existing license's term and restores it to `active` - the way out of
+    `grace`/`expired`/`suspended`. Updates the *same* row rather than issuing a new one:
+    quota usage already recorded against it (`quota_ledgers.consumed_value`) stays
+    intact, which a fresh `issue_license` call would lose (and `issue_license` would
+    refuse anyway once a second row existed alongside a still-`expired`-but-not-yet-
+    superseded one). `revoked` is a deliberate terminal state, not renewable here - a
+    revoked license was actively pulled, not merely allowed to lapse."""
+    require_permission(context, "license.manage")
+
+    # TRD-SEC-010, same gate issue_license already applies - extending a license's term
+    # is the same class of high-risk financial/entitlement action.
+    if not await has_recent_step_up(
+        request.app.state.redis, settings, scope=STEP_UP_SCOPE, principal_id=context.developer_user_id
+    ):
+        raise ApiError(
+            status_code=403, code="step_up_required",
+            message="Renewing a license requires a recent MFA verification. "
+            "Call POST /api/v1/admin/auth/mfa/verify, then retry.",
+        )
+
+    row = (
+        await db.execute(
+            text(
+                "SELECT l.tenant_id, l.status::text, l.expires_at, l.starts_at, p.code "
+                "FROM licenses l JOIN license_plans p ON p.id = l.plan_id WHERE l.id = :id FOR UPDATE"
+            ),
+            {"id": license_id},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError("No such license.")
+    tenant_id, old_status, old_expires_at, starts_at, plan_code = row
+    if old_status == "revoked":
+        raise ConflictError("A revoked license cannot be renewed - issue a new one instead.")
+
+    grace_ends_at = (
+        body.expires_at + dt.timedelta(days=body.grace_days) if body.expires_at is not None else None
+    )
+
+    await db.execute(
+        text(
+            "UPDATE licenses SET status = 'active', expires_at = :expires_at, "
+            "grace_ends_at = :grace_ends_at, version = version + 1, updated_at = now() WHERE id = :id"
+        ),
+        {"expires_at": body.expires_at, "grace_ends_at": grace_ends_at, "id": license_id},
+    )
+
+    # The quota ledger's own period_end tracked the OLD expiry (issue_license sets it
+    # there) - extend it to match, or reserve_quota's "does this row currently cover
+    # now()" check would stop finding it once the old expiry passes, silently reading as
+    # unlimited rather than as this tenant's real, renewed limit.
+    await db.execute(
+        text(
+            "UPDATE quota_ledgers SET period_end = :expires_at, updated_at = now() "
+            "WHERE license_id = :license_id "
+            "AND (period_end = :old_expires_at OR (period_end IS NULL AND :old_expires_at IS NULL))"
+        ),
+        {"expires_at": body.expires_at, "license_id": license_id, "old_expires_at": old_expires_at},
+    )
+
+    await record_audit_and_outbox(
+        db,
+        tenant_id=tenant_id,
+        actor_type="platform_developer",
+        actor_id=str(context.developer_user_id),
+        action="license.renew",
+        outcome="success",
+        target_type="license",
+        target_id=str(license_id),
+        reason=f"Renewed license, was '{old_status}'",
+        before_patch={
+            "status": old_status, "expires_at": old_expires_at.isoformat() if old_expires_at else None,
+        },
+        after_patch={
+            "status": "active", "expires_at": body.expires_at.isoformat() if body.expires_at else None,
+        },
+        correlation_id=uuid.UUID(context.correlation_id) if context.correlation_id else None,
+        event_type="license.renewed.v1",
+        event_payload={"license_id": str(license_id), "tenant_id": str(tenant_id)},
+        aggregate_type="license",
+        aggregate_id=str(license_id),
+    )
+
+    entitlements = await _load_entitlements(db, license_id=license_id)
+    return LicenseOut(
+        id=str(license_id), tenant_id=str(tenant_id), plan_code=plan_code,
+        status="active", starts_at=starts_at.isoformat(),
+        expires_at=body.expires_at.isoformat() if body.expires_at else None,
+        grace_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
         entitlements=entitlements,
     )

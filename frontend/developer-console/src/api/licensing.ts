@@ -35,9 +35,13 @@ export interface License {
   id: string;
   tenant_id: string;
   plan_code: string;
+  /** "scheduled" | "active" | "grace" | "suspended" | "expired" | "revoked" - grace and
+   *  expiry are computed lazily server-side (see csense_shared.licensing.lifecycle), so
+   *  this always reflects the real current state as of the last time anything read it. */
   status: string;
   starts_at: string;
   expires_at: string | null;
+  grace_ends_at: string | null;
   entitlements: Record<string, EntitlementSpec>;
 }
 
@@ -45,7 +49,27 @@ export interface IssueLicenseInput {
   tenant_id: string;
   plan_code: string;
   expires_at?: string;
+  /** Reduced-friction warning window past expires_at before the license becomes a hard
+   *  stop. Defaults server-side (14 days) when omitted. */
+  grace_days?: number;
   entitlement_overrides?: Record<string, EntitlementSpec>;
+}
+
+export interface RenewLicenseInput {
+  expires_at?: string;
+  grace_days?: number;
+}
+
+/** Extends an existing license's term and restores it to active - the way out of
+ *  grace/expired/suspended (not revoked, a deliberate terminal state). Same step-up
+ *  gate as issueLicense. No dedicated dialog yet (API-only this pass, same deferral
+ *  shape support grants already used for its own missing UI) - callable directly once
+ *  a renewal screen exists. */
+export function renewLicense(licenseId: string, body: RenewLicenseInput) {
+  return apiFetch<License>(`/api/v1/admin/licenses/${licenseId}/renew`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function listLicensePlans() {

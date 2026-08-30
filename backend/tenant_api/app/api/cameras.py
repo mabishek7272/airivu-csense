@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
-from csense_shared.licensing import QuotaExceededError, reserve_quota
+from csense_shared.licensing import QuotaExceededError, require_license_not_restricted, reserve_quota
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
 from csense_shared.security.outbound import BlockedAddressError
 from csense_shared.security.permissions import require_permission
@@ -241,6 +241,14 @@ async def create_camera(
             code="camera_code_taken",
             message=f"A camera with code '{body.code}' already exists.",
         )
+
+    # An expired/suspended/revoked license is a hard stop on creating new resources -
+    # checked before the quota reservation below, since a tenant past that point should
+    # see "your license lapsed" rather than a quota-shaped error that suggests raising a
+    # limit would help. A tenant with no license at all, or one still in its grace
+    # window, passes through unaffected - see require_license_not_restricted's own
+    # docstring for why.
+    await require_license_not_restricted(db, tenant_id=context.tenant_id)
 
     # A tenant with no camera.count entitlement (no license, or a license that doesn't
     # cap this) is unlimited - reserve_quota no-ops in that case (see its own docstring).

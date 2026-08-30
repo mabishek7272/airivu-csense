@@ -24,9 +24,13 @@ export interface License {
   id: string;
   plan_code: string;
   plan_name: string;
+  /** "scheduled" | "active" | "grace" | "suspended" | "expired" | "revoked" - grace and
+   *  expiry are computed lazily server-side, so this always reflects the real current
+   *  state as of the last time anything read it, not a stale snapshot. */
   status: string;
   starts_at: string;
   expires_at: string | null;
+  grace_ends_at: string | null;
   entitlements: Entitlement[];
   quota_usage: QuotaUsage[];
 }

@@ -6,6 +6,14 @@ No license is a valid, common state (every tenant that existed before migration 
 any freshly created tenant nobody has assigned a plan to yet) - returned as `null`, not a
 404, since "this tenant has no license" is itself the correct, unremarkable answer, not an
 error.
+
+**Not filtered to `active`/`grace` any more.** A license that has lapsed into `expired`,
+`suspended`, or `revoked` is exactly the thing a tenant most needs to see here - the
+whole point of CHECKLIST's "license grace/restriction" item is that a lapse is visible,
+not that it makes the endpoint quietly answer `null` again as if nothing had ever been
+issued. `csense_shared.licensing.lifecycle.current_license` also means this read is what
+lazily flips a stale `active` row to `grace`/`expired` in the first place - the same
+"synced on the next read" pattern already used for support-grant expiry.
 """
 from __future__ import annotations
 
@@ -15,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
+from csense_shared.licensing import current_license
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.tenant_context import TenantContext
 
@@ -43,6 +52,7 @@ class LicenseOut(BaseModel):
     status: str
     starts_at: str
     expires_at: str | None
+    grace_ends_at: str | None
     entitlements: list[EntitlementOut]
     quota_usage: list[QuotaUsageOut]
 
@@ -54,20 +64,22 @@ async def get_own_license(
 ) -> LicenseOut | None:
     require_permission(context, "license.read")
 
+    found = await current_license(db, tenant_id=context.tenant_id)
+    if found is None:
+        return None
+    license_id, synced_status = found
+
     row = (
         await db.execute(
             text(
-                "SELECT l.id, p.code, p.name, l.status::text, l.starts_at, l.expires_at "
-                "FROM licenses l JOIN license_plans p ON p.id = l.plan_id "
-                "WHERE l.tenant_id = :tenant_id AND l.status IN ('active', 'grace') "
-                "ORDER BY l.created_at DESC LIMIT 1"
+                "SELECT p.code, p.name, l.starts_at, l.expires_at, l.grace_ends_at "
+                "FROM licenses l JOIN license_plans p ON p.id = l.plan_id WHERE l.id = :id"
             ),
-            {"tenant_id": context.tenant_id},
+            {"id": license_id},
         )
     ).first()
-    if row is None:
-        return None
-    license_id, plan_code, plan_name, status, starts_at, expires_at = row
+    plan_code, plan_name, starts_at, expires_at, grace_ends_at = row
+    status = synced_status
 
     entitlement_rows = (
         await db.execute(
@@ -103,5 +115,6 @@ async def get_own_license(
     return LicenseOut(
         id=str(license_id), plan_code=plan_code, plan_name=plan_name, status=status,
         starts_at=starts_at.isoformat(), expires_at=expires_at.isoformat() if expires_at else None,
+        grace_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
         entitlements=entitlements, quota_usage=quota_usage,
     )
