@@ -1133,8 +1133,30 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         download evidence.
   - [x] Rule schedules evaluated in **site-local** time. Evaluating an overnight rule
         against UTC shifts it by the site's offset, which reads as the rule being broken.
-- [ ] **Edge auth is interim.** Ingestion uses a bearer token scoped to one permission;
-      Phase 3 replaces it with per-device mTLS issued at enrolment.
+- [x] **Edge auth is no longer only the interim path.** Phase 3 shipped a real per-device
+      credential (enrolment token → long-lived, individually-revocable, hashed agent
+      credential - not literal mTLS certificates, but the same property that matters:
+      one device, one identity, independently revocable, distinct from the enrolment
+      secret that created it) for `/heartbeat` and the signed-command endpoints.
+      Detection ingestion (`POST /ingest/detections`) now accepts *either* that real
+      device credential *or* the original scoped-token path - not a replacement, a second
+      real path with its own reason to exist (see [ingest.py](backend/tenant_api/app/api/ingest.py)'s
+      own docstring): the scoped-token path stays available for anything that
+      authenticates as a tenant member rather than an enrolled device, and its
+      `edge_device_id` remains self-reported since it has no device credential to check
+      against. When a real device credential authenticates, `edge_device_id` is taken
+      from the credential itself - a device can no longer claim to be reporting on
+      behalf of a different device it isn't, closing that half of the original gap for
+      real.
+  - [x] Verified for real: `scripts/e2e_ingest_dual_auth.py` - the legacy scoped-token
+        path still accepts a detection and still trusts the body's `edge_device_id`
+        exactly as before (no regression); a real enrolled device's own credential posts
+        a detection too, and the stored row's `edge_device_id` is the credential's own
+        device even when the request body deliberately claims a different one; no
+        credential at all gets one uniform `401`. Full PASS. No regression on the
+        pre-existing `e2e_edge_enrolment.py`; full backend suite (369 tests) still green -
+        nothing downstream of ingestion (rules/incidents/evidence/notifications) was
+        touched by this change.
 - [x] **Rule CRUD API and CRM editor** — the last gap in "configure everything from the
       UI, no SQL" for the detection pipeline. Camera→zone→rule→incident is now fully
       operator-driven.
