@@ -553,9 +553,28 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         fallback via hls.js is built, but no feature-detection fallback exists for a
         browser that can decode neither HEVC-over-HLS nor gets to try WebRTC - the UI
         names the limitation rather than silently failing (`useHlsPlayer.ts`).
-- [ ] Camera health current-state model + telemetry history (Mongo) — note: MongoDB was
-      removed from the stack (CLARIFICATIONS #19/#20); this will land in PostgreSQL like
-      detections did, not Mongo as originally spec'd. Line stays open; wording is stale.
+- [x] Camera health current-state model + telemetry history — landed in PostgreSQL like
+      detections did (MongoDB was removed from the stack, CLARIFICATIONS #19/#20), not
+      Mongo as originally spec'd.
+  - [x] **Current-state already existed, it turned out**: migration 0020 had already
+        given `cameras` `last_probed_at`/`last_error`/`stream_profile`, populated by
+        every `POST /cameras/{id}/probe`. What was actually missing was the *history*
+        behind that single row - every probe overwrote the last one. Migration 0041 adds
+        `camera_health_events`, append-only, written by the same probe call - no new
+        probing mechanism, no edge dependency, just making an already-real signal
+        durable.
+  - [x] `GET /cameras/{id}/health` (new, `camera.read`) - `current_status` derived from
+        the existing `cameras` columns (not duplicated into a second current-state
+        table, which would just be two places for the same fact to disagree), plus the
+        real event history, newest first.
+  - [x] Verified for real against the deployment's own real NVR (no mock, no stub -
+        `scripts/e2e_camera_health.py`): before any probe, health is a real `unknown`
+        with no history; a real probe against the real host (`autotek-dorani-nvr
+        .dyndns.org`) writes a real event whose status matches what actually happened
+        (this run: `reachable=false`, "requires authentication" - a real, honest network
+        round trip); a second probe adds a second event, newest first; an SSRF-refused
+        probe attempt (127.0.0.1) writes nothing at all - a blocked attempt isn't a
+        health signal. Full PASS.
 - [~] **[NEEDS EXTERNAL INPUT]** real camera/NVR hardware or RTSP test feeds for actual
       onboarding validation — partially resolved: a real NVR (`autotek-dorani-nvr
       .dyndns.org`, see [[nvr-h265-constraint]]) was available and used to validate live

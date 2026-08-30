@@ -507,6 +507,24 @@ async def probe_camera(
             "ok": result.reachable,
         },
     )
+    # Durable telemetry history (CHECKLIST: "Camera health current-state model +
+    # telemetry history") - `cameras.last_probed_at`/`last_error`/`stream_profile`
+    # (migration 0020) already answer "right now"; every probe overwrites that single
+    # row, so this is the only place "over time" is answered from.
+    await db.execute(
+        text(
+            "INSERT INTO camera_health_events "
+            "(tenant_id, camera_id, status, detail, codec, width, height, framerate) "
+            "VALUES (:tenant_id, :camera_id, CAST(:status AS camera_health_status), "
+            ":detail, :codec, :width, :height, :framerate)"
+        ),
+        {
+            "tenant_id": context.tenant_id, "camera_id": camera_id,
+            "status": "online" if result.reachable else "offline",
+            "detail": result.detail[:500], "codec": result.codec,
+            "width": result.width, "height": result.height, "framerate": result.framerate,
+        },
+    )
     return ProbeResult(
         reachable=result.reachable,
         detail=result.detail,
@@ -515,4 +533,67 @@ async def probe_camera(
         height=result.height,
         framerate=result.framerate,
         transport=result.transport,
+    )
+
+
+class CameraHealthEvent(BaseModel):
+    status: str
+    detail: str | None
+    codec: str | None
+    width: int | None
+    height: int | None
+    framerate: float | None
+    occurred_at: dt.datetime
+
+
+class CameraHealthOut(BaseModel):
+    # Derived from cameras.last_probed_at/last_error (migration 0020), not a second
+    # stored current-state - see migration 0041's own docstring for why duplicating it
+    # into camera_health_events would just be two places for the same fact to disagree.
+    current_status: str
+    last_probed_at: dt.datetime | None
+    last_error: str | None
+    history: list[CameraHealthEvent]
+
+
+@router.get("/{camera_id}/health", response_model=CameraHealthOut)
+async def get_camera_health(
+    camera_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> CameraHealthOut:
+    require_permission(context, "camera.read")
+
+    camera_row = (
+        await db.execute(
+            text("SELECT last_probed_at, last_error FROM cameras WHERE id = :id AND deleted_at IS NULL"),
+            {"id": camera_id},
+        )
+    ).first()
+    if camera_row is None:
+        raise NotFoundError("No such camera.")
+    last_probed_at, last_error = camera_row
+    current_status = "unknown" if last_probed_at is None else ("offline" if last_error else "online")
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT status::text, detail, codec, width, height, framerate, occurred_at "
+                "FROM camera_health_events WHERE camera_id = :camera_id "
+                "ORDER BY occurred_at DESC LIMIT :limit"
+            ),
+            {"camera_id": camera_id, "limit": limit},
+        )
+    ).all()
+
+    return CameraHealthOut(
+        current_status=current_status, last_probed_at=last_probed_at, last_error=last_error,
+        history=[
+            CameraHealthEvent(
+                status=r[0], detail=r[1], codec=r[2], width=r[3], height=r[4],
+                framerate=float(r[5]) if r[5] is not None else None, occurred_at=r[6],
+            )
+            for r in rows
+        ],
     )
