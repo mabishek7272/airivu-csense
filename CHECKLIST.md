@@ -1281,7 +1281,44 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         script and are fully usable via the API - just no dialog-driven page in front of
         them this pass).
 - [ ] Scoped API keys, rate limits, usage metering, developer API docs
-- [ ] Webhook signing, verification, replay protection
+- [~] Webhook signing, verification, replay protection
+  - [x] `webhook_endpoints`/`webhook_deliveries` (SCH §10.6/§10.7, previously spec'd but
+        never built - migration 0045). Both the URL and the signing secret are
+        envelope-encrypted through the same `encrypted_secrets` path every other
+        sensitive value in this codebase already uses (camera credentials, TOTP secrets)
+        - SCH's own `url_encrypted` field name already signals the URL itself is
+        sensitive (a webhook URL can embed a path-based token some receivers use as
+        their own auth, the way Slack's own incoming-webhook URLs work).
+  - [x] `csense_shared.security.webhooks` (new) - the same timestamp+HMAC-SHA256 shape
+        Stripe/GitHub-style webhook signing already uses, not reinvented. **Replay
+        protection is the timestamp tolerance window itself** (default 5 minutes, both
+        directions) - a captured, replayed request becomes unverifiable the moment it
+        ages past the window.
+  - [x] `backend/tenant_api/app/api/webhooks.py` (new, `webhook.manage`, `tenant_owner`-
+        only): create/list/update/rotate-secret/delete, plus a real `POST /{id}/test`
+        that signs and sends an actual HTTP POST through the same SSRF guard camera
+        probing already uses - checked fresh both at creation *and* at every delivery
+        attempt (a public DNS record can be repointed at a private address after an
+        endpoint was created). Both secrets are write-only, the same discipline
+        `cameras.py`'s own credential handling already established.
+  - [x] Verified for real: `backend/tests/test_webhooks.py` (8 tests) - a real round
+        trip, a tampered body, the wrong secret, an expired signature, a
+        signature-from-the-future, and a malformed header all handled correctly.
+        `scripts/e2e_webhooks.py` against the real running API and a real public
+        destination (`httpbin.org` - the same "prove it against something real" standard
+        already applied to the real NVR and real Resend email delivery this session): a
+        real signed HTTP POST actually reaches it and gets a real `200` back with a real
+        round-trip time; creating an endpoint pointed at a private address is refused
+        (422) rather than silently accepted; the list view never shows the URL or secret;
+        rotating issues a genuinely different secret; deleting an endpoint leaves no
+        orphaned encrypted secrets behind. Full PASS. Backend: 377 passed, 21 skipped.
+  - [ ] **Deliberately deferred, stated plainly**: automatic delivery driven by the
+        outbox for every domain event - a systemic wiring effort across every event
+        producer, deserving its own pass. This ships a real, on-demand test delivery
+        proving the signing/verification/SSRF mechanism end to end; nothing here is a
+        stub that automatic delivery would need to replace, only extend. No Developer
+        Console or Customer CRM UI yet - fully usable and exercised via the API and the
+        e2e script.
 - [ ] SMS/web-push provider adapters — **[NEEDS HUMAN INPUT: no provider contracted]**
 - [ ] Async reports/exports with time-limited download
 - [ ] License grace/restriction + renewal flow
