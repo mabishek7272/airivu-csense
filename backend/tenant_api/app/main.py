@@ -14,6 +14,7 @@ from app.api import (
     health,
     incidents,
     ingest,
+    license,
     media,
     memberships,
     notification_policies,
@@ -108,5 +109,6 @@ app.include_router(media.router)
 app.include_router(nvr.router)
 app.include_router(memberships.router)
 app.include_router(reseller.router)
+app.include_router(license.router)
 
 

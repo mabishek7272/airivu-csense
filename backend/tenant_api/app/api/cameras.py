@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
+from csense_shared.licensing import QuotaExceededError, reserve_quota
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
 from csense_shared.security.outbound import BlockedAddressError
 from csense_shared.security.permissions import require_permission
@@ -240,6 +241,22 @@ async def create_camera(
             code="camera_code_taken",
             message=f"A camera with code '{body.code}' already exists.",
         )
+
+    # A tenant with no camera.count entitlement (no license, or a license that doesn't
+    # cap this) is unlimited - reserve_quota no-ops in that case (see its own docstring).
+    # A tenant that does have one and is at it gets a real, in-transaction rejection here,
+    # not a silent over-allocation - the same INSERT below never runs on that path.
+    try:
+        await reserve_quota(db, tenant_id=context.tenant_id, quota_code="camera.count", quantity=1)
+    except QuotaExceededError as exc:
+        raise ApiError(
+            status_code=402,
+            code="quota_exceeded",
+            message=(
+                f"This tenant's camera limit ({exc.limit_value}) is already in use "
+                f"({exc.in_use}). Contact your reseller or AIRIVU to increase it."
+            ),
+        ) from exc
 
     camera_id = (
         await db.execute(

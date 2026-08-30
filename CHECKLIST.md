@@ -197,8 +197,55 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         screens`, `Customer guided onboarding`) are exactly where that belongs, not
         duplicated here. No reseller aggregate rollups (usage/billing across children) -
         blocked on the licensing/quota item below existing first.
-- [ ] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
+- [~] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
+  - [x] No schema existed for this before now (unlike memberships/reseller) - migration
+        0038 adds `license_plans` (platform-global), `licenses`, `license_entitlements`,
+        `quota_ledgers`, `quota_reservations` (docs/05_BACKEND_SCHEMA.md §6.1-6.5), all
+        tenant-owned tables FORCE-RLS'd with the current tenant-match-or-platform-group
+        policy (migration 0009's, not migration 0001's older boolean-only one).
+        `usage_buckets` (§6.6, metering reconciliation) deliberately not created - a
+        genuinely separate concern with no metering pipeline to write it yet, mirroring
+        migration 0031's own deferral of tables with no writer.
+  - [x] `csense_shared.licensing.quota.reserve_quota` (new, shared) - the real TRD §9
+        row-lock pattern (`SELECT ... FOR UPDATE` on the tenant's `quota_ledgers` row,
+        verify, increment, all inside the caller's own transaction alongside the resource
+        it's gating). **No quota_ledgers row for a (tenant, quota_code) means unlimited,
+        not zero** - the property that let this be wired into cameras.py, an
+        already-shipped, already-tested creation flow, without breaking every tenant that
+        predates licensing.
+  - [x] migration 0039: `license.manage` (platform_admin) covers plan CRUD + issuance;
+        `license.read` (both `tenant_owner` and `tenant_member` - informational, not
+        access control) covers a tenant's own view.
+  - [x] `POST`/`GET /api/v1/admin/license-plans`, `POST`/`GET /api/v1/admin/licenses` -
+        issuing a license merges the plan's `default_entitlements` with the request's
+        `entitlement_overrides` (overrides win) into real `license_entitlements` rows, and
+        seeds a `quota_ledgers` row for every `limit_numeric` entitlement. One effective
+        (active/grace) license per tenant enforced both by a partial unique index and a
+        clear `409` at the API layer.
+  - [x] `GET /api/v1/tenant/license` - a tenant's own effective license, entitlements, and
+        live quota usage. No license is `null`, not a 404 - the correct, unremarkable
+        answer for most tenants today.
+  - [x] **First real quota-gated flow, wired into `cameras.py`**: `camera.count` is
+        reserved before the `INSERT INTO cameras`, in the same transaction: within quota
+        succeeds, over quota gets a real `402 quota_exceeded` naming the limit and current
+        usage, and a tenant with no license/quota row is unaffected (verified for real,
+        not assumed).
+  - [x] Verified for real: `scripts/e2e_licensing.py` - a platform admin creates a plan
+        and issues a `camera.count=1` license, the tenant's own view shows the real
+        entitlement and zero usage, the first camera succeeds, the second is refused
+        (402), the tenant's own quota view then shows `consumed_value=1`, a second license
+        for the same tenant is refused (409), and a *separate*, unlicensed tenant creates
+        two cameras with no restriction at all - the regression check. Full PASS (one
+        transient flake on a container that had just restarted, not reproduced on retry,
+        confirmed correct by both a manual re-check and a full clean second run).
+  - [ ] **Deliberately deferred**: no UI (belongs to the two still-open lines below); no
+        license upgrade/downgrade/supersede flow (a second license for an already-licensed
+        tenant is refused outright, not migrated); no reseller-allocation
+        (`parent_license_id`) flow wired to anything yet - the column exists, nothing
+        issues through it; the two-phase `reserved_value` → `consumed_value` path and
+        `quota_reservations` rows stay unused - real schema for a future long-running
+        create, not needed by the one synchronous flow (`camera.count`) this pass gates.
 - [ ] Principal Administrator org/license screens (Developer Console)
 - [ ] Customer guided onboarding + tenant settings (Customer CRM)
 - [~] Central append-only audit query/search foundation
