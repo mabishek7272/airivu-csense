@@ -1433,7 +1433,53 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         suite green (392 passed, 30 skipped). `customer-crm` and `developer-console`
         `typecheck`/`lint`/`build` all clean; both rebuilt containers confirmed serving
         `200` through Traefik.
-- [ ] Camera health use cases: offline, obstruction, glare/night-vision, low FPS, network
+- [~] Camera health use cases: offline, obstruction, glare/night-vision, low FPS, network
+  - [x] **`offline`, `network`, `low FPS` - all real, all wired into the existing probe**
+        (`POST /cameras/{id}/probe`, migration 0041's own mechanism), not a new probing
+        path. `csense_shared.cameras.health.classify_health_events` (new, dependency-free
+        - see its own docstring) turns one probe outcome into one or more
+        `camera_health_events` rows: a `connectivity` event always (unchanged
+        online/offline signal), plus a `network` event when the probe's own round-trip
+        time exceeds 3s (measurable as of this pass - `camera_probe.probe_stream` now
+        times the whole exchange, migration-free since it only adds a wrapper around the
+        existing function), plus a `framerate` event when the stream's own SDP-reported
+        fps drops below 5 - both thresholds named and reasoned about in the module's own
+        docstring, not arbitrary.
+  - [x] Migration 0049: `camera_health_events.status` gains `degraded` (mirrors
+        `edge_health_events`' own ok/degraded/failed model, migration 0026) and a new
+        `check_name` column (free text, deliberately not DB-constrained - mirrors
+        `edge_health_events.check_name` exactly, for the same "the check set grows"
+        reasoning). `GET /{camera_id}/health` now returns `check_name` per event and a
+        computed `active_concerns` list (which named checks' most recent event isn't
+        `online`) - not a new stored value, derived the same way `current_status`
+        already is, so there is one place this fact can be wrong, not two.
+  - [ ] **`obstruction` and `glare/night-vision` are deliberately not built this pass** -
+        both need a decoded video frame to analyze (brightness/variance statistics), and
+        `camera_probe.py`'s own long-standing design speaks RTSP directly rather than
+        shelling out to ffmpeg specifically to avoid that dependency for connectivity
+        checks; reversing that just for this would be the wrong place to add a
+        frame-decode path. A real snapshot-based check is a legitimate, separate feature
+        - and per [[nvr-h265-constraint]] (this deployment's own real NVR, tested
+          earlier this session), any glare/obstruction thresholds would need real
+        validation data against its H.265-only, IR-greyscale night imagery before being
+        trusted, the same caution already recorded there for detection thresholds - not
+        a stub built under time pressure this late in the session.
+  - [x] `backend/tests/test_camera_health_classification.py` (9 tests, pure logic - no
+        DB, no real camera, so the threshold-crossing branches are actually exercised,
+        unlike a live-hardware-only e2e which cannot reliably force a slow or low-fps
+        condition on demand): healthy/offline baselines, network and framerate degraded
+        events fire past their thresholds and not at the boundary, both can fire on the
+        same probe, an unreachable probe never gets network/framerate events, missing
+        framerate data is never misread as 0fps. `scripts/e2e_camera_health.py` extended
+        (not replaced) to prove the mechanism against the real NVR: a real measured
+        `elapsed_ms`, exactly one `connectivity` event per probe (robust to any real
+        degraded events a live camera might also trigger), every event's `check_name` is
+        one of the known set. Full PASS against real hardware, both before and after a
+        mid-slice refactor (moving the classification function into `csense_shared` to
+        resolve a real `app`-module name collision across services in the shared test
+        suite - caught by running the full suite, not just the new file in isolation).
+        `ruff check backend scripts` clean; full backend pytest suite green (401 passed,
+        30 skipped).
 
 ## Phase 7 — Migration Tooling and Pilot Beta
 

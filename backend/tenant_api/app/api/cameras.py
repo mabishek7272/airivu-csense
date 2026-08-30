@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
+from csense_shared.cameras.health import classify_health_events
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.licensing import QuotaExceededError, require_license_not_restricted, reserve_quota
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
@@ -450,6 +451,7 @@ class ProbeResult(BaseModel):
     height: int | None = None
     framerate: float | None = None
     transport: str | None = None
+    elapsed_ms: int | None = None
 
 
 @router.post("/{camera_id}/probe", response_model=ProbeResult)
@@ -519,20 +521,25 @@ async def probe_camera(
     # telemetry history") - `cameras.last_probed_at`/`last_error`/`stream_profile`
     # (migration 0020) already answer "right now"; every probe overwrites that single
     # row, so this is the only place "over time" is answered from.
-    await db.execute(
-        text(
-            "INSERT INTO camera_health_events "
-            "(tenant_id, camera_id, status, detail, codec, width, height, framerate) "
-            "VALUES (:tenant_id, :camera_id, CAST(:status AS camera_health_status), "
-            ":detail, :codec, :width, :height, :framerate)"
-        ),
-        {
-            "tenant_id": context.tenant_id, "camera_id": camera_id,
-            "status": "online" if result.reachable else "offline",
-            "detail": result.detail[:500], "codec": result.codec,
-            "width": result.width, "height": result.height, "framerate": result.framerate,
-        },
+    events = classify_health_events(
+        reachable=result.reachable, detail=result.detail,
+        elapsed_ms=result.elapsed_ms, framerate=result.framerate,
     )
+    for event in events:
+        await db.execute(
+            text(
+                "INSERT INTO camera_health_events "
+                "(tenant_id, camera_id, status, check_name, detail, codec, width, height, framerate) "
+                "VALUES (:tenant_id, :camera_id, CAST(:status AS camera_health_status), :check_name, "
+                ":detail, :codec, :width, :height, :framerate)"
+            ),
+            {
+                "tenant_id": context.tenant_id, "camera_id": camera_id,
+                "status": event["status"], "check_name": event["check_name"], "detail": event["detail"],
+                "codec": result.codec, "width": result.width, "height": result.height,
+                "framerate": result.framerate,
+            },
+        )
     return ProbeResult(
         reachable=result.reachable,
         detail=result.detail,
@@ -541,11 +548,13 @@ async def probe_camera(
         height=result.height,
         framerate=result.framerate,
         transport=result.transport,
+        elapsed_ms=result.elapsed_ms,
     )
 
 
 class CameraHealthEvent(BaseModel):
     status: str
+    check_name: str | None
     detail: str | None
     codec: str | None
     width: int | None
@@ -561,6 +570,13 @@ class CameraHealthOut(BaseModel):
     current_status: str
     last_probed_at: dt.datetime | None
     last_error: str | None
+    # CHECKLIST "Camera health use cases": which named checks are currently degraded/
+    # failed, derived from each check_name's own most recent event within `history` -
+    # not a separate stored value, for the same "one place this fact can disagree with
+    # itself" reasoning current_status already follows. Empty when everything's clean,
+    # including for a camera whose events predate check_name (NULL) - those cannot
+    # contribute a named concern, only the binary current_status already covers them.
+    active_concerns: list[str]
     history: list[CameraHealthEvent]
 
 
@@ -587,7 +603,7 @@ async def get_camera_health(
     rows = (
         await db.execute(
             text(
-                "SELECT status::text, detail, codec, width, height, framerate, occurred_at "
+                "SELECT status::text, check_name, detail, codec, width, height, framerate, occurred_at "
                 "FROM camera_health_events WHERE camera_id = :camera_id "
                 "ORDER BY occurred_at DESC LIMIT :limit"
             ),
@@ -595,12 +611,22 @@ async def get_camera_health(
         )
     ).all()
 
+    # Rows arrive newest-first, so the first time a given check_name is seen here is that
+    # check's own most recent event.
+    latest_by_check: dict[str, str] = {}
+    for r in rows:
+        check_name, status = r[1], r[0]
+        if check_name is not None and check_name not in latest_by_check:
+            latest_by_check[check_name] = status
+    active_concerns = sorted(name for name, status in latest_by_check.items() if status != "online")
+
     return CameraHealthOut(
         current_status=current_status, last_probed_at=last_probed_at, last_error=last_error,
+        active_concerns=active_concerns,
         history=[
             CameraHealthEvent(
-                status=r[0], detail=r[1], codec=r[2], width=r[3], height=r[4],
-                framerate=float(r[5]) if r[5] is not None else None, occurred_at=r[6],
+                status=r[0], check_name=r[1], detail=r[2], codec=r[3], width=r[4], height=r[5],
+                framerate=float(r[6]) if r[6] is not None else None, occurred_at=r[7],
             )
             for r in rows
         ],

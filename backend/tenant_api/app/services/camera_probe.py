@@ -23,8 +23,9 @@ import hashlib
 import logging
 import re
 import socket
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +54,12 @@ class ProbeOutcome:
     height: int | None = None
     framerate: float | None = None
     transport: str | None = None
+    # Round-trip time for the whole probe (connect through the final DESCRIBE reply),
+    # in milliseconds - set by the `probe_stream` wrapper below, not computed here.
+    # CHECKLIST's "network" camera-health use case is a camera that answers but slowly,
+    # distinct from "offline" (never answers at all); this is the signal that tells them
+    # apart.
+    elapsed_ms: int | None = None
 
     def profile_json(self) -> str:
         import json
@@ -173,7 +180,18 @@ def _parse_sdp(response: str) -> dict:
     return profile
 
 
-async def probe_stream(
+async def probe_stream(*args, **kwargs) -> ProbeOutcome:
+    """Timing wrapper around `_probe_stream` - measures the whole round trip and stamps
+    it onto the outcome, without touching the protocol exchange itself (a function that
+    already handles a lot of real, hard-won camera-specific edge cases is not the place
+    to thread a stopwatch through eight different return statements).
+    """
+    started = time.monotonic()
+    outcome = await _probe_stream(*args, **kwargs)
+    return replace(outcome, elapsed_ms=int((time.monotonic() - started) * 1000))
+
+
+async def _probe_stream(
     settings,
     session: AsyncSession,
     *,

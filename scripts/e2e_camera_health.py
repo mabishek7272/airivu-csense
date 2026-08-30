@@ -1,12 +1,21 @@
-"""Proves camera health telemetry history (CHECKLIST: "Camera health current-state model
-+ telemetry history") is durable and correct, against the deployment's own real,
-DNS-resolvable NVR host (see [[nvr-h265-constraint]] - same host `e2e_live_view.py` uses;
-structural verification runs with no credentials needed, same as that script's own).
+"""Proves camera health telemetry history AND the "Camera health use cases" (CHECKLIST:
+"offline, obstruction, glare/night-vision, low FPS, network" - obstruction/glare are not
+built, see migration 0049's own docstring for why) are durable and correct, against the
+deployment's own real, DNS-resolvable NVR host (see [[nvr-h265-constraint]] - same host
+`e2e_live_view.py` uses; structural verification runs with no credentials needed, same as
+that script's own).
 
 Each real probe is a real network round trip - authenticated or not, its outcome (reachable
 or not) is what gets written to `camera_health_events`. This checks the *mechanism*
-(history accumulates, in order, matches the probe's own outcome, and a blocked/SSRF-refused
-probe attempt writes nothing at all), not a specific reachability result.
+(history accumulates, in order, matches the probe's own outcome, a `connectivity` event is
+always present with the right `check_name`, `elapsed_ms` is a real measured number, and a
+blocked/SSRF-refused probe attempt writes nothing at all) against real hardware - not a
+specific reachability result, and not the network/low-fps *threshold-crossing* logic
+itself, which is real, live hardware nothing here can reliably force to misbehave on
+demand. That logic is proven directly, thoroughly, and fast in
+`backend/tests/test_camera_health_classification.py`; this script proves it is actually
+wired into the real running API and produces real rows, not a mechanism that would need
+replacing once wired up.
 
     python scripts/e2e_camera_health.py
 """
@@ -92,25 +101,38 @@ def main() -> int:
     check(health0["current_status"] == "unknown", "no probe yet -> unknown, not online/offline", failures)
     check(health0["history"] == [], "no history yet", failures)
 
-    step(3, "A real probe against the real NVR host writes a real health event")
+    step(3, "A real probe against the real NVR host writes a real, correctly-classified health event")
     _, probe1 = api(f"/api/v1/tenant/cameras/{camera_id}/probe", {}, token)
     print(f"    probe outcome: reachable={probe1['reachable']}: {probe1['detail']}")
+    check(
+        probe1["elapsed_ms"] is not None and probe1["elapsed_ms"] >= 0,
+        f"a real round-trip time was measured (got {probe1.get('elapsed_ms')}ms)", failures,
+    )
 
     _, health1 = api(f"/api/v1/tenant/cameras/{camera_id}/health", token=token, method="GET")
     expected_status = "online" if probe1["reachable"] else "offline"
     check(health1["current_status"] == expected_status, "current_status matches the real probe outcome", failures)
-    check(len(health1["history"]) == 1, "exactly one history event after one probe", failures)
+    # At least one event always - the connectivity check - possibly more if this real
+    # camera's own real measurements happened to cross the network/framerate thresholds,
+    # which this script does not force one way or the other (see module docstring).
+    connectivity_events = [e for e in health1["history"] if e["check_name"] == "connectivity"]
+    check(len(connectivity_events) == 1, "exactly one connectivity event after one probe", failures)
     check(
-        health1["history"][0]["status"] == expected_status,
-        "the history event's own status matches too", failures,
+        connectivity_events[0]["status"] == expected_status,
+        "the connectivity event's own status matches too", failures,
+    )
+    check(
+        all(e["check_name"] in ("connectivity", "network", "framerate") for e in health1["history"]),
+        "every event is one of the known camera-health check names", failures,
     )
 
-    step(4, "A second real probe adds a second event, newest first")
+    step(4, "A second real probe adds a second connectivity event, newest first")
     api(f"/api/v1/tenant/cameras/{camera_id}/probe", {}, token)
     _, health2 = api(f"/api/v1/tenant/cameras/{camera_id}/health", token=token, method="GET")
-    check(len(health2["history"]) == 2, "two probes -> two history events", failures)
+    connectivity_events2 = [e for e in health2["history"] if e["check_name"] == "connectivity"]
+    check(len(connectivity_events2) == 2, "two probes -> two connectivity events", failures)
     check(
-        health2["history"][0]["occurred_at"] >= health2["history"][1]["occurred_at"],
+        health2["history"][0]["occurred_at"] >= health2["history"][-1]["occurred_at"],
         "newest event first", failures,
     )
 
