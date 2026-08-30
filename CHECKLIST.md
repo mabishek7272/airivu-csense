@@ -1534,7 +1534,33 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
 - [!] Independent penetration test — **[NEEDS HUMAN/EXTERNAL INPUT]** requires a
       contracted third party; not something I can perform or substitute for
 - [ ] Load/spike/endurance/failure-injection test suite (automatable, local-scale)
-- [ ] Backup automation + restore-exercise scripts (automatable against local MinIO/PG/Mongo)
+- [x] Backup automation + restore-exercise scripts (MongoDB is no longer part of this
+      stack, CLARIFICATIONS #19/#20 - Postgres and MinIO are what actually needs backing
+      up now)
+  - [x] `scripts/backup.py`: a real `pg_dump -Fc` taken *inside* the postgres container
+        (`docker compose exec`, no host-side `pg_dump` binary, no version-skew risk
+        between what took the dump and what would restore it), uploaded to the
+        `csense-backups` bucket at the exact key layout SCH §14 already specifies
+        (`{environment}/{store}/{date}/{artifact}`) - that bucket has existed in
+        `csense_shared.storage.objects.ALL_BUCKETS` since MinIO was first wired up,
+        unused until this script. Also builds a real MinIO object inventory manifest
+        (key/size/ETag for every object in every other bucket) - **not** "MinIO backed up
+        into itself" (copying within the same instance protects against nothing a real
+        outage would take out); the manifest is the honest scope for a local exercise -
+        real off-site replication needs a genuine second storage target this deployment
+        does not have, named rather than faked.
+  - [x] `scripts/restore_exercise.py`: finds the *latest* real backup, downloads it, and
+        actually restores it (`pg_restore`) into a throwaway database on the same
+        server - the real database is never touched, only read from for comparison. Row
+        counts across five representative tables (organizations, tenants, users,
+        cameras, incidents) are compared between source and restored database for real,
+        not asserted from the dump's own metadata. A backup nobody has ever restored is
+        a belief, not a backup - this is what actually proves the mechanism.
+  - [x] Run for real against the real stack: **1,428,376-byte dump** (sha256 recorded),
+        MinIO inventory of **451 evidence objects / 15 model objects / 573MB** across
+        the live buckets, and a full restore-and-compare that matched on every table
+        (3124/3079/825/2406/908 rows respectively) on the first real run. `ruff check
+        scripts` clean.
 - [!] Real capacity/SLO validation — needs real traffic; only synthetic benchmarks
       possible locally
 
