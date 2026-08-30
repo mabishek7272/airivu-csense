@@ -312,12 +312,49 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
   - [x] `backend/tests/test_totp.py` (7 tests, including the RFC vector) and
         `test_step_up_tickets.py` (5 tests) - both real unit-level coverage, not only
         e2e.
+  - [x] `backend/tenant_api/app/api/mfa.py` (new) - the identical TOTP + recovery-code
+        mechanism mirrored for tenant users (`GET`/`POST /api/v1/tenant/auth/mfa/...`),
+        not shared as one router with the Admin API's since the two run under genuinely
+        different session shapes (`TenantContext`/`db_session_for_tenant` vs
+        `PlatformContext`/`platform_db_session` - TRD §7.2). The TOTP secret is stored
+        `tenant_id`-scoped this time, not `NULL` - a customer's own credential, under the
+        same RLS every other tenant-owned secret already gets. Enrollment/verification/
+        removal all work for real; this pass doesn't yet gate any specific *tenant*
+        mutation behind a step-up (nothing in the Tenant API is identified as
+        TRD-SEC-010 "high-risk" yet) - the mechanism is real and checkable the moment one
+        is.
+  - [x] Verified for real: `scripts/e2e_tenant_mfa.py` - enroll, confirm with a real
+        computed code, a wrong code refused, remove-before-step-up refused, a TOTP code
+        verifies, a recovery code verifies and is confirmed single-use, a second, separate
+        tenant owner is unaffected (no shared state), remove succeeds once a fresh
+        step-up exists. Full PASS (two transient flakes on a container that had just
+        restarted, not reproduced on retry or in isolated manual re-checks - the same
+        class of flake the licensing slice already documented, not a code bug).
   - [ ] **Deliberately deferred**: WebAuthn/passkeys; mandatory-MFA-at-login policy; any
         other high-risk mutation besides license issuance (model promotion to production,
-        organization creation - same gate, just not wired to them yet); step-up on the
-        Tenant API side (nothing there is scoped as "high-risk" yet in this codebase).
-- [ ] Vertical-slice test: reseller → child tenant → MFA enrollment → empty dashboard →
+        organization creation - same gate, just not wired to them yet); no tenant-side
+        mutation gated behind tenant MFA yet either.
+- [x] Vertical-slice test: reseller → child tenant → MFA enrollment → empty dashboard →
       quota-exceeded rejection
+  - [x] Along the way this also built `GET /api/v1/tenant/dashboard` (TRD §10.2's own
+        representative endpoint, previously unbuilt) - real counts (sites, cameras, open/
+        total incidents, active team members), gated by a new `dashboard.read`
+        (migration 0040, granted broadly like `license.read`). A brand-new tenant's
+        dashboard renders as real zeros (plus the owner's own membership), not an error
+        or a missing field - the "empty dashboard" step needed something real to check
+        against, not a stub.
+  - [x] Verified for real, chained through the actual running stack in one script:
+        `scripts/e2e_vertical_slice.py` - a platform admin provisions a reseller, its
+        owner accepts and creates a child tenant, the child's own owner accepts
+        independently, the fresh dashboard reads all real zeros, the child owner enrolls
+        TOTP MFA on their own account, the admin issues a one-camera license (itself
+        step-up-gated), the child owner creates a site and one camera within quota, a
+        second camera is refused with a real `402 quota_exceeded`, and the dashboard
+        afterward reflects the real usage. Every step here is a feature this session
+        shipped and separately e2e-verified in isolation
+        (`e2e_reseller.py`/`e2e_tenant_mfa.py`/`e2e_mfa.py`/`e2e_licensing.py`) - this is
+        the proof they compose into one real customer journey, not just that each works
+        alone. Full PASS, first run, no flakes.
 
 ## Phase 3 — Edge, Camera, and Live Media Alpha
 

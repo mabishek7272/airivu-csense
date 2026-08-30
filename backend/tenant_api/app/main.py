@@ -9,6 +9,7 @@ from app.api import (
     audit,
     auth,
     cameras,
+    dashboard,
     detections,
     edge,
     health,
@@ -17,6 +18,7 @@ from app.api import (
     license,
     media,
     memberships,
+    mfa,
     notification_policies,
     nvr,
     pipeline_assignments,
@@ -91,6 +93,7 @@ app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(health.router)
+app.include_router(dashboard.router)
 app.include_router(audit.router)
 app.include_router(auth.router)
 app.include_router(incidents.router)
@@ -110,5 +113,6 @@ app.include_router(nvr.router)
 app.include_router(memberships.router)
 app.include_router(reseller.router)
 app.include_router(license.router)
+app.include_router(mfa.router)
 
 
