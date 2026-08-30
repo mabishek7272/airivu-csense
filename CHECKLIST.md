@@ -419,7 +419,44 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       and failures: every-beat storage would be ~2,880 rows/device/day recording that
       nothing happened. `observed_at` and `received_at` are both kept, because a device
       reports cached events on reconnect and the gap is what an outage investigation needs.
-- [ ] Signed commands with expiry/idempotency (desired-state push to the device)
+- [~] Signed commands with expiry/idempotency (desired-state push to the device)
+  - [x] `device_commands` (SCH §7.5, previously spec'd but never built - migration 0042),
+        plus the `desired_state_version`/`observed_state_version` counters SCH §7.3
+        already specifies for `edge_devices` (not driven by anything yet - they exist so
+        this table has somewhere to point once a feature has a real desired state to
+        converge on). `(edge_device_id, idempotency_key)` unique at the database level -
+        a retried issuance genuinely cannot create a second row.
+  - [x] `csense_shared.security.signed_commands` (new) - reuses the exact same RS256
+        keypair `tokens.py` already signs access tokens with, rather than a second signing
+        mechanism. `exp`/`nbf` enforced by the JWT library itself on verify, the same way
+        access tokens already get expiry for free.
+  - [x] `backend/tenant_api/app/api/edge.py`: `POST`/`GET /devices/{id}/commands`
+        (operator, `edge.manage`/`edge.read`) to issue/list; `GET /commands/pending` and
+        `POST /commands/{id}/ack` (device-authenticated via `current_agent` - the same
+        credential `/heartbeat` already uses) to poll and report result. Polling a
+        command marks it delivered in the same call - a device that asks "what do you
+        have for me" and gets an answer has, by definition, just received it.
+  - [x] **What this deliberately does not include, stated plainly**: an edge agent to
+        consume it - `edge/agent/` is still an empty directory. This is the server-side
+        half, built and proven correct against itself (a real RS256 round trip, tamper
+        detection, expiry), the same honest-partial shape `csense_shared/onvif/
+        discovery.py` already is in this codebase: real, unit-tested, never wired to a
+        live consumer because the consumer doesn't exist yet. Every endpoint here is real
+        and usable the moment a real agent exists to call `/commands/pending` and
+        `/commands/{id}/ack`.
+  - [x] Verified for real: `backend/tests/test_signed_commands.py` (6 tests) - a real
+        RS256 round trip, a tampered payload (one byte changed after signing) fails
+        verification, an expired command is refused, a not-yet-valid command is refused,
+        the wrong audience is refused, a command signed by a different key entirely is
+        refused. `scripts/e2e_device_commands.py` - against the real running API and two
+        real enrolled devices: an operator issues a signed command, the envelope
+        genuinely verifies against the deployment's own running public key (not just in
+        the unit tests), re-issuing with the same idempotency key returns the identical
+        command and envelope rather than a duplicate, the real device polls and receives
+        it (marked delivered), a second poll doesn't see it again, a *different* device's
+        ack attempt is refused (404), and the real device's own ack marks it completed
+        with its reported result. Full PASS. No regression on the pre-existing edge
+        enrolment/heartbeat e2e script.
 - [x] **Connectivity model + SSRF guard correction** — `connection_mode` per camera
       (`direct` / `vpn` / `edge` / `cloud_relay`). The guard previously refused every
       private address, which blocked the *recommended* production path (camera at

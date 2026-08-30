@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
 from app.deps_agent import AgentContext, agent_db_session, current_agent
+from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.config import get_settings
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.outbound import (
@@ -49,6 +50,7 @@ from csense_shared.security.outbound import (
     validate_allowlist_candidate,
 )
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.signed_commands import sign_command
 from csense_shared.security.tenant_context import TenantContext
 from csense_shared.security.vpn_pool import next_free_address
 
@@ -1057,3 +1059,227 @@ async def device_health_history(
         )
         for r in rows
     ]
+
+
+# --- Signed commands: expiry + idempotency, desired-state push to the device --------
+#
+# CHECKLIST: "Signed commands with expiry/idempotency (desired-state push to the
+# device)". Issue/list below are operator-facing (`edge.manage`/`edge.read`, a person's
+# own session); poll/ack are device-facing (`current_agent`, the device's own credential
+# - the same authentication `/heartbeat` already uses). See
+# `csense_shared.security.signed_commands`'s own docstring for what "signed" means here
+# and why there is no consuming edge agent yet to poll/ack for real.
+
+DEFAULT_COMMAND_TTL_SECONDS = 3600
+MAX_COMMAND_TTL_SECONDS = 7 * 24 * 3600
+
+
+class IssueCommandIn(BaseModel):
+    command_type: str = Field(min_length=1, max_length=64)
+    payload: dict = Field(default_factory=dict)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=DEFAULT_COMMAND_TTL_SECONDS, ge=30, le=MAX_COMMAND_TTL_SECONDS)
+
+
+class CommandOut(BaseModel):
+    id: str
+    edge_device_id: str
+    command_type: str
+    payload: dict
+    idempotency_key: str
+    status: str
+    not_before: dt.datetime
+    expires_at: dt.datetime
+    issued_at: dt.datetime
+    delivered_at: dt.datetime | None
+    completed_at: dt.datetime | None
+    result_code: str | None
+    result_summary: str | None
+    signed_envelope: str
+
+
+_COMMAND_SELECT = (
+    "SELECT id, edge_device_id, command_type, payload, idempotency_key, status::text, "
+    "not_before, expires_at, issued_at, delivered_at, completed_at, result_code, "
+    "result_summary, signed_envelope FROM device_commands"
+)
+
+
+def _command_out(row) -> CommandOut:
+    return CommandOut(
+        id=str(row[0]), edge_device_id=str(row[1]), command_type=row[2], payload=row[3] or {},
+        idempotency_key=row[4], status=row[5], not_before=row[6], expires_at=row[7],
+        issued_at=row[8], delivered_at=row[9], completed_at=row[10], result_code=row[11],
+        result_summary=row[12], signed_envelope=row[13],
+    )
+
+
+@router.post("/devices/{device_id}/commands", response_model=CommandOut, status_code=201)
+async def issue_command(
+    device_id: uuid.UUID,
+    body: IssueCommandIn,
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> CommandOut:
+    """Issues a signed, expiring command to a device. Idempotent: reissuing with the
+    same `idempotency_key` for the same device returns the command that already exists
+    rather than creating a second one or erroring - a retried request and the request it
+    was retrying must be indistinguishable in their effect.
+    """
+    require_permission(context, "edge.manage")
+    await _load(db, device_id)  # 404s before doing anything if this isn't a real device
+
+    existing = (
+        await db.execute(
+            text(f"{_COMMAND_SELECT} WHERE edge_device_id = :device_id AND idempotency_key = :key"),
+            {"device_id": device_id, "key": body.idempotency_key},
+        )
+    ).first()
+    if existing is not None:
+        return _command_out(existing)
+
+    settings = get_settings()
+    command_id = uuid.uuid4()
+    now = dt.datetime.now(dt.UTC)
+    expires_at = now + dt.timedelta(seconds=body.ttl_seconds)
+
+    signed_envelope = sign_command(
+        settings=settings, command_id=command_id, edge_device_id=device_id,
+        command_type=body.command_type, payload=body.payload, idempotency_key=body.idempotency_key,
+        not_before=now.timestamp(), expires_at=expires_at.timestamp(),
+    )
+
+    await db.execute(
+        text(
+            "INSERT INTO device_commands "
+            "(id, tenant_id, edge_device_id, command_type, payload, idempotency_key, "
+            " not_before, expires_at, issued_by, signed_envelope) "
+            "VALUES (:id, :tenant_id, :device_id, :command_type, CAST(:payload AS jsonb), "
+            " :key, :not_before, :expires_at, :issued_by, :envelope)"
+        ),
+        {
+            "id": command_id, "tenant_id": context.tenant_id, "device_id": device_id,
+            "command_type": body.command_type, "payload": _json(body.payload),
+            "key": body.idempotency_key, "not_before": now, "expires_at": expires_at,
+            "issued_by": context.user_id, "envelope": signed_envelope,
+        },
+    )
+
+    await record_audit_and_outbox(
+        db,
+        tenant_id=context.tenant_id,
+        actor_type="user",
+        actor_id=str(context.user_id),
+        action="edge.command.issue",
+        outcome="success",
+        target_type="edge_device",
+        target_id=str(device_id),
+        reason=f"Issued {body.command_type}",
+        before_patch=None,
+        after_patch={"command_id": str(command_id), "command_type": body.command_type},
+        correlation_id=uuid.UUID(context.correlation_id) if context.correlation_id else None,
+        event_type="edge.command.issued.v1",
+        event_payload={
+            "command_id": str(command_id), "edge_device_id": str(device_id),
+            "command_type": body.command_type,
+        },
+        aggregate_type="edge_device",
+        aggregate_id=str(device_id),
+    )
+
+    result = (await db.execute(text(f"{_COMMAND_SELECT} WHERE id = :id"), {"id": command_id})).first()
+    return _command_out(result)
+
+
+@router.get("/devices/{device_id}/commands", response_model=list[CommandOut])
+async def list_commands(
+    device_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> list[CommandOut]:
+    require_permission(context, "edge.read")
+    await _load(db, device_id)
+
+    rows = (
+        await db.execute(
+            text(f"{_COMMAND_SELECT} WHERE edge_device_id = :device_id ORDER BY issued_at DESC LIMIT :limit"),
+            {"device_id": device_id, "limit": limit},
+        )
+    ).all()
+    return [_command_out(r) for r in rows]
+
+
+@router.get("/commands/pending", response_model=list[CommandOut])
+async def poll_pending_commands(
+    agent: AgentContext = Depends(current_agent),
+    db: AsyncSession = Depends(agent_db_session),
+) -> list[CommandOut]:
+    """A device's own poll for its undelivered, currently-valid commands - authenticated
+    by the device's own credential, the same as `/heartbeat`. Marks every command
+    returned as `delivered` in the same call: a device that asks "what do you have for
+    me" and gets an answer has, by definition, just received it.
+    """
+    device_id = uuid.UUID(agent.device_id)
+    now = dt.datetime.now(dt.UTC)
+
+    rows = (
+        await db.execute(
+            text(
+                f"{_COMMAND_SELECT} WHERE edge_device_id = :device_id AND status = 'pending' "
+                "AND not_before <= :now AND expires_at > :now ORDER BY issued_at"
+            ),
+            {"device_id": device_id, "now": now},
+        )
+    ).all()
+
+    if rows:
+        ids = [r[0] for r in rows]
+        await db.execute(
+            text("UPDATE device_commands SET status = 'delivered', delivered_at = :now WHERE id = ANY(:ids)"),
+            {"now": now, "ids": ids},
+        )
+
+    return [_command_out(r) for r in rows]
+
+
+class AckCommandIn(BaseModel):
+    result_code: str = Field(min_length=1, max_length=64)
+    result_summary: str | None = Field(default=None, max_length=2000)
+    success: bool
+
+
+@router.post("/commands/{command_id}/ack", response_model=CommandOut)
+async def ack_command(
+    command_id: uuid.UUID,
+    body: AckCommandIn,
+    agent: AgentContext = Depends(current_agent),
+    db: AsyncSession = Depends(agent_db_session),
+) -> CommandOut:
+    """A device reports what happened when it tried to apply a command. Scoped to the
+    calling device's own commands - `agent_db_session`'s tenant scope alone would still
+    let a device ack another device's command within the same tenant, which it must not
+    be able to do."""
+    device_id = uuid.UUID(agent.device_id)
+    existing = (
+        await db.execute(
+            text(f"{_COMMAND_SELECT} WHERE id = :id AND edge_device_id = :device_id"),
+            {"id": command_id, "device_id": device_id},
+        )
+    ).first()
+    if existing is None:
+        raise NotFoundError("No such command for this device.")
+
+    await db.execute(
+        text(
+            "UPDATE device_commands SET status = :status, completed_at = now(), "
+            "result_code = :code, result_summary = :summary WHERE id = :id"
+        ),
+        {
+            "status": "completed" if body.success else "failed",
+            "code": body.result_code, "summary": body.result_summary, "id": command_id,
+        },
+    )
+
+    result = (await db.execute(text(f"{_COMMAND_SELECT} WHERE id = :id"), {"id": command_id})).first()
+    return _command_out(result)
