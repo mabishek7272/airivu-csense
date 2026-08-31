@@ -1,0 +1,397 @@
+name: csense
+
+# PRODUCTION compose file. Standalone (not a merge-overlay on docker-compose.yml) on
+# purpose - Compose's own merge semantics for list-valued keys (ports, command) make a
+# partial overlay easy to get subtly wrong (e.g. "removing" a base port mapping isn't a
+# thing overlay files reliably do), and a deployment file is exactly the place to prefer
+# an explicit, independently-readable definition over a clever one. Keep the two files in
+# sync when you change a service's image, environment, or dependency shape.
+#
+# Real, honest differences from docker-compose.yml, all named:
+#   - Traefik: TLS (443) via Let's Encrypt HTTP-01, dashboard/insecure API removed,
+#     dynamic.prod.yml instead of dynamic.yml (see that file for the domain placeholders
+#     you MUST replace before first deploy).
+#   - postgres/redis/minio: no host port publishing - reachable only from inside the
+#     `csense` network. Reach them for operational tasks via `docker compose exec`
+#     (docs/07_OPERATIONS_MANUAL.md), not by opening a port to the host/internet.
+#   - Every service gets `restart: unless-stopped` and a real resource limit (starting
+#     points sized for a modest single-host deployment - tune to your actual traffic;
+#     see docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md).
+#   - JSON log driver capped (`max-size`/`max-file`) so container logs cannot fill the
+#     host disk unbounded - ship logs to a real aggregator (also in the deployment guide)
+#     rather than relying on `docker logs` retention alone in production.
+#   - `MINIO_USE_TLS`/`MINIO_PUBLIC_ENDPOINT` default to values that assume MinIO sits
+#     behind your own TLS-terminating reverse proxy or is swapped for a managed object
+#     store entirely - see the deployment guide.
+#
+# What this file deliberately does NOT decide for you (all real business/infra choices,
+# not code): which cloud/host, your actual domain names, your container registry (this
+# still `build:`s on the host by default - point services at `image:
+# your-registry/csense-tenant-api:TAG` instead once you have a CI pipeline that builds
+# and pushes one), and your log-aggregation/monitoring target.
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-csense}
+  POSTGRES_USER: ${POSTGRES_API_USER:-csense_api}
+  POSTGRES_PASSWORD: ${POSTGRES_API_PASSWORD}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  # Set to "true" once MinIO/your object store is actually served over TLS - see
+  # docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md's storage section for the real options.
+  MINIO_USE_TLS: ${MINIO_USE_TLS:-false}
+  # Must be a real, browser-reachable HTTPS host - presigned URLs are followed directly
+  # by a browser, never proxied through this platform's own services.
+  MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:?set MINIO_PUBLIC_ENDPOINT to your real object-storage host}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-RS256}
+  JWT_PRIVATE_KEY_PATH: /run/secrets/jwt_private.pem
+  JWT_PUBLIC_KEY_PATH: /run/secrets/jwt_public.pem
+  JWT_ISSUER: ${JWT_ISSUER:?set JWT_ISSUER to your real platform identifier}
+  JWT_ACCESS_TOKEN_TTL_SECONDS: ${JWT_ACCESS_TOKEN_TTL_SECONDS:-600}
+  JWT_REFRESH_TOKEN_TTL_SECONDS: ${JWT_REFRESH_TOKEN_TTL_SECONDS:-1209600}
+  ARGON2_TIME_COST: ${ARGON2_TIME_COST:-3}
+  ARGON2_MEMORY_COST_KB: ${ARGON2_MEMORY_COST_KB:-65536}
+  ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-2}
+  CUSTOMER_CRM_ORIGIN: ${CUSTOMER_CRM_ORIGIN:?set to your real https:// customer domain}
+  DEVELOPER_CONSOLE_ORIGIN: ${DEVELOPER_CONSOLE_ORIGIN:?set to your real https:// admin domain}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM_ADDRESS: ${RESEND_FROM_ADDRESS:-alerts@example.invalid}
+  RESEND_REPLY_TO: ${RESEND_REPLY_TO:-}
+  WHATSAPP_GATEWAY_URL: ${WHATSAPP_GATEWAY_URL:-http://whatsapp-gateway:8080}
+  WHATSAPP_GATEWAY_API_KEY: ${WHATSAPP_GATEWAY_API_KEY:-}
+  WHATSAPP_INSTANCE_TOKEN: ${WHATSAPP_INSTANCE_TOKEN:-}
+  WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-default}
+  MASTER_KEY_DIR: /run/secrets
+  MASTER_KEY_ACTIVE_ID: ${MASTER_KEY_ACTIVE_ID:-}
+
+x-backend-secrets: &backend-secrets
+  - jwt_private.pem
+  - jwt_public.pem
+  - master_v1.key
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+services:
+  traefik:
+    image: traefik:v3.1
+    <<: *default-restart
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Every plain-HTTP request is redirected to HTTPS, never served in the clear.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL to a real address you control - Let's Encrypt sends expiry/revocation notices here}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --log.level=INFO
+      - --accesslog=true
+      # No --api.dashboard / --api.insecure - the local-dev convenience deliberately
+      # removed for production (dynamic.yml's own comment names this exactly).
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik/dynamic.prod.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - letsencrypt:/letsencrypt
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  postgres:
+    image: postgres:16
+    <<: *default-restart
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-csense}
+      POSTGRES_USER: ${POSTGRES_USER:-csense_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No host port published - reachable only inside the `csense` network. Operational
+    # access is `docker compose exec postgres psql ...`, never a port opened to the host
+    # or the internet (docs/07_OPERATIONS_MANUAL.md).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-csense_app} -d ${POSTGRES_DB:-csense}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+
+  redis:
+    image: redis:7
+    <<: *default-restart
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  minio:
+    image: minio/minio:latest
+    <<: *default-restart
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.20.1-ffmpeg
+    <<: *default-restart
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8889:8889" # WebRTC signaling
+      - "8189:8189/udp" # WebRTC ICE - must be reachable from real client networks
+      - "8888:8888" # HLS
+      # Control API (9997) intentionally NOT published in production - it was a local
+      # introspection convenience only; nothing in this stack needs it published.
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 512M }
+
+  migrate:
+    build:
+      context: ../backend
+      dockerfile: migrations/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      POSTGRES_USER: ${POSTGRES_USER:-csense_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_API_USER: ${POSTGRES_API_USER:-csense_api}
+      POSTGRES_API_PASSWORD: ${POSTGRES_API_PASSWORD}
+      POSTGRES_PLATFORM_API_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PLATFORM_API_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+    networks: [csense]
+    # Deliberately no `restart:` - a one-shot job (`docker compose run --rm migrate`),
+    # not a long-running service; auto-restart would just re-apply a no-op forever.
+
+  tenant-api:
+    build:
+      context: ../backend
+      dockerfile: tenant_api/Dockerfile
+    <<: *default-restart
+    env_file: [../.env]
+    environment: *backend-env
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 512M }
+
+  admin-api:
+    build:
+      context: ../backend
+      dockerfile: admin_api/Dockerfile
+    <<: *default-restart
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  notification-worker:
+    build:
+      context: ../backend
+      dockerfile: notification_worker/Dockerfile
+    <<: *default-restart
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+      # Safe to run several replicas of this one - claiming uses FOR UPDATE SKIP LOCKED,
+      # so concurrent workers draining the same queue never double-send. Set via
+      # `docker compose -f docker-compose.prod.yml up -d --scale notification-worker=3`.
+
+  ai-runtime:
+    build:
+      context: ../backend
+      dockerfile: ai_runtime/Dockerfile
+    <<: *default-restart
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+      MODEL_CACHE_DIR: /var/cache/csense/models
+      MODEL_POOL_SIZE: ${MODEL_POOL_SIZE:-4}
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    volumes:
+      - modelcache:/var/cache/csense/models
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        # CPU-only default (docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md's own real
+        # constraint for this deployment - see CHECKLIST.md's [NEEDS EXTERNAL INPUT] on
+        # GPU/edge hardware). Raise this if you have GPU-backed inference wired up
+        # separately; nothing here does that for you.
+        limits: { cpus: "4.0", memory: 4G }
+
+  whatsapp-gateway:
+    build:
+      context: ../edge/whatsapp-gateway
+    <<: *default-restart
+    env_file: [../.env]
+    environment:
+      SERVER_PORT: 8080
+      POSTGRES_AUTH_DB: postgresql://${POSTGRES_USER:-csense_app}:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_auth?sslmode=disable
+      POSTGRES_USERS_DB: postgresql://${POSTGRES_USER:-csense_app}:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_users?sslmode=disable
+      GLOBAL_API_KEY: ${WHATSAPP_GATEWAY_API_KEY}
+      CLIENT_NAME: csense
+      OS_NAME: CSense Gateway
+      DATABASE_SAVE_MESSAGES: "false"
+      CONNECT_ON_STARTUP: "true"
+      LOGTYPE: console
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - whatsappgatewaylogs:/app/logs
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  developer-console:
+    build:
+      context: ../frontend/developer-console
+    <<: *default-restart
+    environment:
+      NEXT_PUBLIC_API_BASE: ${DEVELOPER_CONSOLE_ORIGIN:?set to your real https:// admin domain}
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  customer-crm:
+    build:
+      context: ../frontend/customer-crm
+    <<: *default-restart
+    environment:
+      VITE_API_BASE: ""
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+  demo-site:
+    build:
+      context: ../frontend/demo-site
+    <<: *default-restart
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+networks:
+  csense:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  modelcache:
+  whatsappgatewaylogs:
+  letsencrypt:
+
+secrets:
+  master_v1.key:
+    file: ./secrets/master_v1.key
+  jwt_private.pem:
+    file: ./secrets/jwt_private.pem
+  jwt_public.pem:
+    file: ./secrets/jwt_public.pem

@@ -1650,7 +1650,51 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
 
 ## Phase 10 — Stabilization and Handover
 
-- [ ] Admin manual, operator manual, API guide, incident runbooks (can draft now)
+- [x] Admin manual, operator manual, API guide, incident runbooks
+  - [x] `docs/07_OPERATIONS_MANUAL.md` — Part A (Admin): bootstrapping the first platform
+        admin (there's no self-service path to platform scope, by design), organizations/
+        tenants/reseller relationships, licensing (issuance/renewal/what `expired`
+        actually restricts), support grants, the model/pipeline registry's own real
+        promotion gate, audit log. Part B (Operator): topology table, starting/stopping
+        the stack, `/healthz`/`/readyz` (and why they're deliberately not routed through
+        Traefik), structured logs + `X-Correlation-ID` tracing, migrations, backup/
+        restore (`scripts/backup.py`/`restore_exercise.py`, with the real numbers from
+        this session's own runs), load/failure-injection testing, security scanning,
+        scaling notes (`notification-worker`'s `FOR UPDATE SKIP LOCKED` design is
+        genuinely multi-replica-safe), and common maintenance tasks (key rotation, stale
+        Redis keys, the Docker-Desktop-crash recovery procedure this session hit
+        repeatedly, including the `.wslconfig` memory-cap suggestion).
+  - [x] `docs/08_API_GUIDE.md` — the two APIs and their audiences, human-session and
+        API-key authentication (including the real "scopes capped at issuance" rule and
+        rate-limit/usage-metering behavior), permissions/deny-wins, the real error shape,
+        pagination, webhook signing/verification with a real code-shaped example,
+        idempotency keys, real-time via WS tickets. Points at the real, live, auto-
+        generated OpenAPI documents (`/api/v1/tenant/docs`, `/api/v1/admin/docs`) as the
+        endpoint-by-endpoint reference rather than duplicating it by hand.
+  - [x] `docs/09_INCIDENT_RUNBOOKS.md` — ten numbered runbooks (service down; Postgres
+        unreachable; Redis unreachable, with the exact "what breaks vs. what keeps
+        working" list this session's own failure-injection testing established; a
+        tenant's camera fleet going offline/degraded, using the real `check_name`
+        classification; license/quota state looking wrong; suspected credential
+        compromise, ordered by blast radius from a single API key up to a compromised
+        JWT signing key; a failed migration; MinIO/storage issues; notification delivery
+        failures; and a real disaster-recovery restore, escalating the same drill
+        `restore_exercise.py` already proves works). Each follows Detect/Diagnose/
+        Mitigate/Resolve/Prevent with real commands, not placeholders.
+  - [x] **Beyond the checklist's own four items**: `docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md`
+        plus `infra/docker-compose.prod.yml` and `infra/traefik/dynamic.prod.yml` — a
+        real, validated (`docker compose config`, both the required-var fail-fast
+        behavior and full successful resolution confirmed) production deployment
+        mechanism: TLS via Traefik + Let's Encrypt HTTP-01, no host-published database/
+        cache/storage ports, `restart` policies + resource limits + capped log rotation
+        on every service, secrets-generation and domain-placeholder-replacement steps,
+        and a real go-live checklist. Explicit, tabulated about what remains a genuine
+        human/business decision this repo cannot make (which cloud host, real domain
+        ownership, DNS, a container registry, vendor accounts, the pilot go/no-go itself
+        - Phase 9's own `[NEEDS HUMAN/EXTERNAL INPUT]`) versus what the mechanism now
+        handles for real once those are supplied.
+  - [x] `docs/00_DOCUMENT_INDEX.md` updated to list all four as a real second half of the
+        documentation pack.
 - [!] Pilot defect resolution, false-positive tuning — needs real pilot data first
 
 ---

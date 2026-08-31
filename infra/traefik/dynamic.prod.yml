@@ -1,0 +1,136 @@
+# Traefik PRODUCTION dynamic configuration - the TLS counterpart to dynamic.yml (which
+# stays as the local-dev, plain-HTTP config; this file is not used by the default
+# `docker-compose.yml`, only by `docker-compose.prod.yml`).
+#
+# **Before first deploy, replace every `app.example.com` / `console.example.com` /
+# `demo.example.com` placeholder below with your real domains** (a `sed` one-liner is in
+# docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md) - Traefik's file provider does not do
+# environment-variable substitution the way docker-compose.yml itself does, so this file
+# needs a real edit, not an env var, to carry real domains.
+#
+# Same routing rules, security headers, rate limits, and CORS shape as dynamic.yml -
+# only the entrypoint (websecure/443 instead of web/80) and TLS (a cert resolver on every
+# router) actually differ. Keep the two files in sync when you change routing.
+http:
+  routers:
+    tenant-api:
+      rule: "PathPrefix(`/api/v1/tenant`) || PathPrefix(`/api/v1/auth`) || PathPrefix(`/ws/v1/tenant`)"
+      service: tenant-api
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers, tenant-cors, api-ratelimit]
+
+    admin-api:
+      rule: "PathPrefix(`/api/v1/admin`)"
+      service: admin-api
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers, platform-cors, api-ratelimit]
+
+    media-hls:
+      rule: "PathPrefix(`/media/hls`)"
+      service: media-hls
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers, media-strip-hls]
+
+    media-webrtc:
+      rule: "PathPrefix(`/media/webrtc`)"
+      service: media-webrtc
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers, media-strip-webrtc]
+
+    customer-crm:
+      rule: "Host(`app.example.com`)"
+      service: customer-crm
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
+    developer-console:
+      rule: "Host(`console.example.com`)"
+      service: developer-console
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
+    demo-site:
+      rule: "Host(`demo.example.com`)"
+      service: demo-site
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
+  services:
+    tenant-api:
+      loadBalancer:
+        servers:
+          - url: "http://tenant-api:8000"
+    admin-api:
+      loadBalancer:
+        servers:
+          - url: "http://admin-api:8000"
+    customer-crm:
+      loadBalancer:
+        servers:
+          - url: "http://customer-crm:8080"
+    developer-console:
+      loadBalancer:
+        servers:
+          - url: "http://developer-console:3000"
+    demo-site:
+      loadBalancer:
+        servers:
+          - url: "http://demo-site:8080"
+    media-hls:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8888"
+    media-webrtc:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8889"
+
+  middlewares:
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"
+
+    tenant-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "https://app.example.com"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    platform-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "https://console.example.com"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    api-ratelimit:
+      rateLimit:
+        average: 50
+        burst: 100
+
+    media-strip-hls:
+      stripPrefix:
+        prefixes: ["/media/hls"]
+
+    media-strip-webrtc:
+      stripPrefix:
+        prefixes: ["/media/webrtc"]

@@ -21,6 +21,17 @@ This pack converts the approved CSense modernization direction into six coordina
 | [05_BACKEND_SCHEMA.md](05_BACKEND_SCHEMA.md) | PostgreSQL entities, MongoDB collections, Redis keyspace, object storage, tenancy controls, indexes, retention, and domain events |
 | [06_IMPLEMENTATION_PLAN.md](06_IMPLEMENTATION_PLAN.md) | Delivery phases, workstreams, dependencies, quality gates, resourcing, rollout, migration, risks, and Definition of Done |
 
+The following four are operational documents, added once there was a real, running
+system to operate — not part of the original six-document spec pack, but published
+alongside it for the same reason: real guidance for real operation, not aspirational.
+
+| Document | Purpose |
+|---|---|
+| [07_OPERATIONS_MANUAL.md](07_OPERATIONS_MANUAL.md) | Admin manual (platform operations: tenants, licenses, support grants, model/pipeline registry) and Operator manual (running the stack: start/stop, logs, migrations, backup/restore, load testing, scaling) |
+| [08_API_GUIDE.md](08_API_GUIDE.md) | Authentication, permissions, scoped API keys, error format, pagination, webhooks, and real-time — the concepts that don't fit in the auto-generated OpenAPI documents |
+| [09_INCIDENT_RUNBOOKS.md](09_INCIDENT_RUNBOOKS.md) | Ten numbered runbooks (service down, database/Redis outages, license/quota issues, security incidents, failed migrations, storage issues, notification failures, real disaster recovery) — Detect/Diagnose/Mitigate/Resolve/Prevent, each with real commands |
+| [10_PRODUCTION_DEPLOYMENT_GUIDE.md](10_PRODUCTION_DEPLOYMENT_GUIDE.md) | What only a human/business can decide (domain, cloud host, secrets, vendor accounts) versus the real, tested mechanism (`docker-compose.prod.yml`, TLS via Traefik/Let's Encrypt) that uses those decisions once made |
+
 ## Approved Architecture Baseline
 
 The following decisions govern all six documents:
