@@ -1697,68 +1697,79 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         documentation pack.
 - [!] Pilot defect resolution, false-positive tuning — needs real pilot data first
 
-## Phase 11 — Native Mobile Apps
+## Phase 11 — Mobile App (Expo/React Native)
 
 Not part of the original six-document spec pack (`docs/00_DOCUMENT_INDEX.md`'s own
 architecture baseline names only the Developer Console/Next.js and Customer CRM/Vite web
-apps) - added as a direct, explicit request: a proprietary **native** app per platform
-(not Flutter/React Native, both of which were available on the development machine but
-deliberately not used - see `mobile/android/README.md`'s own "Why native" section),
-Android first.
+apps) - added as a direct, explicit request. **Pivoted mid-build**: the first pass was a
+proprietary native Android app (Kotlin + Jetpack Compose - real, compiled, 12/12 unit
+tests passing, preserved in git history under the commit "Native Android app: login,
+dashboard, incidents, cameras, account"), but once it turned out real Expo tooling was
+already available, the user explicitly redirected both platforms to one shared Expo/React
+Native codebase instead - a deliberate, user-confirmed decision (asked and answered via
+AskUserQuestion), not an assumption. `mobile/android/` and the empty `mobile/ios/`
+scaffold were deleted; the real backend-contract reverse-engineering and lessons from that
+first pass (cookie-based refresh, exact DTO shapes) carried forward into the rewrite.
 
-- [x] **Android** (`mobile/android/`, Kotlin + Jetpack Compose, package `ai.airivu.csense`,
-      minSdk 26/target+compileSdk 36) - login, dashboard, incident list (cursor-paginated,
-      status-filterable) and detail (real acknowledge/investigate/resolve/dismiss
-      actions), camera list, account screen (license status + sign out).
+- [x] **`mobile/app/`** (Expo SDK 57, React 19.2.3, React Native 0.86.3, TypeScript 6.0.3,
+      Expo Router, bundle/package id `ai.airivu.csense` both platforms) - login, dashboard,
+      incident list (cursor-paginated, status-filterable, `FlatList` infinite scroll) and
+      detail (real acknowledge/investigate/resolve/dismiss actions with the same
+      resolution-code vocabulary as the web CRM), camera list, account screen (license +
+      quota usage, sign out). Auth-gated via Expo Router's `Stack.Protected`.
   - [x] **The real backend contract, reverse-engineered field-for-field**, not guessed:
-        every DTO in `data/network/dto/` mirrors a real Pydantic model from
-        `backend/tenant_api/app/api/*.py`. Two real contract details this surfaced and
-        got right: the refresh token is never in a JSON body (it's an httpOnly
-        `csense_refresh` cookie, path-scoped to `/api/v1/auth`) - `PersistentCookieJar`
-        (new, real, EncryptedSharedPreferences-backed OkHttp `CookieJar`) is the mobile
-        equivalent of the browser cookie jar the web CRM already relies on for the same
-        flow; and real logout needs a session id the JSON also never provides, read from
-        that same cookie jar instead.
-  - [x] Auth: `SessionAuthenticator` reacts to a real `401` by calling the real
-        `/api/v1/auth/refresh` and retrying once, with a real loop guard (never more than
-        one retry, and the refresh call itself runs on a separate, un-authenticated
-        client so it can never recursively trigger itself).
+        every DTO in `src/api/types.ts` mirrors a real Pydantic model from
+        `backend/tenant_api/app/api/*.py` - the same contract the native Android build
+        already established. Same two real contract details carried forward: the refresh
+        token is never in a JSON body (httpOnly `csense_refresh` cookie, path-scoped to
+        `/api/v1/auth`) - this app relies on the platform's own native cookie jar
+        (NSURLSession/OkHttp) via `fetch()`, the same way the web CRM relies on the
+        browser's; and logout needs a session id the JSON never provides, read from the
+        `csense_session` cookie via `@preeternal/react-native-cookie-manager`
+        (`src/auth/cookies.ts` - the maintained replacement for the now-deprecated
+        `@react-native-cookies/cookies`, chosen after comparing real npm metadata against
+        the other suggested alternative).
+  - [x] Auth: `src/api/client.ts`'s `apiRequest()` reacts to a real `401` by calling
+        `/api/v1/auth/refresh` and retrying once, with an in-flight-refresh singleton so
+        concurrent 401s across screens share one refresh call rather than racing (unit-
+        tested directly, see below) - the same guarantee `SessionAuthenticator` gave the
+        native Android build, re-expressed for `fetch()`.
   - [x] Every real backend error (`csense_shared.errors.ProblemResponse`,
-        `docs/08_API_GUIDE.md`'s own "Error shape") is parsed into a typed
-        `ApiException` (`SafeApiCall.kt`) - `code`/`retryable` preserved, not just a
-        message string screens have to re-parse.
-  - [x] Manual DI (`AppContainer`), not Hilt - a named, deliberate tradeoff for this
-        project's own memory-constrained development machine (see below), not a
-        permanent stance.
-  - [x] **Real verification, boundary named honestly where it stops**: compiles clean
-        (`:app:compileDebugKotlin`, zero warnings), assembles a real, installable 19MB
-        debug APK (`:app:assembleDebug`), and **12 real unit tests, all passing**
-        (`:app:testDebugUnitTest`) - login validation and both success/failure paths,
-        cursor-pagination `loadMore` correctly appending (not replacing) and not
-        over-fetching once `next_cursor` is null, status-filter changes triggering a
-        fresh reload, and the real `ProblemResponse`-to-`ApiException` mapping contract
-        (a genuine JSON error body, a malformed one that still doesn't crash, and a real
-        `IOException` mapping to the network-error case). **Not yet run on a real device
-        or emulator** - this development machine hit genuine, repeated OS-level
-        out-of-memory conditions running this session's own Docker stack alone (measured
-        as low as 0.66GB free earlier in this same session); an Android emulator needs
-        ~2GB+ of its own RAM on top of that, a real risk of the same crash pattern rather
-        than a hypothetical one. Named as a real, un-skipped next step
-        (`mobile/android/README.md`'s own "What's been verified" section), not silently
-        claimed as done.
-  - [x] Along the way, one real, non-obvious Windows/Gradle bug found and fixed:
-        `local.properties`' `sdk.dir` needs its drive-letter colon escaped (`C\:\\...`),
-        not just its backslashes, in a Java `.properties` file - an unescaped colon is
-        read as the key/value separator, truncating the SDK path and producing a
-        confusing native `IOException` deep inside AGP's own SDK validation rather than
-        a clear "bad path" error. Documented in the README so it isn't rediscovered.
-- [!] **iOS** - **[NEEDS EXTERNAL INPUT]**: native iOS (Swift/SwiftUI) needs Xcode, which
-      needs macOS - a hard platform constraint, not a choice, on this Windows development
-      machine (the same class of "real hardware/OS this environment doesn't have"
-      boundary already named for GPU inference and real edge hardware elsewhere in this
-      checklist). The real backend contract already reverse-engineered field-for-field
-      for Android (`data/network/dto/`) is the same one an iOS app would consume - that
-      mapping work would not need redoing on a Mac, only re-expressing in Swift.
+        `docs/08_API_GUIDE.md`'s own "Error shape") is parsed into a typed `ApiError`
+        (`code`/`httpStatusCode`/`retryable` preserved), with a separate `NetworkError`
+        for a request that never reached the server at all.
+  - [x] Theme colours (`src/theme/colors.ts`) copied hex-for-hex from
+        `frontend/customer-crm/src/styles.css`'s own light/dark palette, so severity and
+        status mean the same colour on both clients; badges carry the label as visible
+        text plus an `accessibilityLabel` prefix (`"Severity: "`/`"Status: "`), mirroring
+        the web CRM's own colour-blind-safe design.
+  - [x] **Real verification, boundary named honestly where it stops**: `npm run lint`
+        (eslint-config-expo + react-hooks, zero errors), `npm run typecheck`
+        (`tsc --noEmit`, zero errors), and **17 real Jest unit tests, all passing** -
+        the `ApiError`/`NetworkError` mapping and 401-refresh-and-retry contract
+        (including the concurrent-401 dedup case), login/logout state transitions in
+        `AuthContext`, and cursor-pagination/status-filter-reset behavior in
+        `useIncidents`. CI (`.github/workflows/ci.yml`'s `mobile-app` job) runs the same
+        three commands on every push. **Not yet run on a real device, emulator, or
+        Simulator** - no native build step exists in CI (no Xcode on a Linux runner; the
+        Android build needs a real dev-client/EAS run, not plain `expo start`), and this
+        development machine's own real memory constraints (documented earlier in this
+        same phase, from the native Android attempt) apply equally to an emulator here.
+        Named as a real, un-skipped next step (`mobile/app/README.md`'s own "What's
+        verified and what isn't" section), including the native-cookie-jar reliance
+        itself, which has not been exercised against a real backend on a real device.
+  - [x] One Windows/npm-specific real finding carried into the README: `expo-secure-store`
+        and `@preeternal/react-native-cookie-manager` both needed
+        `npm install --legacy-peer-deps` to resolve Expo SDK 57's own peer-dependency
+        graph (transitive conflicts via `expo-router`'s `@expo/ui`/`react-native-worklets`
+        dependencies) - `npx expo install` itself doesn't accept that flag, so each was
+        installed via plain `npm install` and then corrected to the SDK-compatible
+        version with `npx expo install --fix`.
+- [x] iOS is no longer blocked - the whole point of the Expo pivot (over the earlier
+      native-per-platform plan) is one codebase for both platforms, removing the earlier
+      "needs a Mac for Xcode" blocker for the app's *code*. A real signed iOS binary via
+      EAS Build (or a local Xcode archive) still needs the Mac the user has, and hasn't
+      been done in this session - named in `mobile/app/README.md`, not silently claimed.
 
 ---
 

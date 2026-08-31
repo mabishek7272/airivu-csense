@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- A bridge theme only - the manifest needs a real Theme.* to launch the process's
-         initial window before Compose takes over; every actual screen is Compose, styled
-         by ui/theme/Theme.kt, not by anything in this file. -->
-    <style name="Theme.CSense" parent="android:Theme.Material.Light.NoActionBar" />
-</resources>
