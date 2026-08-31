@@ -46,8 +46,8 @@ tradeoff, named rather than defaulted-into: Hilt's annotation processing adds re
 time and memory pressure, and this app's dependency graph is small enough (one token
 store, one cookie jar, one API client, five repositories) that a manual container is
 just as correct and considerably cheaper to build - a real, deliberate choice for the
-memory-constrained development machine this was built on (see "Development machine
-constraints" below), not a permanent architectural stance.
+memory-constrained development machine this was built on (see "Real build gotchas found
+along the way" below), not a permanent architectural stance.
 
 ## Real backend contract, not guessed
 
@@ -123,6 +123,31 @@ carve-out (`network_security_config.xml`) only ever applies to `10.0.2.2`/`local
   (`app/build/outputs/apk/debug/app-debug.apk`) on a real device via `adb install`, or
   launch the AVD already configured on this machine (`Medium_Phone`) once there's enough
   free memory, to complete interactive verification against the real running backend.
+
+## Real build gotchas found along the way
+
+Two real, non-obvious issues surfaced while getting this to build for real - both
+documented here so they aren't rediscovered:
+
+- **`local.properties`' `sdk.dir` needs its drive-letter colon escaped on Windows, not
+  just its backslashes.** `sdk.dir=C:\\Users\\...` is silently read by Java's
+  `.properties` parser as key `sdk.dir` with value ending right after `C` (an unescaped
+  `:` is the key/value separator) - the truncated path then fails deep inside AGP's own
+  SDK validation with a confusing native `IOException`, not a clear "bad path" error.
+  The fix is `sdk.dir=C\:\\Users\\...` (see "Building and running" above).
+- **A memory setting that's right for one machine can starve a completely different
+  one - found by a real CI failure, not guessed.** This project's `gradle.properties` is
+  committed to git, so it has to be right for CI's runner and for every future
+  contributor's machine, not just the one this app happened to be built on first. An
+  early version capped `org.gradle.jvmargs` at a value tuned for this specific
+  memory-constrained development machine; CI's own D8 dex-merge step (more memory-hungry
+  than plain Kotlin compilation) then hit a genuine `OutOfMemoryError` with that same
+  cap, on a runner that actually had plenty of headroom. The fix: the committed
+  `gradle.properties` carries a real, standard default (2560m) that works for CI and any
+  normal machine; this machine's own tighter constraint lives in this developer's
+  personal, never-committed `~/.gradle/gradle.properties` instead (Gradle's own standard
+  per-user override mechanism, confirmed empirically via `./gradlew properties` to
+  actually take precedence over the project-level file, not the other way around).
 
 ## iOS
 
