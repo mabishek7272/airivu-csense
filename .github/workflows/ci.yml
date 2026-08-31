@@ -143,6 +143,30 @@ jobs:
         # was already bumped to 14.2.35 (the latest 14.x patch) as part of adding this -
         # a real, low-risk fix, not merely a baseline note.
 
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager "platforms;android-36" "build-tools;36.1.0"
+      - name: Write local.properties (CI runner - no Windows drive-letter escaping needed)
+        run: echo "sdk.dir=${ANDROID_HOME}" > local.properties
+      - run: chmod +x gradlew
+      - run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-unit-test-results
+          path: mobile/android/app/build/test-results/testDebugUnitTest/
+          retention-days: 14
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:
