@@ -1697,6 +1697,69 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         documentation pack.
 - [!] Pilot defect resolution, false-positive tuning — needs real pilot data first
 
+## Phase 11 — Native Mobile Apps
+
+Not part of the original six-document spec pack (`docs/00_DOCUMENT_INDEX.md`'s own
+architecture baseline names only the Developer Console/Next.js and Customer CRM/Vite web
+apps) - added as a direct, explicit request: a proprietary **native** app per platform
+(not Flutter/React Native, both of which were available on the development machine but
+deliberately not used - see `mobile/android/README.md`'s own "Why native" section),
+Android first.
+
+- [x] **Android** (`mobile/android/`, Kotlin + Jetpack Compose, package `ai.airivu.csense`,
+      minSdk 26/target+compileSdk 36) - login, dashboard, incident list (cursor-paginated,
+      status-filterable) and detail (real acknowledge/investigate/resolve/dismiss
+      actions), camera list, account screen (license status + sign out).
+  - [x] **The real backend contract, reverse-engineered field-for-field**, not guessed:
+        every DTO in `data/network/dto/` mirrors a real Pydantic model from
+        `backend/tenant_api/app/api/*.py`. Two real contract details this surfaced and
+        got right: the refresh token is never in a JSON body (it's an httpOnly
+        `csense_refresh` cookie, path-scoped to `/api/v1/auth`) - `PersistentCookieJar`
+        (new, real, EncryptedSharedPreferences-backed OkHttp `CookieJar`) is the mobile
+        equivalent of the browser cookie jar the web CRM already relies on for the same
+        flow; and real logout needs a session id the JSON also never provides, read from
+        that same cookie jar instead.
+  - [x] Auth: `SessionAuthenticator` reacts to a real `401` by calling the real
+        `/api/v1/auth/refresh` and retrying once, with a real loop guard (never more than
+        one retry, and the refresh call itself runs on a separate, un-authenticated
+        client so it can never recursively trigger itself).
+  - [x] Every real backend error (`csense_shared.errors.ProblemResponse`,
+        `docs/08_API_GUIDE.md`'s own "Error shape") is parsed into a typed
+        `ApiException` (`SafeApiCall.kt`) - `code`/`retryable` preserved, not just a
+        message string screens have to re-parse.
+  - [x] Manual DI (`AppContainer`), not Hilt - a named, deliberate tradeoff for this
+        project's own memory-constrained development machine (see below), not a
+        permanent stance.
+  - [x] **Real verification, boundary named honestly where it stops**: compiles clean
+        (`:app:compileDebugKotlin`, zero warnings), assembles a real, installable 19MB
+        debug APK (`:app:assembleDebug`), and **12 real unit tests, all passing**
+        (`:app:testDebugUnitTest`) - login validation and both success/failure paths,
+        cursor-pagination `loadMore` correctly appending (not replacing) and not
+        over-fetching once `next_cursor` is null, status-filter changes triggering a
+        fresh reload, and the real `ProblemResponse`-to-`ApiException` mapping contract
+        (a genuine JSON error body, a malformed one that still doesn't crash, and a real
+        `IOException` mapping to the network-error case). **Not yet run on a real device
+        or emulator** - this development machine hit genuine, repeated OS-level
+        out-of-memory conditions running this session's own Docker stack alone (measured
+        as low as 0.66GB free earlier in this same session); an Android emulator needs
+        ~2GB+ of its own RAM on top of that, a real risk of the same crash pattern rather
+        than a hypothetical one. Named as a real, un-skipped next step
+        (`mobile/android/README.md`'s own "What's been verified" section), not silently
+        claimed as done.
+  - [x] Along the way, one real, non-obvious Windows/Gradle bug found and fixed:
+        `local.properties`' `sdk.dir` needs its drive-letter colon escaped (`C\:\\...`),
+        not just its backslashes, in a Java `.properties` file - an unescaped colon is
+        read as the key/value separator, truncating the SDK path and producing a
+        confusing native `IOException` deep inside AGP's own SDK validation rather than
+        a clear "bad path" error. Documented in the README so it isn't rediscovered.
+- [!] **iOS** - **[NEEDS EXTERNAL INPUT]**: native iOS (Swift/SwiftUI) needs Xcode, which
+      needs macOS - a hard platform constraint, not a choice, on this Windows development
+      machine (the same class of "real hardware/OS this environment doesn't have"
+      boundary already named for GPU inference and real edge hardware elsewhere in this
+      checklist). The real backend contract already reverse-engineered field-for-field
+      for Android (`data/network/dto/`) is the same one an iOS app would consume - that
+      mapping work would not need redoing on a Mac, only re-expressing in Swift.
+
 ---
 
 ## How this checklist is used

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Excludes everything from both cloud backup and device-to-device transfer - this app
+     stores an access token and refresh-session cookie via EncryptedSharedPreferences/
+     OkHttp's own cookie jar, and neither should ever leave this device through Android's
+     own backup mechanisms. -->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapability="true">
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </device-transfer>
+</data-extraction-rules>
