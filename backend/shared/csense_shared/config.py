@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     notification_poll_seconds: float = 5.0
     notification_batch_size: int = 25
 
+    # How old an outbox event may be and still be worth delivering as a webhook. Bounds
+    # two real cases with one rule: on first deploy the entire pre-existing outbox history
+    # is outside the window, so a brand-new endpoint is never blasted with months of past
+    # events; and after a long worker outage only recent events are delivered rather than
+    # a flood of stale ones. Deliberately different from the platform's usual "late alert
+    # beats no alert" stance (MAX_DELAY_SECONDS, the escalation ladder) - a webhook is an
+    # integration feed, and a day-old "incident created" POST is noise to a receiver, not
+    # a late alert to a human.
+    webhook_dispatch_max_event_age_seconds: float = 24 * 60 * 60
+
     # CORS origins
     # Comma-separated allow-lists. Each app is reachable at more than one origin:
     # through Traefik in the container stack, and on a Vite/Next dev port locally.
