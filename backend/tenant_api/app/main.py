@@ -13,6 +13,7 @@ from app.api import (
     dashboard,
     detections,
     edge,
+    exports,
     health,
     incidents,
     ingest,
@@ -121,5 +122,6 @@ app.include_router(mfa.router)
 app.include_router(support.router)
 app.include_router(webhooks.router)
 app.include_router(api_clients.router)
+app.include_router(exports.router)
 
 

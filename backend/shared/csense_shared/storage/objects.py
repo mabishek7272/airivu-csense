@@ -107,6 +107,14 @@ def tenant_evidence_key(tenant_id: UUID, incident_id: UUID, evidence_id: UUID, v
     return f"{tenant_id}/incidents/{incident_id}/{evidence_id}/{variant}.jpg"
 
 
+def tenant_export_key(tenant_id: UUID, export_type: str, job_id: UUID) -> str:
+    """`{tenant}/{export_type}/{job_id}.csv` in `BUCKET_EXPORTS` - the job id alone is
+    enough to make it unique; unlike a model artifact, an export isn't content-addressed
+    (two identical exports run minutes apart are two distinct, independently-expiring
+    jobs, not the same object)."""
+    return f"{tenant_id}/{export_type}/{job_id}.csv"
+
+
 def model_validation_report_key(model_version_id: UUID, run_id: UUID) -> str:
     """A validation run's full JSON report (`model_validation_runs.result_object_id`) -
     lives in the same `csense-models` bucket as the artifact it's evidence about, not a

@@ -1372,7 +1372,50 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         Console or Customer CRM UI yet - fully usable and exercised via the API and the
         e2e script.
 - [ ] SMS/web-push provider adapters — **[NEEDS HUMAN INPUT: no provider contracted]**
-- [ ] Async reports/exports with time-limited download
+- [~] Async reports/exports with time-limited download
+  - [x] `export_jobs` (migration 0050) - tenant-RLS-isolated, the same `FORCE ROW LEVEL
+        SECURITY` pattern every other tenant-owned table this session added already
+        uses. No new permission: exporting incidents you can already read is scoped by
+        the same `incident.read` the list/detail endpoints already require (migration's
+        own docstring).
+  - [x] `backend/tenant_api/app/api/exports.py` (new): `POST .../incidents` returns a
+        `queued` job immediately (202); the query + CSV build + MinIO upload runs in a
+        FastAPI `BackgroundTasks` callback, off the request path - no separate worker
+        process this deployment has anywhere to run. **A real ordering fact confirmed
+        directly against the installed FastAPI's own `routing.py`, not assumed**:
+        background tasks run *before* a dependency's post-`yield` cleanup, so the
+        request's own DB transaction is still open when the task starts - the endpoint
+        commits explicitly before scheduling the task so the freshly-inserted job row is
+        actually visible to the task's own, separate `tenant_session`.
+  - [x] `csense_shared/exports/incidents.py` (new): pure, dependency-free CSV
+        serialization (column order, `None`-to-empty-cell, UTF-8 BOM for Excel) - kept
+        out of the API module so the one part of the pipeline with real formatting logic
+        is unit-testable without a running stack, the same reasoning `cameras/health.py`
+        already established. 6 real unit tests
+        (`backend/tests/test_exports.py`).
+  - [x] Download is a presigned URL minted fresh on every `GET .../{id}`
+        (15-minute TTL, same reasoning as evidence images), gated by the job's own
+        longer-lived `expires_at` (24h after completion) - **lazily flipped to `expired`
+        on read**, the same precedent `sync_license_status` and support-grant reads
+        already established rather than a scheduled cleanup job this deployment has
+        nowhere to run.
+  - [x] Verified for real, against the live stack, not just unit-tested:
+        `scripts/e2e_exports.py` - a real tenant, real site/camera via the real API,
+        five seeded incidents, a real export job that reaches `completed` with the
+        right `row_count`, a real presigned URL that downloads real CSV bytes matching
+        every seeded incident, a status filter that narrows the export correctly, an
+        invalid filter refused (400) before any job is created, the job list ordered
+        newest-first, a bogus job id giving a real 404, and - the property that matters
+        most - a second, unrelated tenant getting a 404 (not another tenant's data) for
+        the first tenant's job id, with its own job list empty (RLS isolation, not just
+        an authorization check in application code). Full PASS. Backend: 277 passed,
+        164 skipped; `ruff check` clean.
+  - [ ] **Deliberately scoped to one export type this pass**: incidents only, as CSV.
+        The same `export_jobs`/background-task/presigned-download mechanism would cover
+        detections, audit events, or camera health history without changes - just a new
+        `export_type` and its own query-building function - named as a real, easy next
+        slice rather than silently left unconsidered. No Developer Console or Customer
+        CRM UI yet - fully usable and exercised via the API and the e2e script.
 - [x] License grace/restriction + renewal flow
   - [x] `csense_shared.licensing.lifecycle` (new): `sync_license_status` computes and
         persists `active -> grace -> expired` purely against `expires_at`/`grace_ends_at`
