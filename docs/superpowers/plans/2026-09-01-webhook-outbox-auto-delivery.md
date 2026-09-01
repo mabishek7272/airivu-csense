@@ -765,6 +765,25 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_POSTGRES_DSN"), reason="TEST_POSTGRES_DSN not set - skipping"
 )
 
+# NOTE (learned the hard way in Task 2 — do not "simplify" either of these):
+#
+#   The endpoint URL below is a public IP *literal*, not a hostname like
+#   `https://example.test/hook`. `claim_and_send_one_delivery` re-runs the real SSRF guard
+#   (`resolve_public_endpoint`) immediately before sending, and `.test` is an RFC 2606
+#   reserved TLD that by definition never resolves — `getaddrinfo` raises, the guard turns
+#   that into `BlockedAddressError`, and the delivery fails before the injected `send_fn`
+#   is ever called. A numeric host is resolved locally, so the real guard still runs and
+#   still makes no network call. (RFC 5737 documentation ranges like 192.0.2.0/24 do NOT
+#   work either — Python's `ipaddress` classifies them private, so the guard blocks them.)
+#
+#   The fixture also marks every pre-existing outbox row as already seen by this consumer.
+#   `processed_events` starts empty in any real database, so without this the whole
+#   existing outbox backlog (which fan-out selects oldest-first) fills the batch ahead of
+#   the row the test just inserted, and `assert stats["fanned"] == 1` gets a much larger
+#   number. The 24h age window added in Task 2 does NOT make this unnecessary — recent
+#   backlog sits inside the window too, which only makes the failure intermittent instead
+#   of fixing it.
+
 
 def _load_webhook_dispatch():
     path = (
@@ -815,7 +834,7 @@ async def ctx(keyring):
         ).scalar_one()
         url_secret_id = await write_secret(
             session, keyring, tenant_id=tenant_id, purpose=URL_SECRET_PURPOSE,
-            plaintext="https://example.test/hook", label="test",
+            plaintext="https://93.184.216.34/hook", label="test",
         )
         signing_secret_id = await write_secret(
             session, keyring, tenant_id=tenant_id, purpose=SIGNING_SECRET_PURPOSE,
@@ -825,9 +844,19 @@ async def ctx(keyring):
             text(
                 "INSERT INTO webhook_endpoints "
                 "(tenant_id, name, url_secret_id, url_host_display, signing_secret_id, event_filters, status) "
-                "VALUES (:t, 'Test', :url_id, 'example.test', :sig_id, :filters, 'active')"
+                "VALUES (:t, 'Test', :url_id, '93.184.216.34', :sig_id, :filters, 'active')"
             ),
             {"t": tenant_id, "url_id": url_secret_id, "sig_id": signing_secret_id, "filters": []},
+        )
+        # Everything already in the outbox is this consumer's backlog, not this test's
+        # event - mark it seen up front (exactly what the real dispatcher's first pass
+        # does) so the assertions below measure only the row inserted next.
+        await session.execute(
+            text(
+                "INSERT INTO processed_events (consumer_name, event_id) "
+                "SELECT :c, id FROM outbox_events ON CONFLICT DO NOTHING"
+            ),
+            {"c": WEBHOOK_DISPATCH_CONSUMER},
         )
         await session.execute(
             text(
@@ -1245,6 +1274,84 @@ matching the detail level and voice of this file's other completed sub-bullets.
 ```bash
 git add CHECKLIST.md
 git commit -m "CHECKLIST.md: mark webhook automatic delivery done
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: Index `outbox_events(occurred_at, id)`
+
+Added after Task 2, from its implementer's `EXPLAIN (ANALYZE, BUFFERS)` assessment of the
+real fan-out query. Not a micro-optimisation — the reasoning is that this table has **no
+retention or pruning anywhere** (confirmed against `ingest.py`, `realtime.py`, `models.py`,
+migration 0001, and the e2e scripts), so it grows monotonically, and:
+
+- The 24h cutoff added in Task 2 bounds the *result set*, not the *work*: with no index on
+  `occurred_at`, Postgres must seq-scan the whole table to evaluate the cutoff, so cost
+  tracks total table size rather than the one-day window. At a few thousand events/day
+  that's ~1M rows/year (~250 MB), re-scanned every `webhook_dispatch_poll_seconds` (10s),
+  usually to discover there is nothing new — wasted CPU and shared-buffer pressure on a
+  16-core box that `CLAUDE.md` already shows is CPU-bound.
+- `ORDER BY occurred_at LIMIT 25` currently sorts the entire in-window match set; a btree
+  lets it stop after 25 rows instead.
+- **The strongest reason is that this is not only the new consumer's query.**
+  `tenant_api/app/api/realtime.py` already runs
+  `WHERE aggregate_type = 'incident' AND (occurred_at, id) > (:since_at, :since_id) ORDER BY occurred_at, id LIMIT :limit`
+  against the same unindexed table — and it polls *per open browser tab, per tenant*, a far
+  hotter path than a 10-second worker loop. `ix_outbox_unpublished`
+  (`next_attempt_at WHERE published_at IS NULL`) serves neither query. This is pre-existing
+  debt that automatic delivery makes visible, and one index fixes both.
+
+**Files:**
+- Create: `backend/migrations/versions/0052_outbox_events_occurred_at_index.py`
+
+- [ ] **Step 1: Confirm the current head**
+
+Run: `cd backend && python -m alembic heads`
+Expected: `0051 (head)`. If not, set `down_revision` to whatever head actually is.
+
+- [ ] **Step 2: Write the migration**
+
+Create `backend/migrations/versions/0052_outbox_events_occurred_at_index.py`. It creates
+`ix_outbox_events_occurred_at` as a btree on `outbox_events (occurred_at, id)`, and its
+docstring must carry the reasoning above — specifically that it serves **two** consumers
+(the new webhook dispatcher's fan-out scan and `realtime.py`'s existing per-tab incident
+tail), that `ix_outbox_unpublished` serves neither, and that an index postpones rather than
+solves the underlying "this table has no retention policy at all" problem, which is named
+here as a real, separate decision someone should make deliberately rather than a gap nobody
+noticed. Follow the structure of any recent index-adding migration in
+`backend/migrations/versions/` for the `op.create_index`/`op.drop_index` shape.
+
+- [ ] **Step 3: Apply and verify it is actually used**
+
+Run: `cd backend && python -m alembic upgrade head`
+Expected: `Running upgrade 0051 -> 0052`.
+
+Then confirm the planner really uses it — this is the point of the task, so verify rather
+than assume:
+```bash
+docker exec csense-postgres-1 psql -U csense_app -d csense -c "EXPLAIN (ANALYZE) SELECT e.id FROM outbox_events e WHERE e.tenant_id IS NOT NULL AND e.occurred_at > now() - interval '24 hours' AND NOT EXISTS (SELECT 1 FROM processed_events p WHERE p.consumer_name = 'webhook_dispatcher' AND p.event_id = e.id) ORDER BY e.occurred_at LIMIT 25;"
+```
+Note honestly in your report what the planner actually chose. At this table's current tiny
+row count Postgres may still legitimately prefer a seq scan (that is correct behaviour for
+a small table, not a failed index) — if so, say that explicitly rather than claiming a win
+the output doesn't show, and confirm the index exists via `\di ix_outbox_events_occurred_at`.
+
+- [ ] **Step 4: Full suite + ruff, then commit**
+
+Run: `cd backend && python -m pytest -q && ruff check backend scripts` (from repo root for ruff)
+
+```bash
+git add backend/migrations/versions/0052_outbox_events_occurred_at_index.py
+git commit -m "Migration 0052: index outbox_events(occurred_at, id)
+
+Serves two consumers, not one: automatic webhook delivery's fan-out scan (added this
+pass) and realtime.py's existing per-tab incident tail, which has been running against
+an unindexed, never-pruned table since it shipped. ix_outbox_unpublished
+(next_attempt_at WHERE published_at IS NULL) serves neither. Names the underlying
+retention question - outbox_events has no pruning anywhere - as a real decision still
+to be made rather than a gap nobody noticed.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
