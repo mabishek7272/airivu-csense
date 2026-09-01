@@ -1170,6 +1170,7 @@ async def issue_command(
         tenant_id=context.tenant_id,
         actor_type="user",
         actor_id=str(context.user_id),
+        support_grant_id=context.support_grant_id,
         action="edge.command.issue",
         outcome="success",
         target_type="edge_device",

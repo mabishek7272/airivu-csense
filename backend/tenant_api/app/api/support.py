@@ -111,6 +111,7 @@ async def revoke_support_grant(
         tenant_id=context.tenant_id,
         actor_type="user",
         actor_id=str(context.user_id),
+        support_grant_id=context.support_grant_id,
         action="support_grant.revoke",
         outcome="success",
         target_type="support_grant",
