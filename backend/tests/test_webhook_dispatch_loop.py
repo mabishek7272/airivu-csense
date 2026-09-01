@@ -150,7 +150,7 @@ async def test_run_once_fans_out_and_sends(ctx, keyring, monkeypatch):
     # test_webhook_dispatcher.py already covers in isolation).
     module = _load_webhook_dispatch()
 
-    async def fake_http_post(url, body, headers):
+    async def fake_http_post(pinned, body, headers):
         return 200, 7
 
     monkeypatch.setattr(module, "_http_post", fake_http_post)
@@ -173,7 +173,7 @@ async def test_run_once_fans_out_and_sends(ctx, keyring, monkeypatch):
 async def test_run_once_is_a_no_op_pass_when_nothing_is_due(ctx, keyring, monkeypatch):
     module = _load_webhook_dispatch()
 
-    async def fake_http_post(url, body, headers):
+    async def fake_http_post(pinned, body, headers):
         return 200, 1
 
     monkeypatch.setattr(module, "_http_post", fake_http_post)
@@ -181,3 +181,4 @@ async def test_run_once_is_a_no_op_pass_when_nothing_is_due(ctx, keyring, monkey
     await module.run_once(ctx["factory"], keyring, batch_size=10)  # drains the one seeded event
     stats = await module.run_once(ctx["factory"], keyring, batch_size=10)
     assert stats == {"fanned": 0, "sent": 0}
+

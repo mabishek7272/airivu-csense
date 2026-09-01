@@ -16,6 +16,7 @@ once built; nothing here is a stub that would need replacing.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import secrets
@@ -35,6 +36,7 @@ from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
 from csense_shared.security.outbound import BlockedAddressError, resolve_public_endpoint
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.pinned_http import post_pinned, resolve_pinned_endpoint
 from csense_shared.security.secret_store import delete_secret, read_secret, write_secret
 from csense_shared.security.tenant_context import TenantContext
 from csense_shared.security.webhooks import SIGNING_SECRET_PURPOSE, URL_SECRET_PURPOSE, sign_payload
@@ -112,7 +114,12 @@ async def create_webhook(
 
     hostname, port, url = _validate_and_split_url(body.url)
     try:
-        resolve_public_endpoint(hostname, port)
+        # Validation only - nothing is connected to here, so there is no address to keep.
+        # On a thread all the same: `socket.getaddrinfo` blocks with no timeout of its own,
+        # and a tenant naming a host whose DNS server never answers would otherwise hold
+        # this worker's whole event loop - every other request it is serving included -
+        # until the resolver gave up.
+        await asyncio.to_thread(resolve_public_endpoint, hostname, port)
     except BlockedAddressError as exc:
         raise ApiError(status_code=422, code="address_not_permitted", message=str(exc)) from exc
 
@@ -330,11 +337,15 @@ async def test_webhook(
         )
     ).decode()
 
-    hostname, port, _ = _validate_and_split_url(url)
+    _validate_and_split_url(url)
     try:
-        # Confirms the destination is still a public address right before connecting -
-        # see this endpoint's own docstring for why a fresh check matters here.
-        resolve_public_endpoint(hostname, port)
+        # Confirms the destination is still a public address right before connecting - see
+        # this endpoint's own docstring for why a fresh check matters here - and *keeps*
+        # the approved addresses, so the POST below dials one of them instead of letting
+        # httpx resolve the name a second time. Between those two lookups sits the DNS
+        # rebinding window `csense_shared.security.outbound` exists to close: the same
+        # name answers publicly for the check and privately for the connect.
+        pinned = await resolve_pinned_endpoint(url)
     except BlockedAddressError as exc:
         raise ApiError(status_code=422, code="address_not_permitted", message=str(exc)) from exc
 
@@ -355,17 +366,17 @@ async def test_webhook(
     started = time.monotonic()
 
     try:
-        async with httpx.AsyncClient(timeout=TEST_REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                content=body_bytes,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-CSense-Signature": signature,
-                    "X-CSense-Delivery-Id": str(delivery_id),
-                    "X-CSense-Event": "webhook.test",
-                },
-            )
+        response = await post_pinned(
+            pinned,
+            content=body_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "X-CSense-Signature": signature,
+                "X-CSense-Delivery-Id": str(delivery_id),
+                "X-CSense-Event": "webhook.test",
+            },
+            timeout=TEST_REQUEST_TIMEOUT,
+        )
         response_time_ms = int((time.monotonic() - started) * 1000)
         response_status = response.status_code
         delivered = 200 <= response.status_code < 300

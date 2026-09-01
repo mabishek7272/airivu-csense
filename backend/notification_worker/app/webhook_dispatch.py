@@ -22,6 +22,7 @@ import httpx
 from sqlalchemy import text
 
 from csense_shared.security.envelope import KeyRing
+from csense_shared.security.pinned_http import PinnedEndpoint, post_pinned
 from csense_shared.webhooks.dispatcher import claim_and_send_one_delivery, fan_out_due_outbox_events
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,11 @@ logger = logging.getLogger(__name__)
 SEND_REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 
-async def _http_post(url: str, body: bytes, headers: dict[str, str]) -> tuple[int, int]:
+async def _http_post(pinned: PinnedEndpoint, body: bytes, headers: dict[str, str]) -> tuple[int, int]:
+    """Sends to the address the dispatcher's SSRF guard already validated, never to a name
+    httpx would resolve for itself - see `csense_shared.security.pinned_http`."""
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=SEND_REQUEST_TIMEOUT) as client:
-        response = await client.post(url, content=body, headers=headers)
+    response = await post_pinned(pinned, content=body, headers=headers, timeout=SEND_REQUEST_TIMEOUT)
     return response.status_code, int((time.monotonic() - started) * 1000)
 
 

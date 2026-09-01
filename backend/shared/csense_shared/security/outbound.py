@@ -25,7 +25,10 @@ fixed list, because it depends on how the host is networked.
 **Resolution happens here, and the resolved address is what gets connected to.** Checking
 the hostname and then handing the name to a connect call leaves a DNS rebinding window:
 the name resolves to a public address for the check and a private one microseconds later.
-Callers use `resolve_public_endpoint` and dial the returned IP.
+Callers use `resolve_public_endpoint` and dial the returned IP. For HTTPS that is not
+simply "swap the host for the IP" - the certificate must still be verified against the
+real hostname - so `csense_shared.security.pinned_http` wraps this module for that case
+rather than leaving each caller to get the TLS identity right on its own.
 """
 from __future__ import annotations
 

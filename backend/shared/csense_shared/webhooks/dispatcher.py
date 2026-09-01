@@ -20,14 +20,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Awaitable, Callable
-from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from csense_shared.security.envelope import EnvelopeError, KeyRing
-from csense_shared.security.outbound import BlockedAddressError, resolve_public_endpoint
+from csense_shared.security.outbound import BlockedAddressError
+from csense_shared.security.pinned_http import PinnedEndpoint, resolve_pinned_endpoint
 from csense_shared.security.secret_store import read_secret
 from csense_shared.security.webhooks import SIGNING_SECRET_PURPOSE, URL_SECRET_PURPOSE, sign_payload
 
@@ -47,7 +47,11 @@ MAX_DELIVERY_ATTEMPTS = len(RETRY_BACKOFF_MINUTES) + 1  # the first attempt, plu
 # and `csense_shared.notifications.dispatcher`'s own MAX_DELAY_SECONDS already are.
 DEFAULT_MAX_EVENT_AGE_SECONDS = 24 * 60 * 60
 
-SendFn = Callable[[str, bytes, dict[str, str]], Awaitable[tuple[int, int]]]
+# Takes a `PinnedEndpoint` rather than a URL string on purpose: the destination this
+# module hands its sender is one the SSRF guard has already resolved and approved, so no
+# sender - real or injected by a test - is in a position to re-resolve the hostname and
+# land somewhere else. See `csense_shared.security.pinned_http`.
+SendFn = Callable[[PinnedEndpoint, bytes, dict[str, str]], Awaitable[tuple[int, int]]]
 
 
 async def fan_out_due_outbox_events(
@@ -147,13 +151,6 @@ async def fan_out_due_outbox_events(
         fanned += 1
 
     return fanned
-
-
-def _split_https_url(url: str) -> tuple[str, int]:
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        raise ValueError("Stored webhook URL has no hostname.")
-    return parsed.hostname, parsed.port or 443
 
 
 async def _fail_or_abandon(
@@ -269,8 +266,14 @@ async def claim_and_send_one_delivery(
         )
 
     try:
-        hostname, port = _split_https_url(url)
-        resolve_public_endpoint(hostname, port)
+        # Resolve *and keep* the approved addresses: `send_fn` is handed the pinned
+        # endpoint, never the URL, so the address that passed this check is the address
+        # the socket lands on. Handing the hostname onward instead would re-resolve at
+        # connect time and reopen the DNS-rebinding window `outbound.py`'s own docstring
+        # describes. The lookup runs on a thread inside `resolve_pinned_endpoint` because
+        # a blocking getaddrinfo here would stall the alert-dispatch loop sharing this
+        # event loop - see that function.
+        pinned = await resolve_pinned_endpoint(url)
     except (ValueError, BlockedAddressError) as exc:
         return await _fail_or_abandon(
             session, delivery_id, attempt_number, f"Address no longer permitted: {exc}", now=moment
@@ -286,7 +289,7 @@ async def claim_and_send_one_delivery(
     }
 
     try:
-        status_code, elapsed_ms = await send_fn(url, body_bytes, headers)
+        status_code, elapsed_ms = await send_fn(pinned, body_bytes, headers)
     except Exception as exc:  # noqa: BLE001 - any transport failure is retryable, not a crash
         return await _fail_or_abandon(session, delivery_id, attempt_number, str(exc), now=moment)
 

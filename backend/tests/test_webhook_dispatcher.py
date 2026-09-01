@@ -174,7 +174,9 @@ async def _insert_outbox_event_at(ctx, occurred_at: dt.datetime) -> uuid.UUID:
 
 
 async def _fake_send(status_code: int, elapsed_ms: int = 42):
-    async def send_fn(url, body, headers):
+    # The first argument is a `PinnedEndpoint`, not a URL - the dispatcher resolves and
+    # validates the destination itself and hands the sender only the approved addresses.
+    async def send_fn(pinned, body, headers):
         return status_code, elapsed_ms
     return send_fn
 
@@ -366,7 +368,7 @@ async def test_disabled_endpoint_abandons_the_delivery_without_sending(ctx, keyr
 
     called = False
 
-    async def send_fn(url, body, headers):
+    async def send_fn(pinned, body, headers):
         nonlocal called
         called = True
         return 200, 1
@@ -376,6 +378,40 @@ async def test_disabled_endpoint_abandons_the_delivery_without_sending(ctx, keyr
         status = await claim_and_send_one_delivery(session, keyring=keyring, send_fn=send_fn)
     assert status == "abandoned"
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_the_sender_is_handed_the_validated_address_not_the_hostname(ctx, keyring):
+    """The rebinding half of the SSRF guard, asserted where it is actually load-bearing:
+    `send_fn` must receive something that can only reach the address the guard just
+    approved. Handing it the URL would let httpx resolve the name a second time, and a
+    name that answered publicly for the check can answer privately for the connect - the
+    exact window `csense_shared.security.outbound`'s docstring exists to close."""
+    await _insert_outbox_event(ctx)
+    async with ctx["factory"]() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.is_platform', 'true', true)"))
+        await fan_out_due_outbox_events(session, limit=25)
+
+    seen = {}
+
+    async def send_fn(pinned, body, headers):
+        seen["urls"] = pinned.urls
+        seen["hostname"] = pinned.hostname
+        seen["host_header"] = pinned.headers["Host"]
+        seen["sni"] = pinned.extensions["sni_hostname"]
+        return 200, 3
+
+    async with ctx["factory"]() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.is_platform', 'true', true)"))
+        await claim_and_send_one_delivery(session, keyring=keyring, send_fn=send_fn)
+
+    # The fixture's endpoint is a literal, so the validated address and the configured
+    # host are the same string - what is being pinned down is that the *addresses* are
+    # what travel to the sender, and that the hostname survives for Host and SNI.
+    assert seen["urls"] == ("https://93.184.216.34:443/hook",)
+    assert seen["hostname"] == "93.184.216.34"
+    assert seen["host_header"] == "93.184.216.34"
+    assert seen["sni"] == "93.184.216.34"
 
 
 @pytest.mark.asyncio
