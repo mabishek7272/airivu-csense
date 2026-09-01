@@ -1313,6 +1313,26 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         `support_grant_id` in their response model yet - named below) to carry the
         approving grant's own id. Full PASS against the live stack. `ruff check backend
         scripts` clean.
+  - [x] **Dangerous scopes refused at request time**: a final holistic review of this
+        whole feature (not any single task's own review) surfaced a real gap -
+        `requested_scopes` was never checked against permission codes that let an
+        elevated, *temporary, revocable* session mint **persistent** access outliving the
+        grant itself. `membership.manage` (can promote to `tenant_owner`),
+        `api_client.manage` (a new long-lived API credential), `webhook.manage` (a new
+        outbound data-delivery destination), `reseller.manage_children` (a whole new
+        tenant), and `support.revoke` (ending a *different* developer's own active grant
+        on the same tenant) are now refused with `422` by
+        `reject_dangerous_scopes()`/`DANGEROUS_SUPPORT_SCOPES` in
+        `backend/admin_api/app/api/support.py`, called from `request_support_grant`
+        immediately after `require_permission(context, "support.request")` - **before**
+        the grant row is even created, so a dangerous request never reaches a peer for
+        approval at all (not merely "the elevated session couldn't do anything with it"
+        later, at elevation time). Verified for real: `scripts/
+        e2e_support_grant_authorization.py` requests `["membership.manage"]` and asserts
+        the request itself is refused with `422`. Full PASS against the live stack
+        (`admin_api` rebuilt); `backend/tests/test_support_grants_dangerous_scopes.py`
+        (7 tests, pure function, no DB) plus the full backend suite and `ruff check
+        admin_api shared tests` both clean.
   - [ ] **Deliberately deferred, stated plainly**: `support_grant_id` exists on
         `audit_events` and is now populated for real, but neither `AuditEventOut`
         (tenant_api) nor its admin-side equivalent surfaces that column in their response

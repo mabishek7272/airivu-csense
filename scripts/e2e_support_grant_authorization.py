@@ -12,7 +12,10 @@ and the tenant's own audit trail carrying support_grant_id for a write taken und
 grant (audit.py's read models don't expose that column over HTTP, so that last assertion
 confirms it directly in Postgres, keyed off the row the tenant's own audit-events call
 already found - the tenant-facing verification the plan's own Task 6 asks for, plus the
-DB-level proof that Task 5's threading actually reached a real request).
+DB-level proof that Task 5's threading actually reached a real request). Also covers this
+plan's own Addendum Task 8: a request naming a dangerous scope (one that would let this
+same elevated mechanism mint persistent access outliving the grant) is refused with 422
+at request time, before a grant row even exists for a peer to approve.
 
     python scripts/e2e_support_grant_authorization.py
 """
@@ -161,7 +164,20 @@ def main() -> int:
     dev_a_email, _dev_a_id, dev_a_token = bootstrap_platform_admin("a")
     _dev_b_email, _dev_b_id, dev_b_token = bootstrap_platform_admin("b")
 
-    step(4, "Developer A requests a grant against the tenant (incident.read + incident.acknowledge, so both the elevated read and the elevated write proofs below use one real grant)")
+    step(4, "A grant requesting a dangerous scope (membership.manage) is refused at request time (422) - it must never even be created")
+    status, dangerous = api(
+        "/api/v1/admin/support-grants",
+        {
+            "tenant_id": tenant_id, "ticket_reference": f"TICKET-{suffix}-dangerous",
+            "purpose": "Attempting to request a scope that would mint persistent access.",
+            "requested_scopes": ["membership.manage"], "ttl_hours": 8,
+        },
+        dev_a_token, host="console.localhost", expect=(422,),
+    )
+    check(status == 422, "dangerous scope refused with 422, not merely inert once elevated", failures)
+    check("membership.manage" in dangerous.get("message", ""), "the error names the offending scope", failures)
+
+    step(5, "Developer A requests a grant against the tenant (incident.read + incident.acknowledge, so both the elevated read and the elevated write proofs below use one real grant)")
     status, requested = api(
         "/api/v1/admin/support-grants",
         {
@@ -174,63 +190,63 @@ def main() -> int:
     check(status == 201 and requested["status"] == "requested", "grant created, awaiting approval", failures)
     grant_id = requested["id"]
 
-    step(5, "Before approval: the elevated call is refused (401) - an unapproved grant does not elevate")
+    step(6, "Before approval: the elevated call is refused (401) - an unapproved grant does not elevate")
     status, _ = elevated_incidents_call(dev_a_token, tenant_id, expect=(401,))
     check(status == 401, "no active grant yet -> 401", failures)
 
-    step(6, "Developer B, a real peer, approves it - and it becomes active")
+    step(7, "Developer B, a real peer, approves it - and it becomes active")
     status, approved = api(
         f"/api/v1/admin/support-grants/{grant_id}/approve", token=dev_b_token, host="console.localhost", expect=(200,),
     )
     check(status == 200 and approved["status"] == "active", "approved by a peer -> active", failures)
 
-    step(7, "Developer A's platform token + X-CSense-Support-Tenant-Id now reads the tenant's real incident data")
+    step(8, "Developer A's platform token + X-CSense-Support-Tenant-Id now reads the tenant's real incident data")
     status, page = elevated_incidents_call(dev_a_token, tenant_id, expect=(200,))
     check(status == 200, "elevated call succeeds (200)", failures)
     returned_ids = {item["id"] for item in page.get("items", [])}
     check(incident_id in returned_ids, "the seeded incident is actually present in the response body", failures)
 
-    step(8, "The identical call without X-CSense-Support-Tenant-Id is refused (401)")
+    step(9, "The identical call without X-CSense-Support-Tenant-Id is refused (401)")
     status, _ = elevated_incidents_call(dev_a_token, None, expect=(401,))
     check(status == 401, "missing header -> 401", failures)
 
-    step(9, "The identical call naming a different, unrelated tenant is refused (401) - the grant only names one tenant")
+    step(10, "The identical call naming a different, unrelated tenant is refused (401) - the grant only names one tenant")
     status, _ = elevated_incidents_call(dev_a_token, other_tenant_id, expect=(401,))
     check(status == 401, "wrong tenant id -> 401, even for the same developer/grant", failures)
 
-    step(10, "Developer A performs a real elevated WRITE (acknowledge) under the active grant")
+    step(11, "Developer A performs a real elevated WRITE (acknowledge) under the active grant")
     status, ack = api(
         f"/api/v1/tenant/incidents/{incident_id}/acknowledge", {"reason": "Support investigation."},
         token=dev_a_token, extra_headers={"X-CSense-Support-Tenant-Id": tenant_id}, expect=(200,),
     )
     check(status == 200 and ack.get("status") == "acknowledged", "the elevated write succeeds", failures)
 
-    step(11, "The tenant's own audit trail (their own real customer login) shows the action")
+    step(12, "The tenant's own audit trail (their own real customer login) shows the action")
     _, audit_page = api(
         "/api/v1/tenant/audit-events?action=incident.acknowledged", token=owner_token, method="GET",
     )
     audit_row = next((e for e in audit_page.get("items", []) if e["target_id"] == incident_id), None)
     check(audit_row is not None, "the tenant's own audit trail contains this action", failures)
 
-    step(12, "That audit row's own support_grant_id column equals this grant's id - Task 5's threading reached a real request")
+    step(13, "That audit row's own support_grant_id column equals this grant's id - Task 5's threading reached a real request")
     if audit_row is not None:
         actual_grant_id = psql(f"SELECT support_grant_id FROM audit_events WHERE id = '{audit_row['id']}'")
         check(actual_grant_id == grant_id, f"audit row carries support_grant_id={grant_id!r} (got {actual_grant_id!r})", failures)
     else:
         check(False, "audit row's support_grant_id (skipped - no audit row found)", failures)
 
-    step(13, "Developer B revokes the grant")
+    step(14, "Developer B revokes the grant")
     status, revoked = api(
         f"/api/v1/admin/support-grants/{grant_id}/revoke",
         {"reason": "Investigation complete."}, dev_b_token, host="console.localhost", expect=(200,),
     )
     check(status == 200 and revoked["status"] == "revoked", "the grant is revoked", failures)
 
-    step(14, "Elevation stops immediately - the same elevated read call now fails (401), not merely 'eventually'")
+    step(15, "Elevation stops immediately - the same elevated read call now fails (401), not merely 'eventually'")
     status, _ = elevated_incidents_call(dev_a_token, tenant_id, expect=(401,))
     check(status == 401, "revoked grant no longer elevates -> 401", failures)
 
-    step(15, "Clean up")
+    step(16, "Clean up")
     psql(f"DELETE FROM tenants WHERE id IN ('{tenant_id}', '{other_tenant_id}')")
     psql(f"DELETE FROM organizations WHERE display_name IN "
          f"('Support Grant Auth E2E {suffix}', 'Support Grant Auth E2E Other {suffix}')")
@@ -248,9 +264,10 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print(
-        "PASS - support-grant elevation grants real access, refuses without the header, refuses before "
-        "approval, refuses for a wrong tenant, stops immediately on revoke, and the audit trail carries "
-        "support_grant_id for a real elevated write"
+        "PASS - a dangerous requested scope is refused at request time (422), support-grant elevation "
+        "grants real access, refuses without the header, refuses before approval, refuses for a wrong "
+        "tenant, stops immediately on revoke, and the audit trail carries support_grant_id for a real "
+        "elevated write"
     )
     return 0
 

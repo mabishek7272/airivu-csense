@@ -36,6 +36,40 @@ router = APIRouter(prefix="/api/v1/admin/support-grants", tags=["admin-support"]
 DEFAULT_TTL_HOURS = 8
 MAX_TTL_HOURS = 7 * 24
 
+# Codes that must never appear in a support grant's requested_scopes: each one lets an
+# elevated, temporary, revocable session mint something that outlives the grant itself -
+# a new member (membership.manage can promote to tenant_owner), a new long-lived API
+# credential (api_client.manage), a new outbound data-delivery destination
+# (webhook.manage), a whole new tenant (reseller.manage_children), or the ability to end
+# a *different* platform developer's own active session on the same tenant
+# (support.revoke - RLS scopes that route by tenant, not by whose grant it is). A support
+# session may read and act on a tenant's own operational data; it may never expand or
+# manage who/what has standing access to that tenant. Confirmed against every
+# customer-audience permission code with a real require_permission() call site in
+# tenant_api - see this project's support-grant-authorization plan doc for the survey.
+DANGEROUS_SUPPORT_SCOPES = frozenset({
+    "membership.manage",
+    "api_client.manage",
+    "webhook.manage",
+    "reseller.manage_children",
+    "support.revoke",
+})
+
+
+def reject_dangerous_scopes(requested_scopes: list[str]) -> None:
+    found = sorted(set(requested_scopes) & DANGEROUS_SUPPORT_SCOPES)
+    if found:
+        raise ApiError(
+            status_code=422,
+            code="dangerous_support_scope",
+            message=(
+                "This support grant cannot request "
+                f"{', '.join(found)} - these permissions let an elevated session create "
+                "access that would outlive the grant itself. Use a normal tenant "
+                "membership or credential for anything that needs to persist."
+            ),
+        )
+
 
 class SupportGrantOut(BaseModel):
     id: str
@@ -120,6 +154,7 @@ async def request_support_grant(
     db: AsyncSession = Depends(platform_db_session),
 ) -> SupportGrantOut:
     require_permission(context, "support.request")
+    reject_dangerous_scopes(body.requested_scopes)
 
     tenant_row = (await db.execute(text("SELECT 1 FROM tenants WHERE id = :t"), {"t": body.tenant_id})).first()
     if tenant_row is None:
