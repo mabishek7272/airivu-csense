@@ -51,7 +51,20 @@ identical strings to decrypt the same secrets.
 
 ---
 
-### Task 2: `csense_shared/webhooks/dispatcher.py` — fan-out and send, real-DB tested
+### Task 2: `csense_shared/webhooks/dispatcher.py` — fan-out and send, real-DB tested — ✅ DONE (commit `8e57df9`)
+
+> **Shipped with four deliberate corrections to the draft below — the code is the truth,
+> this section is kept for its reasoning.** (1) The fixture stores a public IP *literal*,
+> not `https://example.test/hook`: `.test` never resolves, so the real SSRF re-check
+> rejected every delivery before the injected `send_fn` ran — which had also made the
+> retry test pass for the wrong reason. (2) The fixture marks the pre-existing outbox
+> backlog as already seen by this consumer, or that backlog (selected oldest-first) fills
+> the batch ahead of the test's own event. (3) `_fail_or_abandon` now returns the status
+> the row actually holds and callers propagate it, resolving a contradiction between the
+> draft's implementation (returned `"failed"` after abandoning) and its own test. (4) A
+> `max_event_age_seconds` window (24h, `Settings.webhook_dispatch_max_event_age_seconds`)
+> bounds fan-out, so a first deploy never blasts a database's whole outbox history at a
+> new endpoint — 11 tests, not 9.
 
 The testable core, mirroring `csense_shared.notifications.dispatcher`'s own placement and
 style exactly (a top-level `webhooks` package alongside `notifications`, both siblings of
