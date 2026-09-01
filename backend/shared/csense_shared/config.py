@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     notification_poll_seconds: float = 5.0
     notification_batch_size: int = 25
 
+    # Webhook auto-delivery, run as a second loop inside the same notification-worker
+    # container (see notification_worker/app/webhook_dispatch.py). A longer interval than
+    # notification_poll_seconds is fine here: a webhook is a developer-facing integration,
+    # not a life-safety alert, and outbound HTTP to an arbitrary third party should not be
+    # attempted as tightly as an internal DB claim query.
+    webhook_dispatch_poll_seconds: float = 10.0
+    webhook_dispatch_batch_size: int = 25
+
     # How old an outbox event may be and still be worth delivering as a webhook. Bounds
     # two real cases with one rule: on first deploy the entire pre-existing outbox history
     # is outside the window, so a brand-new endpoint is never blasted with months of past
