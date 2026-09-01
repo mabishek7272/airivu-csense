@@ -1244,7 +1244,7 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 - [ ] Edge encrypted offline spool, reconnect cursor, batch resync, dedup
 - [ ] WireGuard/relay integration design + time-limited diagnostic access
-- [~] Support grant request/approve/active-banner/expiry/revoke + audit
+- [x] Support grant request/approve/active-banner/expiry/revoke + authorization + audit
   - [x] `support_grants` (SCH §5.10, previously spec'd but never built - migration 0043).
         `support_grant_id` had already existed on `TenantContext`/`PlatformContext` and
         `record_audit_and_outbox` since early in this build, with nothing to populate it
@@ -1279,16 +1279,51 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         (an active grant past `expires_at` flips to `expired` in the database on the very
         next read, not merely hidden). Full PASS, first run. `npm run typecheck`/`lint`/
         `build` clean; the running container confirmed serving `200` afterward.
-  - [ ] **Deliberately deferred, stated plainly**: this ships the full request/approve/
-        active-banner/expiry/revoke lifecycle and its audit trail - not yet the
-        *authorization* half (actually elevating a real access token's reach using an
-        active grant's `support_grant_id`, so a platform developer's session genuinely
-        gains the tenant access the grant approved). That's a materially bigger, riskier
-        change to the core token/auth layer that deserves its own dedicated pass, not a
-        side effect of building the governance workflow around it. No Developer Console
-        UI yet either (request/approve/deny/revoke are exercised for real by the e2e
-        script and are fully usable via the API - just no dialog-driven page in front of
-        them this pass).
+  - [x] **Authorization**: an active grant now genuinely elevates a platform developer's
+        request into real tenant data access - the deferred half above, closed in a
+        dedicated pass rather than as a side effect of the governance workflow. Migration
+        0051 adds `support_grant_lookup()`, a narrow `SECURITY DEFINER` function (mirrors
+        `csense_active_membership_for_user()` migration 0005 and `edge_vpn_pool_snapshot()`
+        migration 0029) callable from a `bootstrap_session()` before any tenant RLS context
+        exists - it returns an active, unexpired grant's id plus its `requested_scopes`
+        intersected against real `customer`-audience-grantable permission codes (honoring
+        `role_permissions.effect = 'allow'`, not a raw echo of whatever the developer typed
+        at request time). `csense_shared.security.support_elevation.elevate_from_grant`
+        wraps that call for direct testability (7 real-DB tests). `current_tenant_context`
+        (`backend/tenant_api/app/deps.py`) - the single choke point all 22 of tenant_api's
+        tenant-scoped routes already depend on - now also accepts a `csense-platform`
+        audience token paired with `X-CSense-Support-Tenant-Id` and a real active grant,
+        building a `TenantContext` whose `permissions` come **only** from the grant's own
+        scopes (never the developer's ambient platform permissions) and whose
+        `membership_id` is `None` (widened to `UUID | None` - no real memberships row
+        exists for a platform developer acting against a tenant they don't belong to).
+        Every existing tenant-scoped route picks this up with **zero changes of its own** -
+        `require_permission()` is a plain set-membership check against whatever
+        `context.permissions` holds. `support_grant_id` is now threaded through all 17
+        `record_audit_and_outbox` call sites in `tenant_api/app/api/` (`None` for every
+        ordinary customer action, unchanged; populated only under an elevated context) -
+        the represented-actor audit trail this feature's own governance half always
+        anticipated (`audit_events.support_grant_id`, migration 0001) is now real.
+  - [x] Verified for real: `scripts/e2e_support_grant_authorization.py` - a real elevated
+        read actually returns the seeded tenant's real incident data (not just a 200), the
+        same call refused (401) with no header, before approval, and for a different
+        tenant's id; revoking a grant refuses the identical elevated call immediately
+        (not eventually); and a real elevated write's own audit row is confirmed (via a
+        direct DB read, since neither the tenant nor platform audit-read endpoints expose
+        `support_grant_id` in their response model yet - named below) to carry the
+        approving grant's own id. Full PASS against the live stack. `ruff check backend
+        scripts` clean.
+  - [ ] **Deliberately deferred, stated plainly**: `support_grant_id` exists on
+        `audit_events` and is now populated for real, but neither `AuditEventOut`
+        (tenant_api) nor its admin-side equivalent surfaces that column in their response
+        models yet - a tenant (or platform operator) reading their own audit trail via the
+        API cannot currently see *which* support grant touched a given row, only that some
+        action happened; the e2e script proves the column is correct by reading the
+        database directly rather than through the API for this reason. A small, contained
+        follow-up (add the field to both response models) - named rather than silently
+        left unconsidered, per this file's own discipline. No Developer Console UI for any
+        of the support-grant lifecycle yet either, authorization included - the same
+        deferral the governance half above already named.
 - [x] Scoped API keys, rate limits, usage metering, developer API docs
   - [x] `api_clients`/`api_keys` (SCH §10.5, previously spec'd but never built - migration
         0047). Tenant-owned only this pass (SCH's `tenant_id null` implies a future

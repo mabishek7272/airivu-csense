@@ -106,3 +106,17 @@ async def test_tickets_from_different_tenants_do_not_collide(redis_client, test_
 
     assert resolved_a.tenant_id == a.tenant_id
     assert resolved_b.tenant_id == b.tenant_id
+
+
+async def test_a_context_with_no_membership_id_is_refused_loudly(redis_client, test_settings):
+    # A support-grant-elevated context (csense_shared.security.support_elevation) has no
+    # real memberships row - membership_id is None. Nothing routes such a context here
+    # today, but if it ever does, this must fail loudly at mint time rather than silently
+    # producing a ticket that later fails to parse as "None" at consume time.
+    elevated = TenantContext(
+        tenant_id=uuid.uuid4(), user_id=uuid.uuid4(), membership_id=None,
+        token_audience="csense-platform", permissions=frozenset({"incident.read"}),
+        support_grant_id=uuid.uuid4(),
+    )
+    with pytest.raises(ValueError, match="membership_id"):
+        await create_ws_ticket(redis_client, test_settings, context=elevated)

@@ -34,6 +34,14 @@ def _ticket_key(settings: Settings, ticket: str) -> str:
 async def create_ws_ticket(
     redis_client: redis.Redis, settings: Settings, *, context: TenantContext
 ) -> str:
+    if context.membership_id is None:
+        # A support-grant-elevated context (csense_shared.security.support_elevation) has
+        # no real memberships row, so it has nothing valid to put here. Nothing routes an
+        # elevated session to this function today, but failing loudly here beats the
+        # alternative: the ticket would otherwise silently serialize the literal string
+        # "None", which consume_ws_ticket then fails to parse as a UUID and treats as a
+        # missing/expired ticket - a confusing dead end instead of a clear rejection.
+        raise ValueError("Cannot mint a WebSocket ticket for a context with no membership_id.")
     ticket = secrets.token_urlsafe(32)
     payload = json.dumps(
         {
