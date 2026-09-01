@@ -66,7 +66,8 @@ async def test_a_dying_webhook_loop_is_swallowed_so_alert_dispatch_survives(monk
     await asyncio.gather(
         alert_loop(),
         main._webhook_dispatch_never_takes_alerts_down_with_it(
-            object(), object(), interval_seconds=1.0, batch_size=1, stop=asyncio.Event()
+            object(), object(), interval_seconds=1.0, batch_size=1,
+            max_event_age_seconds=60.0, stop=asyncio.Event(),
         ),
     )
 
@@ -88,7 +89,8 @@ async def test_cancellation_still_propagates_so_shutdown_works(monkeypatch):
 
     with pytest.raises(asyncio.CancelledError):
         await main._webhook_dispatch_never_takes_alerts_down_with_it(
-            object(), object(), interval_seconds=1.0, batch_size=1, stop=asyncio.Event()
+            object(), object(), interval_seconds=1.0, batch_size=1,
+            max_event_age_seconds=60.0, stop=asyncio.Event(),
         )
 
 
@@ -104,7 +106,8 @@ async def test_a_healthy_webhook_loop_returns_normally(monkeypatch):
     monkeypatch.setattr(main.webhook_dispatch, "run_forever", clean_run_forever)
 
     await main._webhook_dispatch_never_takes_alerts_down_with_it(
-        object(), object(), interval_seconds=1.0, batch_size=1, stop=asyncio.Event()
+        object(), object(), interval_seconds=1.0, batch_size=1,
+            max_event_age_seconds=60.0, stop=asyncio.Event(),
     )
 
     assert ran

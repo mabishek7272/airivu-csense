@@ -182,3 +182,40 @@ async def test_run_once_is_a_no_op_pass_when_nothing_is_due(ctx, keyring, monkey
     stats = await module.run_once(ctx["factory"], keyring, batch_size=10)
     assert stats == {"fanned": 0, "sent": 0}
 
+
+@pytest.mark.asyncio
+async def test_a_configured_age_window_actually_reaches_the_fan_out_query(ctx, keyring, monkeypatch):
+    """`Settings.webhook_dispatch_max_event_age_seconds` is only real if it survives the
+    trip main.py -> run_forever -> run_once -> fan_out_due_outbox_events. It did not: the
+    loop took no such argument, so fan-out silently fell back to its own module default and
+    an operator tuning the env var would have seen no effect at all. A knob that quietly
+    does nothing is worse than no knob, so the wiring is asserted rather than assumed.
+
+    The seeded event is aged by a minute and offered a ten-second window: it must be
+    excluded, and then included again under the default window, so the assertion measures
+    the parameter rather than some unrelated reason for fanning out nothing.
+    """
+    module = _load_webhook_dispatch()
+
+    async def fake_http_post(pinned, body, headers):
+        return 200, 1
+
+    monkeypatch.setattr(module, "_http_post", fake_http_post)
+
+    async with ctx["factory"]() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.is_platform', 'true', true)"))
+        await session.execute(
+            text(
+                "UPDATE outbox_events SET occurred_at = now() - interval '60 seconds' "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": ctx["tenant_id"]},
+        )
+
+    outside = await module.run_once(
+        ctx["factory"], keyring, batch_size=10, max_event_age_seconds=10
+    )
+    assert outside == {"fanned": 0, "sent": 0}
+
+    inside = await module.run_once(ctx["factory"], keyring, batch_size=10)
+    assert inside["fanned"] == 1

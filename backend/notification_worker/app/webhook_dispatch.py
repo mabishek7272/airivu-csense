@@ -23,7 +23,11 @@ from sqlalchemy import text
 
 from csense_shared.security.envelope import KeyRing
 from csense_shared.security.pinned_http import PinnedEndpoint, post_pinned
-from csense_shared.webhooks.dispatcher import claim_and_send_one_delivery, fan_out_due_outbox_events
+from csense_shared.webhooks.dispatcher import (
+    DEFAULT_MAX_EVENT_AGE_SECONDS,
+    claim_and_send_one_delivery,
+    fan_out_due_outbox_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +47,27 @@ async def _as_platform(session) -> None:
 
 
 async def run_once(
-    session_factory, keyring: KeyRing, *, batch_size: int = 25, now: dt.datetime | None = None
+    session_factory,
+    keyring: KeyRing,
+    *,
+    batch_size: int = 25,
+    now: dt.datetime | None = None,
+    max_event_age_seconds: float = DEFAULT_MAX_EVENT_AGE_SECONDS,
 ) -> dict:
-    """One pass: fan out due outbox events, then send up to `batch_size` due deliveries."""
+    """One pass: fan out due outbox events, then send up to `batch_size` due deliveries.
+
+    `max_event_age_seconds` is forwarded rather than left to the dispatcher's own default
+    so that `Settings.webhook_dispatch_max_event_age_seconds` actually reaches the query -
+    an operator who tunes that env var must see it take effect, and a knob that silently
+    does nothing is worse than no knob at all.
+    """
     moment = now or dt.datetime.now(dt.UTC)
 
     async with session_factory() as session, session.begin():
         await _as_platform(session)
-        fanned = await fan_out_due_outbox_events(session, limit=batch_size, now=moment)
+        fanned = await fan_out_due_outbox_events(
+            session, limit=batch_size, now=moment, max_event_age_seconds=max_event_age_seconds
+        )
 
     sent = 0
     for _ in range(batch_size):
@@ -79,15 +96,24 @@ async def run_forever(
     *,
     interval_seconds: float = 10.0,
     batch_size: int = 25,
+    max_event_age_seconds: float = DEFAULT_MAX_EVENT_AGE_SECONDS,
     stop: asyncio.Event | None = None,
 ) -> None:
     stop = stop or asyncio.Event()
-    logger.info("webhook_dispatch_started", extra={"interval": interval_seconds})
+    logger.info(
+        "webhook_dispatch_started",
+        extra={"interval": interval_seconds, "max_event_age_seconds": max_event_age_seconds},
+    )
 
     while not stop.is_set():
         started = dt.datetime.now(dt.UTC)
         try:
-            stats = await run_once(session_factory, keyring, batch_size=batch_size)
+            stats = await run_once(
+                session_factory,
+                keyring,
+                batch_size=batch_size,
+                max_event_age_seconds=max_event_age_seconds,
+            )
             if stats["fanned"] or stats["sent"]:
                 logger.info("webhook_dispatch_pass", extra=stats)
         except Exception:

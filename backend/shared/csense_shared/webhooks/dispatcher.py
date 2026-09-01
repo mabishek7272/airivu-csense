@@ -34,17 +34,18 @@ from csense_shared.security.webhooks import SIGNING_SECRET_PURPOSE, URL_SECRET_P
 WEBHOOK_DISPATCH_CONSUMER = "webhook_dispatcher"
 
 # Minutes to wait before each retry, indexed by (attempt_number - 1) at the moment the
-# attempt just failed. Five retries spread over ~13 hours - long enough to ride out a
-# receiver's brief outage or deploy, short enough that a permanently broken endpoint is
-# abandoned well within a day rather than retried forever.
+# attempt just failed. Five retries spread over ~14.6 hours (1 + 5 + 30 + 120 + 720 = 876
+# minutes) - long enough to ride out a receiver's brief outage or deploy, short enough that
+# a permanently broken endpoint is abandoned well within a day rather than retried forever.
 RETRY_BACKOFF_MINUTES = [1, 5, 30, 120, 720]
 MAX_DELIVERY_ATTEMPTS = len(RETRY_BACKOFF_MINUTES) + 1  # the first attempt, plus 5 retries
 
 # Fallback for `fan_out_due_outbox_events`'s age window when no caller passes one; the
-# deployed value is `Settings.webhook_dispatch_max_event_age_seconds`, which carries the
-# full reasoning. Kept as a module constant rather than read from Settings here so this
-# module stays importable without configuration, the same way MAX_DELIVERY_ATTEMPTS above
-# and `csense_shared.notifications.dispatcher`'s own MAX_DELAY_SECONDS already are.
+# deployed value is `Settings.webhook_dispatch_max_event_age_seconds`, threaded through
+# `webhook_dispatch.run_forever`/`run_once`, which carries the full reasoning. Kept as a
+# module constant rather than read from Settings here so this module stays importable
+# without configuration, the same way MAX_DELIVERY_ATTEMPTS above and
+# `csense_shared.notifications.dispatcher`'s own MAX_DELAY_SECONDS already are.
 DEFAULT_MAX_EVENT_AGE_SECONDS = 24 * 60 * 60
 
 # Takes a `PinnedEndpoint` rather than a URL string on purpose: the destination this

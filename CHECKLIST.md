@@ -1438,8 +1438,9 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         is a single loop at far lower volume, and a crash mid-POST simply leaves the row
         `pending` for the next pass, so no stalled-row sweep is needed at all. Retries
         back off `[1, 5, 30, 120, 720]` minutes and the delivery is abandoned after
-        `MAX_DELIVERY_ATTEMPTS` (6 attempts, ~13h) - long enough to ride out a receiver's
-        deploy, short enough that a permanently broken endpoint stops inside a day.
+        `MAX_DELIVERY_ATTEMPTS` (6 attempts spanning 876 minutes = ~14.6h) - long enough to
+        ride out a receiver's deploy, short enough that a permanently broken endpoint stops
+        inside a day.
   - [x] **A 24h age window** (`webhook_dispatch_max_event_age_seconds`) bounds fan-out, so
         a first deploy never blasts a database's entire outbox history at a newly created
         endpoint and a long worker outage never floods a receiver with stale events. This
@@ -1462,8 +1463,39 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         correctly prefers a seq scan (76 rows, one page); with `enable_seqscan = off` both
         queries match the index as an `Index Cond`, confirming the shape is right for when
         the table is large - claimed as future headroom, not a measured win today.
-  - [x] Verified for real: `backend/tests/test_webhook_dispatcher.py` (11 real-DB tests),
-        `test_webhook_dispatch_loop.py` (2), `test_worker_loop_isolation.py` (3).
+  - [x] **The validated address is the address dialled** (`csense_shared/security/
+        pinned_http.py`, new). Both send paths - the dispatcher and the on-demand
+        `POST /{id}/test` - previously called `resolve_public_endpoint`, discarded the IPs
+        it returned, and handed the *hostname* to httpx, which resolved it a second time.
+        That is precisely the DNS-rebinding window `security/outbound.py`'s own docstring
+        says this guard exists to close: one answer for the check, another for the connect.
+        The request now goes to the IP literal, with the hostname carried in `Host` and in
+        the `sni_hostname` request extension - the latter being the part that must not be
+        got wrong, since it is what the TLS layer verifies the certificate against.
+        Verified rather than assumed, because a botched pin silently disables certificate
+        checking and that would be worse than the bug: against a real `httpbin.org` IP, an
+        honest Host/SNI gets `200`, and the same socket with a mismatched hostname raises
+        `CERTIFICATE_VERIFY_FAILED: Hostname mismatch` - so verification is exactly as
+        strict as before. All of a name's addresses are kept as candidates, since pinning
+        to only the first would have quietly given up the happy-eyeballs walk httpx used
+        to do for free.
+  - [x] **`getaddrinfo` runs on a thread**, not on the event loop. It blocks with no
+        timeout of its own, and `notification_worker/app/main.py` runs webhook delivery and
+        alert dispatch in *one* event loop under `asyncio.gather` - so one tenant's webhook
+        pointed at a host with an unresponsive DNS server would have stalled life-safety
+        alert delivery for every tenant on that replica. Same `asyncio.to_thread` treatment
+        the container already gives its blocking MinIO calls, applied to the tenant API's
+        webhook create/test handlers for the same reason.
+  - [x] **`webhook_dispatch_max_event_age_seconds` is now actually wired.** It was dead
+        configuration: nothing threaded it from `main.py` through
+        `run_forever`/`run_once`, so fan-out always fell back to the module default and an
+        operator tuning the env var would have seen no effect at all. Threaded end to end,
+        with a test that fans out nothing under a ten-second window and the same event
+        under the default one - so the claim is now checkable rather than merely written.
+  - [x] Verified for real: `backend/tests/test_webhook_dispatcher.py` (12 real-DB tests),
+        `test_webhook_dispatch_loop.py` (3), `test_pinned_http.py` (8, one of them gated
+        behind `ALLOW_NETWORK_TESTS=1` because it drives a real TLS handshake),
+        `test_worker_loop_isolation.py` (3).
         `scripts/e2e_webhook_dispatch.py` against the live stack: a real acknowledged
         incident emits `incident.acknowledged.v1`, it fans out of the outbox on its own,
         and the *deployed* notification-worker signs and POSTs it to a real
@@ -1471,8 +1503,13 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         attempt. Exactly **one** delivery row survives the many worker passes that run
         during the poll window, which proves `processed_events` idempotency against the
         real running worker rather than only in a unit test, and a second endpoint whose
-        `event_filters` don't match receives zero. Full PASS. Backend suite: 420 passed,
-        58 skipped; `ruff check backend scripts` clean.
+        `event_filters` don't match receives zero. Re-run unchanged after the IP-pinning
+        rework above, which is the point: the delivery now goes to a validated address
+        rather than a re-resolved name, and still lands. Full PASS, as does
+        `e2e_webhooks.py` for the on-demand test-delivery path that shares the same helper.
+        Backend suite: 429 passed, 59 skipped (plus the one known unrelated failure,
+        `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`);
+        `ruff check backend scripts` clean.
   - [ ] **Still genuinely not done, stated plainly**: no Customer CRM or Developer Console
         UI for webhook delivery history - `webhook_deliveries` rows (status, attempt
         count, response code, redacted failure reason) are all recorded correctly but are

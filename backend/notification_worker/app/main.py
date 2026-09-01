@@ -95,6 +95,7 @@ async def amain() -> None:
                 keyring,
                 interval_seconds=settings.webhook_dispatch_poll_seconds,
                 batch_size=settings.webhook_dispatch_batch_size,
+                max_event_age_seconds=settings.webhook_dispatch_max_event_age_seconds,
                 stop=stop,
             )
         )
@@ -106,7 +107,13 @@ async def amain() -> None:
 
 
 async def _webhook_dispatch_never_takes_alerts_down_with_it(
-    session_factory, keyring, *, interval_seconds: float, batch_size: int, stop: asyncio.Event
+    session_factory,
+    keyring,
+    *,
+    interval_seconds: float,
+    batch_size: int,
+    max_event_age_seconds: float,
+    stop: asyncio.Event,
 ) -> None:
     """Runs the webhook loop so that its death is never the alert loop's death.
 
@@ -135,6 +142,7 @@ async def _webhook_dispatch_never_takes_alerts_down_with_it(
             keyring,
             interval_seconds=interval_seconds,
             batch_size=batch_size,
+            max_event_age_seconds=max_event_age_seconds,
             stop=stop,
         )
     except asyncio.CancelledError:
