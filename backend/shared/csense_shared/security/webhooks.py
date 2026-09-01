@@ -22,6 +22,14 @@ import time
 SIGNATURE_HEADER = "X-CSense-Signature"
 DEFAULT_TOLERANCE_SECONDS = 5 * 60
 
+# The `purpose` strings write_secret()/read_secret() (secret_store.py) use to bind a
+# webhook endpoint's URL and signing secret. Shared here, not defined per-service, because
+# both the Tenant API (writes them, at creation/rotation) and the notification-worker's
+# auto-delivery dispatcher (reads them, at send time) need the exact same values, and those
+# two services share no other code.
+URL_SECRET_PURPOSE = "webhook.url"
+SIGNING_SECRET_PURPOSE = "webhook.signing_secret"
+
 
 class WebhookSignatureError(Exception):
     """Raised by `verify_signature` for a missing, malformed, tampered, or expired

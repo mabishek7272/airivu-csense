@@ -37,12 +37,10 @@ from csense_shared.security.outbound import BlockedAddressError, resolve_public_
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.secret_store import delete_secret, read_secret, write_secret
 from csense_shared.security.tenant_context import TenantContext
-from csense_shared.security.webhooks import sign_payload
+from csense_shared.security.webhooks import SIGNING_SECRET_PURPOSE, URL_SECRET_PURPOSE, sign_payload
 
 router = APIRouter(prefix="/api/v1/tenant/webhooks", tags=["webhooks"])
 
-URL_SECRET_PURPOSE = "webhook.url"
-SIGNING_SECRET_PURPOSE = "webhook.signing_secret"
 TEST_REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 
