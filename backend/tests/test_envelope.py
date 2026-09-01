@@ -322,6 +322,53 @@ def test_base64_key_of_wrong_length_is_rejected(tmp_path: Path):
         KeyRing.from_directory(tmp_path)
 
 
+def test_hex_key_loads_because_the_deployment_guide_told_operators_to_make_one(tmp_path: Path):
+    """`openssl rand -hex 32 > master_v1.key` is what
+    docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md instructed, so it has to work.
+
+    It did not: 64 hex characters are themselves valid base64 (hex's alphabet is a subset
+    of base64's, and 64 is a multiple of 4), so a hex key decoded as base64 to 48 bytes
+    and was rejected as if it were corrupt. Every deployment that followed the documented
+    procedure got a master key that could not be loaded, taking every camera credential,
+    TOTP secret and webhook secret with it.
+    """
+    key = generate_master_key()
+    (tmp_path / "v1.key").write_bytes(key.hex().encode() + b"\n")  # exactly what openssl writes
+    if os.name == "posix":
+        (tmp_path / "v1.key").chmod(0o400)
+
+    keyring = KeyRing.from_directory(tmp_path)
+
+    assert keyring.get("v1") == key
+    ctx = {"tenant_id": TENANT, "secret_id": SECRET_ID, "purpose": "camera.rtsp"}
+    assert open_secret(keyring, seal(keyring, PASSWORD, **ctx), **ctx).decode() == PASSWORD
+
+
+def test_a_real_base64_key_is_still_read_as_base64_not_hex(tmp_path: Path):
+    """The hex check must not shadow the base64 path. A correctly base64-encoded 32-byte
+    key is 44 characters, never 64, so the two forms cannot collide - this pins that."""
+    key = generate_master_key()
+    encoded = base64.b64encode(key)
+    assert len(encoded) == 44
+    (tmp_path / "v1.key").write_bytes(encoded)
+    if os.name == "posix":
+        (tmp_path / "v1.key").chmod(0o400)
+
+    assert KeyRing.from_directory(tmp_path).get("v1") == key
+
+
+def test_a_64_character_file_that_is_not_hex_still_falls_through_to_base64(tmp_path: Path):
+    """64 base64 characters decode to 48 bytes, which is still the wrong length - but the
+    caller must get the length error, not a hex-parsing error, so the message keeps
+    naming the real problem."""
+    (tmp_path / "v1.key").write_bytes(base64.b64encode(b"x" * 48))
+    if os.name == "posix":
+        (tmp_path / "v1.key").chmod(0o400)
+
+    with pytest.raises(EnvelopeError, match="decodes to 48 bytes"):
+        KeyRing.from_directory(tmp_path)
+
+
 def test_wrong_length_key_is_rejected(tmp_path: Path):
     (tmp_path / "v1.key").write_bytes(b"too-short")
     if os.name == "posix":

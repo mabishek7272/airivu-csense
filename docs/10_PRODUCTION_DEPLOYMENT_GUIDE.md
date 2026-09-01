@@ -52,7 +52,7 @@ production.** Generate fresh ones:
 cd infra/secrets
 openssl genrsa -out jwt_private.pem 2048
 openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
-openssl rand -hex 32 > master_v1.key   # envelope-encryption master key
+openssl rand -base64 32 > master_v1.key   # envelope-encryption master key
 chmod 600 jwt_private.pem master_v1.key
 ```
 

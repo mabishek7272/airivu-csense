@@ -199,7 +199,7 @@ class KeyRing:
 
 
 def _read_key(path: Path) -> bytes:
-    """Reads a key file holding either 32 raw bytes or their base64 form.
+    """Reads a key file holding 32 raw bytes, or their hex or base64 form.
 
     The raw case is checked *before* stripping, and that ordering is the whole point.
     Random key material contains whatever bytes it contains, including 0x20, 0x09 and
@@ -207,18 +207,41 @@ def _read_key(path: Path) -> bytes:
     generated key in twenty-two into an unloadable 31-byte file, and the failure looks
     like a corrupt key rather than a bug here.
 
-    Trailing whitespace only matters for the base64 form, where an editor or `echo` may
-    have added a newline, so the strip happens on that path alone.
+    Trailing whitespace only matters for the encoded forms, where an editor or `echo` may
+    have added a newline, so the strip happens on those paths alone.
+
+    **Hex is checked before base64, and that ordering is also the whole point.** 64 hex
+    characters are *themselves* valid base64 (the hex alphabet is a subset of base64's,
+    and 64 is a multiple of 4), so a hex key silently decodes as base64 to 48 bytes and
+    fails with "decodes to 48 bytes; 32 required" - a message that reads like corrupt key
+    material rather than the real problem, which is that the file is in a format this
+    function used not to accept. That is not hypothetical: this deployment's own
+    `docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md` told operators to generate the key with
+    `openssl rand -hex 32`, so every deployment that followed the documented procedure got
+    a master key that could not be loaded at all, and with it no camera credential, TOTP
+    secret, or webhook URL/signing secret could ever be read. Accepting hex is the fix that
+    makes the documented command work rather than one that only reports the trap better.
+
+    There is no ambiguity cost: a correctly base64-encoded 32-byte key is 44 characters,
+    never 64, so nothing valid is reinterpreted by checking hex first.
     """
     raw = path.read_bytes()
     if len(raw) == KEY_BYTES:
         return raw
 
+    stripped = raw.strip()
+
+    if len(stripped) == KEY_BYTES * 2:
+        try:
+            return bytes.fromhex(stripped.decode("ascii"))
+        except (ValueError, UnicodeDecodeError):
+            pass  # Not hex after all - fall through and try base64.
+
     try:
-        decoded = base64.b64decode(raw.strip(), validate=True)
+        decoded = base64.b64decode(stripped, validate=True)
     except (ValueError, TypeError) as exc:
         raise EnvelopeError(
-            f"Master key '{path.name}' is neither {KEY_BYTES} raw bytes nor valid base64."
+            f"Master key '{path.name}' is not {KEY_BYTES} raw bytes, hex, or valid base64."
         ) from exc
 
     if len(decoded) != KEY_BYTES:
