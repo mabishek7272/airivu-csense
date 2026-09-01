@@ -8,6 +8,11 @@ default, and both loops already need the exact same platform database role for t
 same reason ("dispatch legitimately spans every tenant"). One shared `stop` event means a
 single SIGTERM cleanly drains both.
 
+The two loops are independent in the direction that matters: webhook delivery failing -
+whether its master key will not load or its loop dies outright - leaves alert dispatch
+running, while the reverse is not true and is not meant to be (see
+`_webhook_dispatch_never_takes_alerts_down_with_it`).
+
 Both are a container of their own rather than a thread inside the Tenant API: an API
 process is scaled, restarted and deployed on the API's schedule, and alert delivery
 should not inherit that. Separating them also means a wedged worker cannot take the API
@@ -85,7 +90,7 @@ async def amain() -> None:
     ]
     if keyring is not None:
         loops.append(
-            webhook_dispatch.run_forever(
+            _webhook_dispatch_never_takes_alerts_down_with_it(
                 session_factory,
                 keyring,
                 interval_seconds=settings.webhook_dispatch_poll_seconds,
@@ -98,6 +103,44 @@ async def amain() -> None:
         await asyncio.gather(*loops)
     finally:
         await engine.dispose()
+
+
+async def _webhook_dispatch_never_takes_alerts_down_with_it(
+    session_factory, keyring, *, interval_seconds: float, batch_size: int, stop: asyncio.Event
+) -> None:
+    """Runs the webhook loop so that its death is never the alert loop's death.
+
+    `asyncio.gather` without `return_exceptions=True` propagates the first exception to the
+    caller *without* cancelling its siblings - so an exception escaping the webhook loop
+    would unwind `amain`, hit `finally: await engine.dispose()` while alert dispatch is
+    still mid-flight against that engine, and crash the process. The container would
+    restart, but a bug confined to a developer-facing integration feed would have taken
+    every life-safety alert down with it on the way out. That severity inversion is the
+    same one the quiet-hours cutoff exists to prevent elsewhere in this codebase, and it is
+    the exact opposite of what "two independent polling loops" promises.
+
+    So this loop is deliberately asymmetric with the alert loop: its failure is logged and
+    swallowed, leaving alert dispatch running alone (the same end state as a keyring that
+    would not load, above). The alert loop is left unguarded on purpose - if *it* dies, the
+    container should die and be restarted, because nothing useful remains.
+
+    `run_forever` already catches per-pass exceptions internally, so reaching this handler
+    means something outside that guard broke, and the loop does not restart itself here:
+    silently respawning a loop that just failed in an unanticipated way would hide it. The
+    ERROR log with traceback is the signal.
+    """
+    try:
+        await webhook_dispatch.run_forever(
+            session_factory,
+            keyring,
+            interval_seconds=interval_seconds,
+            batch_size=batch_size,
+            stop=stop,
+        )
+    except asyncio.CancelledError:
+        raise  # Shutdown, not failure - must propagate or the process cannot stop.
+    except Exception:  # noqa: BLE001 - see this function's own docstring
+        logger.exception("webhook_dispatch_loop_died_alert_dispatch_continues")
 
 
 def main() -> None:
