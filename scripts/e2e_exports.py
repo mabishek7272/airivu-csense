@@ -13,7 +13,6 @@ for things outside what this script is actually testing.
 """
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 import time
