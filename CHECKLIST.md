@@ -1388,7 +1388,7 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         refused ones, immediate revocation, gap-free second-key rotation, both docs
         endpoints live. Full PASS. `ruff check backend scripts` clean; full backend
         pytest suite green (379 passed, 30 skipped).
-- [~] Webhook signing, verification, replay protection
+- [x] Webhook signing, verification, replay protection, automatic outbox-driven delivery
   - [x] `webhook_endpoints`/`webhook_deliveries` (SCH §10.6/§10.7, previously spec'd but
         never built - migration 0045). Both the URL and the signing secret are
         envelope-encrypted through the same `encrypted_secrets` path every other
@@ -1419,13 +1419,71 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         (422) rather than silently accepted; the list view never shows the URL or secret;
         rotating issues a genuinely different secret; deleting an endpoint leaves no
         orphaned encrypted secrets behind. Full PASS. Backend: 377 passed, 21 skipped.
-  - [ ] **Deliberately deferred, stated plainly**: automatic delivery driven by the
-        outbox for every domain event - a systemic wiring effort across every event
-        producer, deserving its own pass. This ships a real, on-demand test delivery
-        proving the signing/verification/SSRF mechanism end to end; nothing here is a
-        stub that automatic delivery would need to replace, only extend. No Developer
-        Console or Customer CRM UI yet - fully usable and exercised via the API and the
-        e2e script.
+  - [x] **The deferred half is now built**: `csense_shared/webhooks/dispatcher.py` (new)
+        drives real automatic delivery off the outbox in two passes.
+        `fan_out_due_outbox_events` turns each not-yet-seen `outbox_events` row into one
+        `webhook_deliveries` row per matching active endpoint on that row's tenant.
+        Progress is tracked in `processed_events` (a multi-consumer idempotency table
+        that has existed since migration 0001 and nothing had used) rather than
+        `outbox_events.published_at`: `realtime.py`'s per-tenant WebSocket consumer
+        already owns that column for its own purpose, and two consumers racing to stamp
+        one column would silently break whichever lost - the kind of failure that shows
+        up as missing alerts, not as an error.
+  - [x] `claim_and_send_one_delivery` claims one due row (`FOR UPDATE SKIP LOCKED`,
+        mirroring `notifications.dispatcher.claim_due_deliveries`), decrypts URL and
+        signing secret, re-runs the SSRF guard fresh, signs, POSTs, records the result.
+        **Claim and send happen in one transaction** - deliberately simpler than
+        `notification_worker`'s own claim-then-send split, which exists so several worker
+        *replicas* never block on a slow provider call while holding a shared lock. This
+        is a single loop at far lower volume, and a crash mid-POST simply leaves the row
+        `pending` for the next pass, so no stalled-row sweep is needed at all. Retries
+        back off `[1, 5, 30, 120, 720]` minutes and the delivery is abandoned after
+        `MAX_DELIVERY_ATTEMPTS` (6 attempts, ~13h) - long enough to ride out a receiver's
+        deploy, short enough that a permanently broken endpoint stops inside a day.
+  - [x] **A 24h age window** (`webhook_dispatch_max_event_age_seconds`) bounds fan-out, so
+        a first deploy never blasts a database's entire outbox history at a newly created
+        endpoint and a long worker outage never floods a receiver with stale events. This
+        is a deliberate departure from the platform's usual "late alert beats no alert"
+        stance (`MAX_DELAY_SECONDS`, the escalation ladder): a webhook is an integration
+        feed consumed by software, not a human alert, and a day-old event delivered now
+        is worse than not delivered - named here because the departure is real.
+  - [x] Runs as a **second loop inside the existing `notification-worker` container**, not
+        a new service (`notification_worker/app/webhook_dispatch.py`, wired in `main.py`)
+        - it needs the exact platform DB role that container already has, for the exact
+        "dispatch legitimately spans every tenant" reason its own worker already states,
+        and `CLAUDE.md`'s resource math for the 16-core box treats "reuse infra, don't
+        proliferate containers" as the default. The two loops are isolated so a crashing
+        webhook loop can never take life-safety alert dispatch down with it; three tests
+        pin exactly that (`backend/tests/test_worker_loop_isolation.py`).
+  - [x] Migration 0052 indexes `outbox_events (occurred_at, id)` - for **two** consumers,
+        not one: the new fan-out scan and `realtime.py`'s pre-existing per-open-browser-tab
+        incident tail, which has been polling an unindexed table since it shipped.
+        `ix_outbox_unpublished` serves neither. At today's row count the planner still
+        correctly prefers a seq scan (76 rows, one page); with `enable_seqscan = off` both
+        queries match the index as an `Index Cond`, confirming the shape is right for when
+        the table is large - claimed as future headroom, not a measured win today.
+  - [x] Verified for real: `backend/tests/test_webhook_dispatcher.py` (11 real-DB tests),
+        `test_webhook_dispatch_loop.py` (2), `test_worker_loop_isolation.py` (3).
+        `scripts/e2e_webhook_dispatch.py` against the live stack: a real acknowledged
+        incident emits `incident.acknowledged.v1`, it fans out of the outbox on its own,
+        and the *deployed* notification-worker signs and POSTs it to a real
+        `httpbin.org` endpoint - confirmed in the container's own logs, `200` on the first
+        attempt. Exactly **one** delivery row survives the many worker passes that run
+        during the poll window, which proves `processed_events` idempotency against the
+        real running worker rather than only in a unit test, and a second endpoint whose
+        `event_filters` don't match receives zero. Full PASS. Backend suite: 420 passed,
+        58 skipped; `ruff check backend scripts` clean.
+  - [ ] **Still genuinely not done, stated plainly**: no Customer CRM or Developer Console
+        UI for webhook delivery history - `webhook_deliveries` rows (status, attempt
+        count, response code, redacted failure reason) are all recorded correctly but are
+        only visible via direct database access, since no API endpoint exposes them yet;
+        the e2e script reads Postgres directly for this reason. And `outbox_events` still
+        has **no retention or pruning policy at all** - nothing anywhere deletes from it,
+        so it grows monotonically for the life of the deployment. Migration 0052's index
+        postpones that becoming a problem; it does not solve it. Whether outbox rows
+        should be pruned after N days, archived to object storage, or kept forever as an
+        event log is a real product/compliance decision nobody has made - named here so it
+        gets made deliberately rather than discovered the day the table hurts.
 - [ ] SMS/web-push provider adapters — **[NEEDS HUMAN INPUT: no provider contracted]**
 - [~] Async reports/exports with time-limited download
   - [x] `export_jobs` (migration 0050) - tenant-RLS-isolated, the same `FORCE ROW LEVEL
