@@ -18,7 +18,10 @@ class TenantContext:
 
     tenant_id: UUID
     user_id: UUID
-    membership_id: UUID
+    # None only for a support-grant-elevated platform-developer session (see
+    # csense_shared.security.support_elevation) - there is no real memberships row for a
+    # platform developer acting against a tenant they don't belong to.
+    membership_id: UUID | None
     token_audience: str
     permissions: frozenset[str] = field(default_factory=frozenset)
     site_scope_mode: str = "none"  # all | selected | none
