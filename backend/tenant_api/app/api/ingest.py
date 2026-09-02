@@ -1,4 +1,9 @@
-"""Detection ingestion endpoint — where an edge device's observations enter the system.
+"""Detection ingestion endpoints — where an edge device's observations enter the system.
+
+There are two: one detection per request, and a batch of up to `MAX_BATCH`. The batch is
+not an optimisation bolted on afterwards - it is what makes an offline device's spool
+drainable (FLOW-13 step 6), and it runs every item through the identical pipeline call so
+that the two paths cannot behave differently. See `ingest_batch` for its own guarantees.
 
 This is the front door to the pipeline: everything the product does downstream (rules,
 incidents, evidence, alerting) begins with a request handled here. Until it existed, all
@@ -45,6 +50,7 @@ import dataclasses
 import datetime as dt
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
@@ -70,6 +76,21 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 # drift and are sometimes wrong by hours; a small tolerance absorbs ordinary skew, while a
 # timestamp days ahead would park an incident at the top of every list indefinitely.
 MAX_CLOCK_SKEW = dt.timedelta(minutes=5)
+
+# Detections accepted in one batch. A device draining a day-long spool wants this as large
+# as possible; a shared API wants it small enough that one caller cannot pin a request
+# worker or a connection for long. 100 is the compromise - a thousand-event backlog is ten
+# round trips, not a thousand, and the worst case a single request can cost stays bounded.
+MAX_BATCH = 100
+
+# Total *compressed* inline frame bytes one batch may carry. `MAX_FRAME_BYTES` bounds a
+# single frame, but 100 of them at that ceiling is 800 MB of request body and, far worse,
+# `cv2.imdecode` expands each one into raw BGR - a 10-30x multiplier that would materialise
+# gigabytes of pixel buffers in a single worker. 32 MiB is roughly four full-size frames or
+# sixty ordinary snapshots per batch. Past it, remaining frames are dropped and their
+# detections still ingest: the same trade `_decode_frame` already makes for an undecodable
+# frame, and the only one that keeps a spool drain from stalling on its own imagery.
+MAX_BATCH_FRAME_BYTES = 32 * 1024 * 1024
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,16 +135,28 @@ async def current_ingest_identity(request: Request) -> IngestIdentity:
     return IngestIdentity(tenant_id=claims.tenant_id, edge_device_id=None, source="user")
 
 
+@asynccontextmanager
+async def tenant_scoped_session(factory, tenant_id: uuid.UUID):
+    """One session in one transaction, scoped to `tenant_id`.
+
+    Factored out of the dependency below because the batch endpoint needs the same scoping
+    but a *fresh* transaction per item rather than one spanning the request - see
+    `ingest_batch` for why. `set_config(..., true)` keeps the setting local to the
+    transaction so it cannot leak to the next checkout of a pooled connection.
+    """
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)},
+        )
+        yield session
+
+
 async def ingest_db_session(
     request: Request, identity: IngestIdentity = Depends(current_ingest_identity)
 ) -> AsyncSession:
     """Scoped to whichever tenant the identity above resolved to - never a
     client-supplied value, from either auth path."""
-    factory = request.app.state.session_factory
-    async with factory() as session, session.begin():
-        await session.execute(
-            text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(identity.tenant_id)},
-        )
+    async with tenant_scoped_session(request.app.state.session_factory, identity.tenant_id) as session:
         yield session
 
 
@@ -173,6 +206,38 @@ class IngestOut(BaseModel):
     # Why nothing fired, when nothing did. Without this, "the camera sees people and I get
     # no alerts" is only debuggable by reading server logs.
     rejected_reasons: list[str] = []
+
+
+class DetectionBatchIn(BaseModel):
+    # At least one: a device with nothing to send has no reason to call, and an empty body
+    # is far more likely a bug in its drain loop than a deliberate no-op worth accepting.
+    detections: list[DetectionIn] = Field(min_length=1, max_length=MAX_BATCH)
+
+
+class BatchItemOut(BaseModel):
+    """One detection's outcome, echoing the `source_event_id` it belongs to.
+
+    The device matches on `source_event_id`, not on list position, so that a truncated or
+    reordered response can never make it delete the wrong spool row - the one mistake in
+    this whole design that silently loses events.
+    """
+
+    source_event_id: str
+    accepted: bool
+    # Exactly what the single endpoint returns, and only when the item was accepted.
+    result: IngestOut | None = None
+    # The code the single endpoint's own error response would have carried, so a device
+    # can tell "this row will never be accepted, stop retrying it" (capture_time_in_future,
+    # not_found) from "try again later" (ingest_failed).
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class BatchIngestOut(BaseModel):
+    accepted: int
+    failed: int
+    # In request order, one entry per submitted detection, always.
+    results: list[BatchItemOut]
 
 
 def _decode_frame(frame_base64: str | None):
@@ -252,23 +317,25 @@ async def _camera_site(
     return row[0], row[1]
 
 
-@router.post("/detections", response_model=IngestOut, status_code=202)
-async def ingest(
-    body: DetectionIn,
+async def _ingest_one(
+    db: AsyncSession,
     request: Request,
-    identity: IngestIdentity = Depends(current_ingest_identity),
-    db: AsyncSession = Depends(ingest_db_session),
+    *,
+    identity: IngestIdentity,
+    body: DetectionIn,
+    frame: object,
 ) -> IngestOut:
-    """Accepts one frame's detections and runs them through the pipeline.
+    """One detection, from validated body to `IngestOut`.
 
-    202 rather than 201: the detection is recorded and any incident opened synchronously,
-    but the alerts it schedules are delivered by the notification worker afterwards. The
-    device is being told "accepted", not "everyone has been telephoned".
+    Both endpoints go through here, so dedup, rule evaluation, incident correlation,
+    evidence and notifications cannot drift apart between the single and batch paths -
+    a batch that alerted differently from a single submission would make an offline
+    device's replayed events behave unlike its live ones, which is the one thing the
+    whole spool design cannot tolerate.
 
-    No `require_permission` call here - `current_ingest_identity` already enforced
-    authorization as part of resolving who's calling (either a real device credential,
-    or a token that already carried `detection.ingest`), the same way `current_agent`'s
-    own callers never call `require_permission` afterwards either.
+    `frame` is already decoded: the callers differ in how they decide whether to decode
+    at all (the batch has a budget across the whole request), not in what they do with
+    the result.
     """
     captured_at = body.captured_at
     if captured_at.tzinfo is None:
@@ -302,7 +369,7 @@ async def ingest(
         objects=[
             DetectedObject(o.class_name, o.confidence, tuple(o.bbox)) for o in body.objects
         ],
-        frame=_decode_frame(body.frame_base64),
+        frame=frame,
         model_version_id=body.model_version_id,
         # A real device credential's own identity always wins over anything the request
         # body claims - the legacy scoped-token path has no device identity of its own,
@@ -322,4 +389,168 @@ async def ingest(
         notifications_scheduled=result.notifications_scheduled,
         evidence_captured=result.evidence_captured,
         rejected_reasons=result.rejected_reasons,
+    )
+
+
+def _apply_frame_budget(
+    detections: list[DetectionIn], *, budget: int = MAX_BATCH_FRAME_BYTES
+) -> list[str | None]:
+    """Each detection's inline frame, or None once the batch's frame budget is spent.
+
+    Sized from the base64 length rather than by decoding, because the whole point is to
+    avoid materialising the bytes at all - measuring by decoding would already have cost
+    what the budget exists to prevent.
+
+    Once the budget is exhausted the *rest* of the batch loses its frames, not just the
+    oversized item. That is deliberate and it does penalise later items unfairly; the
+    alternative - skipping only the items that do not fit and continuing to accept smaller
+    ones - would make which frames survive depend on their sizes rather than their order,
+    which is far harder for a device operator to reason about than "the tail of an
+    oversized batch has no snapshots, send fewer per batch".
+    """
+    remaining = budget
+    kept: list[str | None] = []
+    for item in detections:
+        encoded = item.frame_base64
+        if not encoded:
+            kept.append(None)
+            continue
+        # Ceiling of the decoded length; padding makes this at most two bytes generous,
+        # which does not matter against a multi-megabyte budget.
+        decoded_size = (len(encoded) * 3) // 4
+        if decoded_size > remaining:
+            logger.warning("batch_frame_budget_exhausted", extra={"budget_bytes": budget})
+            kept.append(None)
+            remaining = 0
+            continue
+        remaining -= decoded_size
+        kept.append(encoded)
+    return kept
+
+
+@router.post("/detections", response_model=IngestOut, status_code=202)
+async def ingest(
+    body: DetectionIn,
+    request: Request,
+    identity: IngestIdentity = Depends(current_ingest_identity),
+    db: AsyncSession = Depends(ingest_db_session),
+) -> IngestOut:
+    """Accepts one frame's detections and runs them through the pipeline.
+
+    202 rather than 201: the detection is recorded and any incident opened synchronously,
+    but the alerts it schedules are delivered by the notification worker afterwards. The
+    device is being told "accepted", not "everyone has been telephoned".
+
+    No `require_permission` call here - `current_ingest_identity` already enforced
+    authorization as part of resolving who's calling (either a real device credential,
+    or a token that already carried `detection.ingest`), the same way `current_agent`'s
+    own callers never call `require_permission` afterwards either.
+    """
+    return await _ingest_one(
+        db, request, identity=identity, body=body, frame=_decode_frame(body.frame_base64)
+    )
+
+
+@router.post("/detections/batch", response_model=BatchIngestOut, status_code=202)
+async def ingest_batch(
+    body: DetectionBatchIn,
+    request: Request,
+    identity: IngestIdentity = Depends(current_ingest_identity),
+) -> BatchIngestOut:
+    """Accepts up to `MAX_BATCH` detections in one request (FLOW-13 step 6).
+
+    This exists for a device draining an offline spool. Doing that one round trip at a
+    time means a day's backlog takes a day's worth of round trips to clear, during which
+    the device is still accumulating new events - the backlog can lose the race. Batching
+    turns a thousand-event drain into ten requests.
+
+    **One bad item never fails the batch.** Every detection gets its own result entry,
+    in request order, carrying the `source_event_id` it belongs to. A rejected item -
+    unknown camera, a clock days out, an unanticipated failure - returns its own error and
+    the rest still process. A device draining a spool must not be permanently blocked by
+    one poisoned row: it would retry the batch forever, the spool would fill, and the
+    events behind the bad one would be lost to eviction. That is the single property this
+    endpoint exists to guarantee.
+
+    **Transaction boundary: one transaction per item, not one per request.** The single
+    endpoint takes its session from `ingest_db_session`, which holds one transaction open
+    for the whole request; `ingest_detection` documents why that is right for one
+    detection - the detection, its incident and its scheduled notifications land together
+    or not at all, because a detection recorded without its alerts looks handled when
+    nobody was told. A batch cannot extend that to the whole request in either direction:
+    rolling back on item 40 would discard 39 successful, already-acknowledged ingests, and
+    a database error inside one item poisons the transaction so that every subsequent
+    statement fails anyway. So this handler deliberately does not depend on
+    `ingest_db_session` at all - it opens a fresh tenant-scoped transaction per item, and
+    each item keeps exactly the all-or-nothing guarantee the single endpoint has. Items
+    are processed sequentially for the same reason: concurrency here would let one
+    batch open `MAX_BATCH` connections, and would reorder frames of the same event against
+    incident correlation, which is order-sensitive.
+
+    **Replaying a batch is safe**, and is expected - a device that loses the response after
+    the server committed will resend. Each item carries its own `source_event_id` and goes
+    through the identical `ingest_detection` path, which upserts on
+    `(tenant_id, source_event_id)`, so a resent batch returns `duplicate: true` per item
+    and opens no second incident.
+
+    Inline frames are allowed, but the batch's total decoded frame bytes are capped at
+    `MAX_BATCH_FRAME_BYTES` (32 MiB) - see that constant for the reasoning. Frames past
+    the budget are dropped; their detections are still ingested, because an alert without
+    a snapshot beats no alert.
+    """
+    factory = request.app.state.session_factory
+    # Passed explicitly rather than left to the default so the budget is read at call
+    # time - a deployment (or a test) that overrides the constant is actually honoured.
+    frames = _apply_frame_budget(body.detections, budget=MAX_BATCH_FRAME_BYTES)
+
+    results: list[BatchItemOut] = []
+    for item, frame_base64 in zip(body.detections, frames, strict=True):
+        # Decoded outside the session: `cv2.imdecode` on a multi-megabyte frame is not
+        # fast, and holding a pooled connection across it would starve other callers.
+        frame = _decode_frame(frame_base64)
+        try:
+            async with tenant_scoped_session(factory, identity.tenant_id) as session:
+                outcome = await _ingest_one(
+                    session, request, identity=identity, body=item, frame=frame
+                )
+        except ApiError as exc:
+            # A deliberate rejection this endpoint already knows how to describe - the
+            # same code and message the single endpoint would have returned for it.
+            logger.warning(
+                "batch_item_rejected",
+                extra={"source_event_id": item.source_event_id, "code": exc.code},
+            )
+            results.append(
+                BatchItemOut(
+                    source_event_id=item.source_event_id,
+                    accepted=False,
+                    error_code=exc.code,
+                    error_message=exc.message,
+                )
+            )
+        except Exception:  # noqa: BLE001 - one poisoned row must not block a drain
+            logger.exception(
+                "batch_item_failed", extra={"source_event_id": item.source_event_id}
+            )
+            results.append(
+                BatchItemOut(
+                    source_event_id=item.source_event_id,
+                    accepted=False,
+                    error_code="ingest_failed",
+                    error_message=(
+                        "This detection could not be ingested. The rest of the batch was "
+                        "processed; retrying this one alone is safe."
+                    ),
+                )
+            )
+        else:
+            results.append(
+                BatchItemOut(
+                    source_event_id=item.source_event_id, accepted=True, result=outcome
+                )
+            )
+
+    accepted = sum(1 for r in results if r.accepted)
+    return BatchIngestOut(
+        accepted=accepted, failed=len(results) - accepted, results=results
     )
