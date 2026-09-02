@@ -164,12 +164,12 @@ loss with WAL). One table; payload column holds the sealed blob from Task 3, nev
 **Files:** Create `backend/edge_agent/app/sync.py`, `app/source.py`, `app/main.py`;
 test `backend/tests/test_edge_sync.py`.
 
-- [ ] **Step 1: `source.py`** — the narrow detection-source interface plus one real
+- [x] **Step 1: `source.py`** — the narrow detection-source interface plus one real
       implementation: a small local HTTP listener accepting the same detection shape the API
       takes, so a co-located inference process hands events to the agent. Its docstring must state
       plainly that the agent does not itself do inference in this pass, and why (see Decisions).
 
-- [ ] **Step 2: TDD `sync.py`.** Behaviour, each needing a test (use a fake HTTP client — no
+- [x] **Step 2: TDD `sync.py`.** Behaviour, each needing a test (use a fake HTTP client — no
       network in unit tests, same discipline `test_webhook_dispatcher.py` uses with its injected
       `send_fn`):
       - Online: an event delivers immediately and is never spooled.
@@ -184,7 +184,7 @@ test `backend/tests/test_edge_sync.py`.
         block current events indefinitely. State the chosen policy (e.g. interleave, or bounded
         drain per cycle) and test it.
 
-- [ ] **Step 3: `main.py`** — wire enrolment (`POST /api/v1/tenant/edge/enrol`), the heartbeat
+- [x] **Step 3: `main.py`** — wire enrolment (`POST /api/v1/tenant/edge/enrol`), the heartbeat
       loop (reporting `spool_depth`/`spool_dropped` from Task 2 and honouring the server's
       returned `next_interval_seconds`), the command channel (`GET /commands/pending`,
       `POST /commands/{id}/ack` — respecting FLOW-13's "expired commands are not executed"), and
@@ -192,7 +192,7 @@ test `backend/tests/test_edge_sync.py`.
       — it is the established shape for multi-loop services in this repo, including the failure
       isolation between loops, and this should follow it.
 
-- [ ] **Step 4:** Suite + ruff. Commit.
+- [x] **Step 4:** Suite + ruff. Commit.
 
 ---
 

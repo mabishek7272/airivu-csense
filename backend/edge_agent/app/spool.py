@@ -350,6 +350,28 @@ class Spool:
         with self._lock:
             return self._delete(wanted, count_as_dropped=False)
 
+    def discard(self, ids: Iterable[int]) -> int:
+        """Deletes rows that can never be delivered, **counting them as drops**.
+
+        The narrow companion to `ack`, and the distinction between the two is the whole
+        reason this exists rather than callers reusing `ack`: `ack` records a success, and
+        the events it removes reached the platform. These did not. They are being given up
+        on - the server named them permanently rejected, or they outlived the sync engine's
+        retry deadline (see `sync.py`'s per-item policy) - and that is loss, indistinguishable
+        in its consequences from an eviction. So it goes through the same persistent
+        `dropped` counter an eviction does, which is what carries it to the server on the
+        next heartbeat as `spool_dropped` and escalates the device to `degraded`.
+
+        A permanently rejected row *has* to be removable, or it sits at the head of every
+        drain and the events behind it never leave the device. Counting it is what stops
+        that fix from being a silent one.
+        """
+        wanted = [int(i) for i in ids]
+        if not wanted:
+            return 0
+        with self._lock:
+            return self._delete(wanted, count_as_dropped=True)
+
     def _delete(self, ids: list[int], *, count_as_dropped: bool) -> int:
         with self._write():
             removed = self._connection.execute(
