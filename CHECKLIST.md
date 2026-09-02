@@ -1242,7 +1242,153 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
 
 ## Phase 6 — Resilience, APIs, Reporting, Privileged Support
 
-- [ ] Edge encrypted offline spool, reconnect cursor, batch resync, dedup
+- [x] Edge encrypted offline spool, reconnect cursor, batch resync, dedup
+  - [x] **First, the edge agent itself had to exist** - `backend/edge/agent/` had never been
+        built (previous sessions built only the server-side enrolment/heartbeat/command
+        contract, `deps_agent.py` and migration 0022/0026/0042). `backend/edge_agent/`
+        (new service, distinct from that empty legacy path) is a from-scratch process
+        implementing `docs/03_APPLICATION_FLOWS.md` §15 FLOW-13 - offline detection, and
+        resync on reconnect.
+  - [x] **Runtime and dependency footprint chosen against the real target**: Python, shipped
+        as a container, built and proven for `linux/arm64` (Pi/Jetson-class hardware -
+        user's explicit direction). The agent does **not** install `csense_shared` - that
+        package's sqlalchemy/asyncpg/redis/minio/argon2-cffi tree needs a C toolchain on
+        ARM, and a process whose entire interaction with the platform is HTTP has no use
+        for any of it. The agent's whole dependency set is `httpx` + `cryptography` +
+        stdlib (`sqlite3` for the spool, `http.server` for the local detection listener) -
+        both third-party packages publish prebuilt `aarch64` wheels, confirmed by a real
+        `docker buildx build --platform linux/arm64` (succeeded, ~6s, no QEMU needed on
+        Docker Desktop's buildx node), not merely asserted.
+  - [x] **The spool has its own device-local key, not the platform KEK.** Shipping
+        `master_v1.key` - the key that decrypts every tenant's camera credentials, TOTP
+        secrets and webhook secrets - to a box sitting in a customer's building would be a
+        real security regression, not a convenience worth taking. `edge_agent/app/crypto.py`
+        generates a 32-byte key on the device at first run (`0600`, refuses a
+        group/world-**writable** key file, mirrors and cites `csense_shared.security.
+        envelope`'s own permission reasoning without reusing its code, since that module's
+        AAD binds database-row concepts a local spool row doesn't have). AES-256-GCM, fresh
+        12-byte nonce per row, AAD binds the row's own id so a captured ciphertext can never
+        be relocated to another row.
+  - [x] `edge_agent/app/spool.py`: SQLite via stdlib (no dependency), one table, payload
+        column holds only the sealed blob. **`synchronous=FULL`, not the usual WAL-mode
+        `NORMAL` advice** - `NORMAL` doesn't fsync on commit, only at a checkpoint, so a
+        power cut (the exact scenario a Pi-class box in the field faces) leaves the file
+        consistent but silently short by the last commits, which are precisely the events
+        no other copy exists of. Oldest-first drain by `(captured_at, id)` (FLOW-13's
+        "original event identity/timestamps are preserved"). **Nothing is ever deleted
+        before the server acknowledges it** - the property that makes at-least-once
+        delivery plus the server's existing `(tenant_id, source_event_id)` uniqueness
+        (migration 0012) into effectively-once. Bounded size, oldest-evicted on overflow
+        with a persistent dropped counter (named tradeoff: the earliest events of a long
+        outage are the ones lost, but the counter reaching the server via heartbeat is what
+        stops that being silent). Verified genuinely encrypted, not merely claimed: a test
+        writes a known string and asserts it is absent from *every* file SQLite touches,
+        including the `-wal` sidecar - checked without closing first, since closing
+        checkpoints the WAL and would hide exactly this class of bug.
+  - [x] **`POST /api/v1/tenant/ingest/detections/batch`** (new) - a device draining a
+        day-long spool one HTTP round trip at a time is what FLOW-13's "uploads batches"
+        step exists to avoid. Capped at 100 items; runs every item through the *same*
+        `ingest_detection` pipeline the single endpoint uses (dedup, rules, incidents,
+        evidence, notifications all behave identically, verified against a real DB); one
+        item's transaction failure never rolls back or blocks its neighbours (own
+        tenant-scoped transaction per item, sequential - reasoned in the endpoint's own
+        docstring: a request-wide transaction would be poisoned by any single item's DB
+        error anyway, so it couldn't continue regardless of rollback semantics). **A
+        malformed item gets its own error entry rather than 422ing the whole request** -
+        found and fixed after the first version typed the body as `list[DetectionIn]`,
+        which let pydantic reject the entire batch before the handler ever ran; one
+        malformed row in a spool would have poisoned every batch it was drained in. Each
+        rejection carries a `retryable` flag the item's own code sets (matching
+        `ProblemResponse.retryable`'s semantics) rather than a client-side guess, so an
+        already-deployed agent fleet classifies a server error code it has never seen as
+        retryable-by-default instead of silently discarding real evidence.
+  - [x] Heartbeat (`HeartbeatIn`) now carries `spool_depth`/`spool_dropped`, stored in the
+        existing `health` JSONB rather than a migration (per-device gauges with nothing in
+        common across hardware classes are exactly what that column is for, migration
+        0026's own reasoning). **A device is marked `degraded` on new drops only - the
+        delta against the previous heartbeat's counter, never the raw cumulative value** -
+        a device that evicted one event a fortnight ago cannot latch `degraded` for the
+        rest of its service life; a device that stops dropping recovers on its very next
+        heartbeat with no flag to clear. Found and fixed along the way: `DeviceOut` exposed
+        neither `health` nor `health_status` at all, so the telemetry
+        `docs/04_UI_UX_DESIGN_BRIEF.md` already documents as shown to an operator was
+        write-only until this pass. Also found and fixed: injecting the `spool` block
+        before the payload size check meant the server's own ~62 added bytes could push a
+        device sitting legitimately at its budget into a 422 - a healthy box would have
+        started looking offline the day this field shipped. The regression test that
+        proves the fix caught a real self-inflicted near-miss: its first version left 200
+        bytes of slack and passed just as happily with the bug present: re-sized to land
+        exactly on the boundary, confirmed by reintroducing the bug and watching it fail.
+  - [x] `edge_agent/app/sync.py`: online delivers immediately without spooling; a duplicate
+        the server reports is acked and removed like any other success, not retried (a
+        duplicate is a successful outcome); a permanently-rejected row is discarded and
+        counted as a drop rather than retried for 24h; a fresh event always goes out
+        immediately regardless of backlog size (the live path never queues behind a large
+        drain), documented tradeoff being that an older backlogged event can correlate into
+        its own incident later, squarely inside FLOW-13's own conflict policy. **A
+        whole-batch 4xx (something even per-item validation can't catch - a malformed body,
+        a proxy-level rejection) is isolated by bisection, not by discarding the batch** -
+        and bisection's own blind spot was found and closed: nothing originally
+        distinguished "this one row is poison" from "every request gets rejected for a
+        reason unrelated to content" (a client-side bug, a hostile proxy), so a systemic
+        cause could have bisected all the way down and discarded an entire backlog as
+        individually "unrecoverable" - exactly the silent evidence loss the whole spool
+        exists to prevent, via a different door. Bounded to 3 leaf discards per bisection
+        episode; past that the engine backs off instead of trusting every remaining leaf is
+        real poison. A real regression test (a fake sender that rejects *everything*
+        regardless of content) proves the backlog survives rather than being drained to
+        zero by discard.
+  - [x] `edge_agent/app/main.py`: enrolment, heartbeat, command and sync loops run
+        concurrently, modelled directly on `notification_worker/app/main.py`'s established
+        shape - including its loop-failure-isolation pattern (a dying sync/command loop is
+        logged and swallowed, never silently taking heartbeat down with it, so the box
+        never "goes dark" over an event-pipeline bug). That isolation guarantee shipped
+        without a test at first, exactly the property this task was told to carry over from
+        an already-tested sibling; closed with the same three-case shape
+        `test_worker_loop_isolation.py` already established (a dying guarded loop is
+        swallowed while its sibling keeps running, cancellation still propagates so
+        shutdown works, a healthy loop returns cleanly).
+  - [x] **Scope boundary, stated where a future reader will find it**: the agent does not do
+        inference in this pass. `source.py` is a narrow, explicit interface (one real
+        implementation: a local, loopback-by-default HTTP listener a co-located inference
+        process hands events to) rather than a fake detector implying the agent sees.
+        Building real ARM inference is separate, larger work that belongs with the Phase 4
+        AI runtime, not something to half-build as a side effect of the spool.
+  - [x] Container: `backend/edge_agent/Dockerfile`, non-root, self-contained build context
+        (no `COPY shared`, matching the no-`csense_shared` decision above). Wired into
+        `infra/docker-compose.yml` (dev only) with its **own explicit, minimal environment**
+        rather than reusing the platform's shared env/secrets anchors - confirmed via
+        `docker compose config` that no Postgres/Redis/MinIO/JWT/master-KEK value reaches
+        it. Deliberately **not** added to `docker-compose.prod.yml`: that file deploys this
+        platform onto infrastructure we own; the edge agent's entire purpose is running on
+        hardware we don't. State (spool + device key) lives on a named volume so it
+        survives a container restart - confirmed live: a second start loads the existing
+        device key rather than generating a new one.
+  - [x] Verified for real, against the live stack, with the agent running as a real
+        container (not imported as a Python module): `scripts/e2e_edge_spool.py` - a real
+        enrolment, a live event delivered directly while online, then the container
+        genuinely cut off the network (`docker network disconnect`, not a mocked flag) with
+        events spooling locally and provably nothing reaching the server, then reconnected
+        with **no manual drain trigger** - the backlog empties on its own, every event's
+        `captured_at` survives the outage untouched (not the delivery time, confirmed
+        against FLOW-13's own conflict policy), and exactly one detection row exists per
+        `source_event_id` despite the drain's own retry machinery - the one assertion no
+        unit test could make, since it depends on the batch endpoint's idempotency and the
+        agent's ack-only-after-confirm spool actually composing correctly together. Full
+        PASS, run twice for consistency, real cleanup confirmed leaving no residue.
+  - [ ] **Deliberately deferred, stated plainly**: the command channel's poll-marks-delivered
+        design is at-most-once, not at-least-once - a command handed to an agent that
+        crashes before acting is never re-offered. Acceptable today because the agent only
+        executes `ping` (inert, no side effect) and acks everything else as
+        `unsupported_command`; stops being acceptable the moment a real command handler
+        (config-apply, reboot) is added, since `device_commands.command_type` is
+        unvalidated free text at the DB layer and nothing stops one being issued today. No
+        Customer CRM UI shows spool depth or the new `degraded` health verdict yet, even
+        though both now arrive over the API. No `scripts/e2e_ingest_batch.py` dedicated to
+        the batch endpoint's own contract in isolation - its idempotency and per-item
+        validation are covered by `test_ingest_batch.py` and exercised for real inside
+        `e2e_edge_spool.py`, but not by a standalone e2e script the way most other
+        endpoints in this file have one.
 - [ ] WireGuard/relay integration design + time-limited diagnostic access
 - [x] Support grant request/approve/active-banner/expiry/revoke + authorization + audit
   - [x] `support_grants` (SCH §5.10, previously spec'd but never built - migration 0043).
