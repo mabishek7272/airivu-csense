@@ -109,6 +109,10 @@ class FakeApi:
         self.retryable: dict[str, bool] = {}
         self.omit: set[str] = set()            # ids the response says nothing about
         self.reject_batch_containing: set[str] = set()  # batch-level 4xx, as pydantic does
+        # A client-side bug, not a server one: every batch, of any size and any content,
+        # comes back 422. What bisection cannot, from inside one recursive call, tell apart
+        # from real row-specific poison.
+        self.reject_everything = False
         self.fail_from_call: int | None = None  # transport dies from this call onward
         self.reverse_results = False
 
@@ -118,6 +122,9 @@ class FakeApi:
             raise sync_mod.TransportError("connection refused")
         if self.fail_from_call is not None and len(self.calls) >= self.fail_from_call:
             raise sync_mod.TransportError("connection reset mid-drain")
+
+        if self.reject_everything:
+            raise sync_mod.BatchRejected(422, "The batch failed validation.")
 
         ids = {d["source_event_id"] for d in detections}
         if ids & self.reject_batch_containing:
@@ -609,6 +616,64 @@ async def test_a_batch_level_rejection_isolates_the_poison_row_and_keeps_the_res
     assert report.delivered == 7
     assert spool.dropped_count() == 1
     assert api.seen == {f"cam1-{n:04d}" for n in range(1, 9)} - {"cam1-0005"}
+
+
+# --- Bisection does not trust its own premise past a budget ------------------------------
+#
+# The failure bisection cannot tell apart from real, row-specific poison purely from
+# inside one recursive call: a client-side bug that 4xxs *every* request, regardless of
+# content, answers `BatchRejected` all the way down to single-item batches exactly the way
+# one genuinely bad row does. Without a budget, that indistinguishability turns a bug in
+# `build_send_fn` (or a proxy 400ing bodies past some size, or a wrong `Content-Type`) into
+# discarding the entire backlog - each row stamped "permanently undeliverable" for a reason
+# that was never about the row at all.
+
+async def test_a_client_bug_that_4xxs_everything_does_not_discard_the_whole_backlog(spool):
+    """The test that would have caught this as originally shipped: every batch this fake
+    sends, of any size and any content, comes back 422 - nothing here is about any row.
+    Unbounded bisection would still discard all 8, one leaf at a time; the budget must stop
+    it well short of that."""
+    api = FakeApi()
+    api.online = False
+    eng = engine(spool, api, batch_size=8, max_batches_per_cycle=5)
+    for n in range(1, 9):
+        await eng.submit(event(n))
+
+    api.online = True
+    api.reject_everything = True
+    report = await eng.drain_once()
+
+    # The backlog survives. This is the assertion that matters: not "zero discarded" (a
+    # small, bounded sacrifice while the pattern still looks row-specific is the accepted
+    # cost of the budget), but that the episode is abandoned long before it reaches the
+    # whole batch.
+    assert spool.depth() > 0
+    assert report.discarded <= sync_mod._BISECTION_DISCARD_BUDGET  # noqa: SLF001
+    assert report.discarded < 8
+    # And it is treated as the transport-level failure it actually is: the link is marked
+    # down and the cycle backs off, rather than looking like a clean, fully-processed drain.
+    assert report.link_failed is True
+    assert eng.online is False
+
+
+async def test_the_budget_still_lets_a_handful_of_real_poison_resolve_normally(spool):
+    """The budget must not turn an ordinary day - two or three genuinely bad rows mixed
+    into one batch, nothing systemic - into an aborted, backed-off cycle. Real poison at or
+    under the budget still isolates and discards exactly as it did before this existed."""
+    api = FakeApi()
+    api.online = False
+    eng = engine(spool, api, batch_size=8, max_batches_per_cycle=5)
+    for n in range(1, 9):
+        await eng.submit(event(n))
+
+    api.online = True
+    api.reject_batch_containing = {"cam1-0002", "cam1-0005", "cam1-0007"}
+    report = await eng.drain_once()
+
+    assert spool.depth() == 0
+    assert report.discarded == 3
+    assert report.delivered == 5
+    assert report.link_failed is False
 
 
 # --- Backoff -----------------------------------------------------------------------------

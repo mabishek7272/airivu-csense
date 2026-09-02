@@ -74,6 +74,16 @@ here is safe: the server dedupes. `source.py` refuses the likely offenders at th
 The path stays because "should be rare" is not "cannot happen", and the alternative is a
 spool that never drains again.
 
+**Bisection trusts its own premise only up to a point.** It assumes a `BatchRejected` is
+evidence about *this batch's rows*, which is true of one malformed row and false of a client
+bug that 4xxs every request regardless of content - a wrong `Content-Type`, a proxy 400ing
+bodies past some size, a broken `build_send_fn`. Nothing distinguishes the two from inside
+one recursive call: both answer `BatchRejected` all the way down to single-item batches. So
+the engine only trusts `_BISECTION_DISCARD_BUDGET` leaf discards per episode; past that it
+stops bisecting, treats the rest of that batch as a `TransportError` (back off, discard
+nothing further), and logs loudly rather than quietly discarding a backlog one leaf at a
+time under a fabricated "permanently undeliverable" reason for every row.
+
 ---
 
 **Backlog versus fresh events: the live path always wins.** When the link is believed up, a
@@ -149,6 +159,26 @@ ISOLATING_STATUSES = frozenset({400, 413, 422})
 # the deadlines, which errs toward keeping events - the safe direction.
 _MAX_TRACKED_REJECTIONS = 10_000
 
+# How many leaf-level discards one bisection episode (one top-level batch that hit a
+# `BatchRejected`) is trusted to produce before the engine stops believing every leaf is
+# real, row-specific poison.
+#
+# Bisection was built for exactly one row being malformed. It cannot, on its own, tell that
+# case apart from "every request this client sends gets a 4xx no matter what's in it" - a
+# bug in `build_send_fn`, a proxy 400ing bodies past some size, a wrong `Content-Type`. That
+# second case answers `BatchRejected` at *every* size down to one, so unbounded bisection
+# recurses to single-item batches and discards the whole backlog, each row stamped with a
+# fabricated "permanently undeliverable" reason - the exact silent evidence loss the spool
+# exists to prevent, arrived at through a different door than the one it was built to guard.
+#
+# 3 is deliberately small. Real poison is normally one row, occasionally a handful sharing
+# the same cause (a firmware bug that stamps the same bad field on a short run of frames);
+# a systemic failure keeps producing 4xxs well past that. The budget bounds the damage from
+# either case to a handful of rows, not the spool, while still letting an ordinary day with
+# two or three genuinely bad rows resolve exactly as before. Past the budget the episode is
+# aborted and treated like a `TransportError`: back off, discard nothing further.
+_BISECTION_DISCARD_BUDGET = 3
+
 
 class TransportError(RuntimeError):
     """The API could not be reached, or answered in a way that says nothing about the rows.
@@ -169,6 +199,20 @@ class BatchRejected(RuntimeError):
         super().__init__(f"{status_code}: {message}")
         self.status_code = status_code
         self.message = message
+
+
+class _SystemicBisectionAbort(TransportError):
+    """One bisection episode discarded `_BISECTION_DISCARD_BUDGET` leaves and is still
+    being told every request is invalid - see that constant for why the engine stops
+    trusting the pattern past that point.
+
+    Deliberately a `TransportError` subclass, not a new top-level case: past the budget the
+    right response really is "back off, discard nothing further", which is exactly what a
+    `TransportError` already means to `drain_once`. `_deliver` accounts for the untouched
+    rows itself before raising this (see there), so `drain_once`'s handler must not also
+    blindly add the whole original batch to `report.retained` - it special-cases this type
+    for exactly that reason.
+    """
 
 
 # What the engine is handed to talk to the platform. One call, one batch, returning the
@@ -458,9 +502,13 @@ class SyncEngine:
                 report.link_failed = True
                 self._go_offline()
                 self._consecutive_failures += 1
-                # Every row of this batch stays exactly where it was. A dropped connection
-                # is not evidence about any of them.
-                report.retained += len(batch)
+                if not isinstance(exc, _SystemicBisectionAbort):
+                    # Every row of this batch stays exactly where it was. A dropped
+                    # connection is not evidence about any of them. (A `_SystemicBisectionAbort`
+                    # already added its own, smaller, precise count to `report.retained`
+                    # before raising - some of this batch was genuinely discarded first, so
+                    # `len(batch)` here would double count those rows.)
+                    report.retained += len(batch)
                 return report
             except Exception:  # noqa: BLE001 - a client bug must not delete anything
                 logger.exception("drain_failed_unexpectedly")
@@ -483,11 +531,55 @@ class SyncEngine:
         return report
 
     async def _deliver(self, batch: Sequence[SpooledEvent], report: DrainReport) -> None:
-        """Sends one batch and settles every row in it. Bisects on a batch-level refusal."""
+        """Sends one batch and settles every row in it, entry point for one bisection
+        episode. See `_BISECTION_DISCARD_BUDGET` for what bounds that episode and why.
+
+        The budget is episode-local - one fresh `[budget]` per top-level batch, shared by
+        reference down the whole recursion tree below - so a batch that resolves cleanly
+        never has its later leaves penalised by a batch that turned out to be systemic
+        earlier in the same drain cycle.
+        """
+        remaining = [_BISECTION_DISCARD_BUDGET]
+        delivered_before, discarded_before = report.delivered, report.discarded
+        try:
+            await self._deliver_bisected(batch, report, remaining)
+        except _SystemicBisectionAbort:
+            # However far the recursion got, `report.delivered`/`.discarded` only moved by
+            # what this episode actually resolved - everything else in `batch` never had a
+            # send attempted on its behalf, or was mid-recursion when the budget ran out.
+            # That is the precise count to retain; `len(batch)` would double-count the rows
+            # already accounted for above.
+            resolved = (report.delivered - delivered_before) + (report.discarded - discarded_before)
+            untouched = len(batch) - resolved
+            report.retained += untouched
+            logger.error(
+                "bisection_abandoned_as_systemic",
+                extra={
+                    "batch_size": len(batch),
+                    "discarded_before_abort": report.discarded - discarded_before,
+                    "retained_untouched": untouched,
+                },
+            )
+            raise
+
+    async def _deliver_bisected(
+        self, batch: Sequence[SpooledEvent], report: DrainReport, remaining: list[int]
+    ) -> None:
+        """The actual bisection, recursive, sharing one episode-wide discard budget."""
         try:
             body = await self._send_fn([dict(row.event) for row in batch])
         except BatchRejected as exc:
             if len(batch) == 1:
+                if remaining[0] <= 0:
+                    # The budget is spent and this would be another leaf discard - the
+                    # signature of every request failing regardless of content, not of one
+                    # more coincidentally-malformed row. Stop trusting the pattern here;
+                    # `_deliver` turns this into a retained count and a backoff.
+                    raise _SystemicBisectionAbort(
+                        f"{_BISECTION_DISCARD_BUDGET} leaf rejections in one bisection "
+                        "episode; treating further ones as systemic, not row-specific."
+                    ) from exc
+                remaining[0] -= 1
                 row = batch[0]
                 logger.error(
                     "spool_row_permanently_undeliverable",
@@ -506,8 +598,8 @@ class SyncEngine:
                 "batch_rejected_isolating", extra={"size": len(batch), "detail": exc.message}
             )
             middle = len(batch) // 2
-            await self._deliver(batch[:middle], report)
-            await self._deliver(batch[middle:], report)
+            await self._deliver_bisected(batch[:middle], report, remaining)
+            await self._deliver_bisected(batch[middle:], report, remaining)
             return
 
         outcomes = parse_batch_response(body)
