@@ -56,6 +56,7 @@ import httpx
 
 from .config import AGENT_VERSION, AgentSettings, ConfigError
 from .crypto import load_or_create_device_key
+from .logbuf import RingBufferLogHandler
 from .source import LocalHttpSource
 from .spool import Spool
 from .sync import SyncEngine, TransportError, raise_for_batch_response
@@ -207,6 +208,7 @@ async def heartbeat_loop(
     *,
     interval_seconds: float,
     stop: asyncio.Event,
+    log_handler: RingBufferLogHandler | None = None,
 ) -> None:
     """Reports health and spool telemetry, and honours the interval the server returns.
 
@@ -214,10 +216,22 @@ async def heartbeat_loop(
     failures are caught (an outage is the normal case for this device, not an error), but
     anything structural is allowed to end the process so the container restarts rather than
     running on with no way to be seen.
+
+    `log_handler` is optional so this loop stays directly testable without wiring a real
+    `logging` handler into the standard library's global state for every test - see
+    `logbuf.py`'s module docstring for the byte-budget reasoning behind what it contributes.
     """
     interval = interval_seconds
     while not stop.is_set():
         snapshot = engine.snapshot()
+        health: dict[str, Any] = {
+            "service": {
+                "spool_bytes": snapshot["spool_bytes"],
+                "uplink": "up" if snapshot["online"] else "down",
+            }
+        }
+        if log_handler is not None:
+            health["logs"] = log_handler.tail()
         try:
             response = await client.post(
                 "/api/v1/tenant/edge/heartbeat",
@@ -226,12 +240,7 @@ async def heartbeat_loop(
                     "agent_version": AGENT_VERSION,
                     "spool_depth": snapshot["spool_depth"],
                     "spool_dropped": snapshot["spool_dropped"],
-                    "health": {
-                        "service": {
-                            "spool_bytes": snapshot["spool_bytes"],
-                            "uplink": "up" if snapshot["online"] else "down",
-                        }
-                    },
+                    "health": health,
                 },
             )
             response.raise_for_status()
@@ -388,6 +397,13 @@ async def amain() -> None:
         level=os.environ.get("CSENSE_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # Attached to the root logger, before anything else can log, so every module's own
+    # `logging.getLogger(__name__)` calls (`spool.py`, `sync.py`, `source.py`, `crypto.py`)
+    # feed the same tail without each needing to know it exists - see `logbuf.py`'s module
+    # docstring for the byte budget and the redaction this handler applies to every record
+    # that reaches it.
+    log_handler = RingBufferLogHandler()
+    logging.getLogger().addHandler(log_handler)
     settings = AgentSettings.from_env()
 
     key = load_or_create_device_key(settings.device_key_path)
@@ -444,6 +460,7 @@ async def amain() -> None:
                 heartbeat_loop(
                     client, engine,
                     interval_seconds=settings.heartbeat_interval_seconds, stop=stop,
+                    log_handler=log_handler,
                 ),
                 _isolated("sync_loop", engine.run_forever(stop)),
                 _isolated("command_loop", command_loop(client, stop=stop)),
