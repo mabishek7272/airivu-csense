@@ -872,6 +872,11 @@ async def enrol(
     )
 
 
+# What a device may send in one `health` snapshot. Applied to the device's own payload
+# only - see the heartbeat handler for why server-added fields are deliberately outside it.
+HEALTH_PAYLOAD_LIMIT = 16384
+
+
 def _json(value: dict, limit: int = 8192) -> str:
     import json
 
@@ -1065,6 +1070,14 @@ async def heartbeat(
     device_id = uuid.UUID(agent.device_id)
     tenant_id = uuid.UUID(agent.tenant_id)
 
+    # The device's own payload is checked against its budget *before* anything server-side
+    # is added to it. Checking the combined dict instead would let our own ~150-byte `spool`
+    # block push a device that was legitimately inside the limit over it - and a rejected
+    # heartbeat makes a healthy box look offline, which is a worse failure than the
+    # oversized payload the budget exists to prevent. The limit is the device's contract;
+    # bytes it did not send must not count against it.
+    _json(body.health, limit=HEALTH_PAYLOAD_LIMIT)
+
     health = dict(body.health)
     health_status = body.status
     if body.spool_depth is not None or body.spool_dropped is not None:
@@ -1112,7 +1125,10 @@ async def heartbeat(
         ),
         {
             "id": device_id,
-            "health": _json(health, limit=16384),
+            # Headroom over HEALTH_PAYLOAD_LIMIT, not a second budget: the device's own
+            # payload was already checked above, and this only has to accommodate the small
+            # `spool` block added since. Still bounded, so a bug here cannot write unbounded.
+            "health": _json(health, limit=HEALTH_PAYLOAD_LIMIT + 2048),
             "health_status": health_status,
             "method": body.connectivity_method,
             "reason": body.connectivity_reason,

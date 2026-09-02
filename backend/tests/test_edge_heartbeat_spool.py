@@ -320,6 +320,46 @@ async def test_the_agents_own_health_snapshot_is_not_clobbered(ctx):
 
 
 @pytestmark_db
+async def test_a_device_at_its_payload_budget_can_still_heartbeat_with_a_spool(ctx):
+    """The server's own added bytes must not push a device over the device's budget.
+
+    `health` is size-checked so a compromised box cannot fill the table. Adding the `spool`
+    block to the dict *before* that check would have meant a device sitting legitimately
+    just inside the limit started getting 422s the day this field shipped - and a rejected
+    heartbeat makes a perfectly healthy box look offline, which is far worse than the
+    oversized payload the budget exists to stop. The limit is a contract about what the
+    device sends; bytes it did not send cannot count against it.
+    """
+    edge = _load_edge_module()
+    # Sized to land *exactly* on the device's budget, not merely near it. An earlier
+    # version of this test left 200 bytes of slack - more than the ~62-byte spool block
+    # needs - so it passed just as happily with the bug present. The boundary is the only
+    # place this behaviour differs, so the test has to sit on it.
+    # json.dumps({"blob": "x" * n}) is n + 12 bytes.
+    filler = "x" * (edge.HEALTH_PAYLOAD_LIMIT - 12)
+    response = await _beat(
+        ctx, status="ok", health={"blob": filler}, spool_depth=7, spool_dropped=0
+    )
+
+    assert response.status_code == 200, response.text
+    health, _ = await _stored(ctx)
+    assert health["spool"]["depth"] == 7
+    assert health["blob"] == filler
+
+
+@pytestmark_db
+async def test_a_device_genuinely_over_the_budget_is_still_refused(ctx):
+    """The headroom above is for our own small addition, not a wider limit for the device."""
+    edge = _load_edge_module()
+    response = await _beat(
+        ctx, status="ok", health={"blob": "x" * (edge.HEALTH_PAYLOAD_LIMIT + 1)}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "payload_too_large"
+
+
+@pytestmark_db
 async def test_a_negative_count_is_refused(ctx):
     """A negative depth is a bug in the agent, and storing it would put a nonsense number
     on an operator's screen with nothing to say where it came from."""
