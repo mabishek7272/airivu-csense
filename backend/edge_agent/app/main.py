@@ -31,12 +31,20 @@ immediately before execution, and an expired command is acked as `expired`/not-s
 rather than run. The ack matters: without it the operator's console shows `delivered`
 forever with no explanation of why nothing happened.
 
-This agent implements exactly one command (`ping`) and acks everything else as unsupported.
-That is honest rather than lazy: reboot, config-apply and model-update all need the
-artifact-verification step FLOW-13's step 8 describes ("applies newer configuration only
-after artifact verification"), and a handler that applied unverified configuration would be
-worse than no handler at all. Acking as `unsupported_command` means the operator sees the
-refusal instead of a command sitting in `delivered` forever.
+This agent implements two commands: `ping`, and `config_push` — device-level operational
+config (heartbeat interval, spool byte/row caps, backoff parameters) pushed as a signed,
+versioned desired-state command
+(docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md, Task 4).
+Everything else still acks as unsupported. That is honest rather than lazy: reboot and
+model-update need artifact-verification machinery this build does not have reason to build
+yet (no consumer - the edge agent stays out of model/pipeline territory, Phase 4's), and a
+handler that applied something unverified would be worse than no handler at all. `config_
+push`'s own "artifact verification" (FLOW-13 step 8) is `config.validate_config_push`
+checking the payload against the exact bounds `AgentSettings.from_env` enforces at boot -
+see that function's docstring for why reusing those bounds rather than inventing new ones
+matters. Acking as `unsupported_command` (for everything still unimplemented) or `out_of_
+bounds` (for a `config_push` that fails validation) means the operator sees the refusal
+instead of a command sitting in `delivered` forever.
 """
 from __future__ import annotations
 
@@ -54,7 +62,14 @@ from typing import Any
 
 import httpx
 
-from .config import AGENT_VERSION, AgentSettings, ConfigError
+from .config import (
+    AGENT_VERSION,
+    AgentSettings,
+    ConfigError,
+    ConfigPushRejected,
+    RuntimeConfig,
+    validate_config_push,
+)
 from .crypto import load_or_create_device_key
 from .logbuf import RingBufferLogHandler
 from .source import LocalHttpSource
@@ -63,9 +78,17 @@ from .sync import SyncEngine, TransportError, raise_for_batch_response
 
 logger = logging.getLogger(__name__)
 
-# Commands this build can actually carry out. See the module docstring for why the list is
-# this short and why everything else is refused rather than best-efforted.
+# Commands this build can actually carry out. `config_push` is handled separately, ahead of
+# this list - see `_run_command` - because unlike `ping` it needs `RuntimeConfig`/`Spool`/
+# `SyncEngine` to act on, not just an ack to send back.
 SUPPORTED_COMMANDS = ("ping",)
+
+# A config-push command's own type, matching `tenant_api/app/api/edge.py`'s
+# `CONFIG_PUSH_COMMAND_TYPE` - the two are independent constants in independent packages
+# (this package cannot import `csense_shared` or anything from `tenant_api` - see this
+# repo's own CLAUDE.md), so the string itself is the contract between them, not a shared
+# symbol.
+CONFIG_PUSH_COMMAND_TYPE = "config_push"
 
 # How often the device asks for commands. Independent of the heartbeat interval on purpose:
 # the server can widen the heartbeat cadence fleet-wide during an incident, and command
@@ -206,11 +229,12 @@ async def heartbeat_loop(
     client: httpx.AsyncClient,
     engine: SyncEngine,
     *,
-    interval_seconds: float,
+    runtime_config: RuntimeConfig,
     stop: asyncio.Event,
     log_handler: RingBufferLogHandler | None = None,
 ) -> None:
-    """Reports health and spool telemetry, and honours the interval the server returns.
+    """Reports health, spool telemetry, and `observed_state_version`; honours whichever of
+    the server's response and a `config_push` command most recently set the interval.
 
     Deliberately unguarded at the top level - see the module docstring. Individual request
     failures are caught (an outage is the normal case for this device, not an error), but
@@ -220,8 +244,16 @@ async def heartbeat_loop(
     `log_handler` is optional so this loop stays directly testable without wiring a real
     `logging` handler into the standard library's global state for every test - see
     `logbuf.py`'s module docstring for the byte-budget reasoning behind what it contributes.
+
+    **Reads `runtime_config.heartbeat_interval_seconds` fresh at the bottom of every
+    iteration rather than caching it in a local variable at the top of the function**, which
+    is what makes a `config_push` command take effect on this loop's very next wait without
+    a restart: `_run_command` (running as a sibling coroutine on the same event loop, via
+    `command_loop`) can mutate that attribute at any point between two iterations, and the
+    next `_wait` call below picks it up because it is read, not assumed. See
+    `config.RuntimeConfig`'s own docstring for why no lock is needed for that mutation to be
+    safe on a single event loop.
     """
-    interval = interval_seconds
     while not stop.is_set():
         snapshot = engine.snapshot()
         health: dict[str, Any] = {
@@ -241,6 +273,12 @@ async def heartbeat_loop(
                     "spool_depth": snapshot["spool_depth"],
                     "spool_dropped": snapshot["spool_dropped"],
                     "health": health,
+                    # First real writer of `edge_devices.observed_state_version`
+                    # (migration 0042) - 0 until a config_push command has ever been
+                    # successfully applied, matching that column's own default, so a device
+                    # that has never received one reports "no observed state yet" rather
+                    # than a value implying it converged on something nobody asked for.
+                    "observed_state_version": runtime_config.observed_state_version,
                 },
             )
             response.raise_for_status()
@@ -256,15 +294,47 @@ async def heartbeat_loop(
             # does not have to wait for its next event to discover the link returned.
             engine.note_link_healthy()
             returned = body.get("next_interval_seconds")
-            if isinstance(returned, int) and 5 <= returned <= 3600 and returned != interval:
+            # Once a config_push has explicitly named *this field* (`runtime_config.
+            # heartbeat_interval_pinned_by_config_push`), FLOW-13's conflict policy -
+            # "cloud desired state wins for configuration" - makes that versioned, acked
+            # value the authoritative one. This ephemeral, unversioned advisory must not
+            # silently overwrite it on the very next heartbeat, which is exactly what would
+            # happen against this deployment's own `/heartbeat` route: it always returns
+            # the same constant `HEARTBEAT_INTERVAL_SECONDS`, so without this guard a
+            # device would revert to 30 seconds one heartbeat after a real config-push to,
+            # say, 5 - acknowledging the command while silently discarding its effect.
+            #
+            # Deliberately gated on the flag, not on `observed_state_version != 0`: that
+            # counter is bumped by *any* applied config-push, including one that only
+            # changes `spool_max_rows` or a backoff parameter and never mentions the
+            # interval at all. Gating on the version alone would permanently silence this
+            # advisory - the mechanism `edge.py`'s own comment says exists "so the cadence
+            # can be widened during an incident without shipping firmware" - for every
+            # device that ever receives an unrelated config-push, which is not what
+            # "cloud desired state wins" is supposed to mean for a field the cloud never
+            # actually expressed an opinion on. Before any config-push names this field,
+            # the advisory still governs - unchanged from this mechanism's original
+            # behaviour.
+            if (
+                not runtime_config.heartbeat_interval_pinned_by_config_push
+                and isinstance(returned, int)
+                and 5 <= returned <= 3600
+                and returned != runtime_config.heartbeat_interval_seconds
+            ):
                 logger.info("heartbeat_interval_changed", extra={"seconds": returned})
-                interval = float(returned)
+                runtime_config.heartbeat_interval_seconds = returned
 
-        await _wait(stop, interval)
+        await _wait(stop, runtime_config.heartbeat_interval_seconds)
 
 
 async def command_loop(
-    client: httpx.AsyncClient, *, stop: asyncio.Event, interval_seconds: float = COMMAND_POLL_SECONDS
+    client: httpx.AsyncClient,
+    *,
+    runtime_config: RuntimeConfig,
+    spool: Spool,
+    engine: SyncEngine,
+    stop: asyncio.Event,
+    interval_seconds: float = COMMAND_POLL_SECONDS,
 ) -> None:
     """Polls for signed commands, runs what it can, and acks everything it was handed."""
     while not stop.is_set():
@@ -278,18 +348,32 @@ async def command_loop(
             delay = COMMAND_RETRY_SECONDS
         else:
             for command in commands:
-                await _run_command(client, command)
+                await _run_command(client, command, runtime_config=runtime_config, spool=spool, engine=engine)
         await _wait(stop, delay)
 
 
-async def _run_command(client: httpx.AsyncClient, command: dict[str, Any]) -> None:
+async def _run_command(
+    client: httpx.AsyncClient,
+    command: dict[str, Any],
+    *,
+    runtime_config: RuntimeConfig | None = None,
+    spool: Spool | None = None,
+    engine: SyncEngine | None = None,
+) -> None:
     """Executes one command, or explains why it did not.
 
     Expiry is re-checked here, not merely trusted from the poll: `/commands/pending`
     filters on the server's clock at the moment it answers, and a command can expire
     between being handed over and reaching this line - during a long drain, or while the
     process was restarting. FLOW-13's conflict policy says expired commands are not
-    executed, and an expiry window that is only enforced at one end is not enforced.
+    executed, and an expiry window that is only enforced at one end is not enforced. This
+    check runs before any command-type dispatch, so it applies to `config_push` exactly as
+    it already did to `ping` - an expired config-push is never applied, and
+    `observed_state_version` does not move.
+
+    `runtime_config`/`spool`/`engine` are keyword-only and default to `None` so every
+    existing `ping`/unsupported-command test in `test_edge_sync.py` keeps working
+    unchanged - only `config_push` ever reads them.
     """
     command_id = command.get("id")
     command_type = command.get("command_type")
@@ -308,6 +392,13 @@ async def _run_command(client: httpx.AsyncClient, command: dict[str, Any]) -> No
         )
         return
 
+    if command_type == CONFIG_PUSH_COMMAND_TYPE:
+        await _apply_config_push(
+            client, command_id, command.get("payload") or {},
+            runtime_config=runtime_config, spool=spool, engine=engine,
+        )
+        return
+
     if command_type not in SUPPORTED_COMMANDS:
         # Refused explicitly rather than ignored: an unacked command sits in `delivered`
         # on the operator's console forever, which reads as "the device is still working
@@ -318,12 +409,110 @@ async def _run_command(client: httpx.AsyncClient, command: dict[str, Any]) -> No
         await _ack(
             client, command_id, success=False, code="unsupported_command",
             summary=f"This agent build ({AGENT_VERSION}) does not implement "
-                    f"'{command_type}'. Supported: {', '.join(SUPPORTED_COMMANDS)}.",
+                    f"'{command_type}'. Supported: "
+                    f"{', '.join((*SUPPORTED_COMMANDS, CONFIG_PUSH_COMMAND_TYPE))}.",
         )
         return
 
     logger.info("command_executed", extra={"command_id": command_id, "command_type": command_type})
     await _ack(client, command_id, success=True, code="ok", summary="Agent is alive.")
+
+
+async def _apply_config_push(
+    client: httpx.AsyncClient,
+    command_id: Any,
+    payload: dict[str, Any],
+    *,
+    runtime_config: RuntimeConfig | None,
+    spool: Spool | None,
+    engine: SyncEngine | None,
+) -> None:
+    """Validates and applies one `config_push` command's payload - FLOW-13 step 8's
+    "applies newer configuration only after artifact verification", for this narrow
+    payload: `config.validate_config_push` checking it against the exact bounds `Agent
+    Settings.from_env` enforces at boot (see that function's own docstring for why reusing
+    those numbers, not a second copy of them, is the point).
+
+    A rejected payload is never partially applied, coerced, or clamped - it is logged and
+    acked with `result_code="out_of_bounds"`, and every one of `runtime_config`/`spool`/
+    `engine` is left exactly as it was, `observed_state_version` included. Applying happens
+    only after validation succeeds for every field in the payload at once.
+    """
+    if runtime_config is None or spool is None or engine is None:
+        # Only reachable if a future caller wires the command loop without these - amain()
+        # always supplies them. Refused rather than crashed: a device that cannot apply a
+        # config-push is a device that should say so, not one that raises out of a loop the
+        # module docstring promises stays isolated.
+        logger.error("config_push_no_runtime_context", extra={"command_id": command_id})
+        await _ack(
+            client, command_id, success=False, code="internal_error",
+            summary="This agent instance was not wired with a runtime config to apply "
+                    "a config_push against.",
+        )
+        return
+
+    target_version = payload.get("target_version")
+    if not isinstance(target_version, int) or isinstance(target_version, bool) or target_version < 0:
+        logger.warning("config_push_rejected", extra={"command_id": command_id, "detail": "missing target_version"})
+        await _ack(
+            client, command_id, success=False, code="out_of_bounds",
+            summary="config_push payload is missing a valid non-negative target_version.",
+        )
+        return
+
+    try:
+        merged = validate_config_push(payload, current=runtime_config)
+    except ConfigPushRejected as exc:
+        logger.warning("config_push_rejected", extra={"command_id": command_id, "detail": str(exc)})
+        await _ack(client, command_id, success=False, code="out_of_bounds", summary=str(exc))
+        return
+
+    # Applied in dependency order: the two objects that own their own copy of a bound
+    # first, `runtime_config` - the single source of truth `heartbeat_loop` reads - last,
+    # so a crash between these lines still leaves `Spool`/`SyncEngine` and `RuntimeConfig`
+    # agreeing with each other rather than `RuntimeConfig` claiming a value neither object
+    # actually holds yet. `set_limits`/`set_backoff` are each idempotent against a value
+    # that has not changed, so calling both unconditionally (rather than only for the
+    # fields this particular payload named) costs nothing.
+    #
+    # `spool.set_limits` runs via `asyncio.to_thread`, not called directly: it can run a
+    # real multi-row SQLite DELETE-and-fsync sequence (a drastically lowered cap against a
+    # spool genuinely near capacity - see that method's own docstring), and `spool.py`'s
+    # module docstring is explicit that every one of its methods must be called this way
+    # from async code, exactly as `sync.py` already does for every other caller. This is
+    # the one genuine `await` point in this function - and the reason `runtime_config` is
+    # left completely untouched until *after* it returns: a coroutine that runs while this
+    # is suspended (`heartbeat_loop`, most likely) must see either the fully-old state or
+    # the fully-new one, never a mix - which holds here because every `runtime_config.*`
+    # assignment below happens only once this line has already completed, with no further
+    # `await` between any of them.
+    await asyncio.to_thread(spool.set_limits, max_rows=merged.spool_max_rows, max_bytes=merged.spool_max_bytes)
+    engine.set_backoff(
+        initial_seconds=merged.backoff_initial_seconds, max_seconds=merged.backoff_max_seconds
+    )
+    if "heartbeat_interval_seconds" in payload:
+        # Distinct from "any config-push landed" - see `RuntimeConfig.heartbeat_interval_
+        # pinned_by_config_push`'s own docstring for why a push that only touches, say,
+        # `spool_max_rows` must not also silence the server's cadence-widening advisory.
+        runtime_config.heartbeat_interval_pinned_by_config_push = True
+    runtime_config.heartbeat_interval_seconds = merged.heartbeat_interval_seconds
+    runtime_config.spool_max_rows = merged.spool_max_rows
+    runtime_config.spool_max_bytes = merged.spool_max_bytes
+    runtime_config.backoff_initial_seconds = merged.backoff_initial_seconds
+    runtime_config.backoff_max_seconds = merged.backoff_max_seconds
+    # The last write: once this is set, the next heartbeat reports convergence. Setting it
+    # only after every other field above has actually been applied is what makes that
+    # report true rather than aspirational.
+    runtime_config.observed_state_version = target_version
+
+    logger.info(
+        "config_push_applied",
+        extra={"command_id": command_id, "command_type": CONFIG_PUSH_COMMAND_TYPE},
+    )
+    await _ack(
+        client, command_id, success=True, code="ok",
+        summary=f"Applied config_push; now converging on desired_state_version {target_version}.",
+    )
 
 
 async def _ack(
@@ -405,6 +594,10 @@ async def amain() -> None:
     log_handler = RingBufferLogHandler()
     logging.getLogger().addHandler(log_handler)
     settings = AgentSettings.from_env()
+    # What the process is *running* with, as opposed to `settings` (what it *booted* with,
+    # frozen). `_run_command` mutates this in place when a `config_push` command is applied
+    # - see `config.RuntimeConfig`'s own docstring for why that is safe without a lock.
+    runtime_config = RuntimeConfig.from_settings(settings)
 
     key = load_or_create_device_key(settings.device_key_path)
     spool = Spool(
@@ -459,11 +652,15 @@ async def amain() -> None:
                 # a device that has stopped.
                 heartbeat_loop(
                     client, engine,
-                    interval_seconds=settings.heartbeat_interval_seconds, stop=stop,
-                    log_handler=log_handler,
+                    runtime_config=runtime_config, stop=stop, log_handler=log_handler,
                 ),
                 _isolated("sync_loop", engine.run_forever(stop)),
-                _isolated("command_loop", command_loop(client, stop=stop)),
+                _isolated(
+                    "command_loop",
+                    command_loop(
+                        client, runtime_config=runtime_config, spool=spool, engine=engine, stop=stop
+                    ),
+                ),
             )
         finally:
             stop.set()

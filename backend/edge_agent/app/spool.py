@@ -297,6 +297,39 @@ class Spool:
                 extra={"dropped": dropped, "depth": self._rows, "bytes": self._bytes},
             )
 
+    def set_limits(self, *, max_rows: int | None = None, max_bytes: int | None = None) -> None:
+        """Changes the spool's ceilings while it is running - a `config_push` command's own
+        "genuinely observed running, not just on next restart" requirement
+        (docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md,
+        Task 4). Either argument left `None` leaves that ceiling untouched, so
+        `main.py`'s `_run_command` can apply a config-push that only names one of the two
+        fields without having to re-supply the other from `RuntimeConfig` itself.
+
+        Guarded by the same `self._lock` `append` and `_evict_locked` already use: `append`
+        runs on a thread-pool thread (`asyncio.to_thread`, per this module's own docstring),
+        so a limit change racing an in-flight append is a real concurrent-access case, not
+        a theoretical one - without the lock, an append could read a half-updated pair of
+        ceilings, or this method could read row/byte counts mid-insert.
+
+        A lowered ceiling evicts immediately, inside this same call, rather than waiting for
+        the next `append` to notice the spool is over budget - a spool sitting comfortably
+        under its *old* limit can otherwise go a long time with no new event to trigger the
+        eviction `append` would otherwise perform, during which an operator who just pushed
+        a smaller cap would see no effect at all.
+        """
+        if max_rows is not None and max_rows < 1:
+            raise SpoolError("A spool needs a positive row ceiling.")
+        if max_bytes is not None and max_bytes < 1:
+            raise SpoolError("A spool needs a positive byte ceiling.")
+
+        with self._lock:
+            if max_rows is not None:
+                self._max_rows = max_rows
+            if max_bytes is not None:
+                self._max_bytes = max_bytes
+            with self._write():
+                self._evict_locked()
+
     # --- Reading --------------------------------------------------------------------------
 
     def drain(self, limit: int) -> list[SpooledEvent]:

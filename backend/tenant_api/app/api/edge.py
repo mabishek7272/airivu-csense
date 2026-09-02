@@ -155,6 +155,15 @@ class DeviceOut(BaseModel):
     last_seen_at: dt.datetime | None = None
     last_error: str | None = None
     created_at: dt.datetime
+    # FLOW-13's desired-state/observed-state pair (migration 0042). `desired_state_version`
+    # is bumped by `POST /devices/{id}/config` (Task 4 of this plan) - the control plane's
+    # target. `observed_state_version` is written by the device's own heartbeat once it has
+    # actually applied a config_push command whose payload validated. Equal means converged;
+    # `desired_state_version` ahead means either a command is still in flight or - if it has
+    # already expired - one that will now never be applied, which is exactly the case FLOW-
+    # 13 says must stay visible rather than silently resolve itself.
+    desired_state_version: int = 0
+    observed_state_version: int = 0
 
 
 class EnrolmentTokenOut(BaseModel):
@@ -177,7 +186,11 @@ _SELECT = """
            -- Appended rather than slotted in beside `d.health` on purpose: every column
            -- here is read back by ordinal, and renumbering twenty-odd of them to add one
            -- is how an off-by-one gets shipped between two same-typed fields.
-           d.health_status, d.health
+           d.health_status, d.health,
+           -- Same reasoning, same discipline: appended at the tail again for Task 4's
+           -- desired/observed state pair rather than inserted anywhere that would
+           -- renumber what `_to_device` already reads by position.
+           d.desired_state_version, d.observed_state_version
     FROM edge_devices d
     LEFT JOIN sites s ON s.id = d.site_id
 """
@@ -195,6 +208,7 @@ def _to_device(row, now: dt.datetime) -> DeviceOut:
         has_wireguard_key=bool(row[18]), enrolled_at=row[19],
         last_seen_at=last_seen, last_error=row[21], created_at=row[22],
         camera_count=row[23], health_status=row[24], health=row[25] or {},
+        desired_state_version=row[26], observed_state_version=row[27],
     )
 
 
@@ -1033,6 +1047,13 @@ class HeartbeatIn(BaseModel):
     # telemetry being absent.
     spool_depth: int | None = Field(default=None, ge=0, le=MAX_SPOOL_COUNTER)
     spool_dropped: int | None = Field(default=None, ge=0, le=MAX_SPOOL_COUNTER)
+    # First real writer of `edge_devices.observed_state_version` (migration 0042) - see
+    # the "Signed commands" section below (`push_config`) for the writer of `desired_
+    # state_version` it converges towards. Optional for the same reason `spool_depth`/
+    # `spool_dropped` are: a fleet already in the field, or a `gateway`-role device with
+    # nothing to converge on yet, predates this entirely and must keep heartbeating
+    # exactly as before.
+    observed_state_version: int | None = Field(default=None, ge=0)
 
 
 class HeartbeatOut(BaseModel):
@@ -1116,6 +1137,15 @@ async def heartbeat(
                 connectivity_method = COALESCE(:method, connectivity_method),
                 connectivity_reason = COALESCE(:reason, connectivity_reason),
                 agent_version = COALESCE(:agent_version, agent_version),
+                -- COALESCE, not a monotonic GREATEST: the same "trust what the device
+                -- says about itself" stance connectivity_method/agent_version already take
+                -- on this same row. A value that goes backward would mean the device
+                -- itself is confused about what it applied (or was reimaged, or
+                -- downgraded its build) - a fact worth surfacing as-is on GET
+                -- /devices/{id}, not one to paper over with a clamp the way
+                -- spool_dropped's cumulative counter cannot afford to be papered over
+                -- either.
+                observed_state_version = COALESCE(:observed_state_version, observed_state_version),
                 last_error = :last_error,
                 last_seen_at = :now,
                 last_health_at = :now,
@@ -1133,6 +1163,7 @@ async def heartbeat(
             "method": body.connectivity_method,
             "reason": body.connectivity_reason,
             "agent_version": body.agent_version,
+            "observed_state_version": body.observed_state_version,
             "last_error": body.last_error,
             "now": now,
         },
@@ -1229,14 +1260,24 @@ async def device_health_history(
 # --- Signed commands: expiry + idempotency, desired-state push to the device --------
 #
 # CHECKLIST: "Signed commands with expiry/idempotency (desired-state push to the
-# device)". Issue/list below are operator-facing (`edge.manage`/`edge.read`, a person's
-# own session); poll/ack are device-facing (`current_agent`, the device's own credential
-# - the same authentication `/heartbeat` already uses). See
-# `csense_shared.security.signed_commands`'s own docstring for what "signed" means here
-# and why there is no consuming edge agent yet to poll/ack for real.
+# device)". Issue/list/config below are operator-facing (`edge.manage`/`edge.read`, a
+# person's own session); poll/ack are device-facing (`current_agent`, the device's own
+# credential - the same authentication `/heartbeat` already uses). See
+# `csense_shared.security.signed_commands`'s own docstring for what "signed" means here.
+# `backend/edge_agent/app/main.py` is the real consuming agent as of Task 4 of
+# docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md - it
+# polls/acks for real, and implements `ping` and `config_push` (everything else still
+# acked as `unsupported_command`).
 
 DEFAULT_COMMAND_TTL_SECONDS = 3600
 MAX_COMMAND_TTL_SECONDS = 7 * 24 * 3600
+
+# The one `command_type` that carries desired-state semantics - see `push_config` below,
+# the only route allowed to create one. Matches `CONFIG_PUSH_COMMAND_TYPE` in
+# `backend/edge_agent/app/main.py`: two independent constants in two independent packages
+# (the edge agent cannot import `csense_shared` or anything server-side - see this repo's
+# CLAUDE.md), so this literal string is the whole contract between them, not a shared symbol.
+CONFIG_PUSH_COMMAND_TYPE = "config_push"
 
 
 class IssueCommandIn(BaseModel):
@@ -1292,6 +1333,25 @@ async def issue_command(
     was retrying must be indistinguishable in their effect.
     """
     require_permission(context, "edge.manage")
+    if body.command_type == CONFIG_PUSH_COMMAND_TYPE:
+        # `POST /devices/{id}/config` below is the only path allowed to mint one of these:
+        # it is what bumps `desired_state_version` and stamps the resulting number into the
+        # payload as `target_version`, atomically with signing the envelope. A config_push
+        # issued through this generic route would carry no `target_version` at all - the
+        # agent's own `validate_config_push` already refuses that payload shape, so this
+        # would fail safe even without this guard, but rejecting it here keeps "desired
+        # state" meaning what `GET /devices/{id}` claims it means, rather than relying on
+        # the device to be the only thing enforcing it.
+        raise ApiError(
+            status_code=422,
+            code="use_config_push_route",
+            message=(
+                f"'{CONFIG_PUSH_COMMAND_TYPE}' commands must be issued through "
+                f"POST /devices/{{id}}/config, not this generic route - only that route "
+                "bumps desired_state_version and stamps the target version a device "
+                "converges on."
+            ),
+        )
     await _load(db, device_id)  # 404s before doing anything if this isn't a real device
 
     existing = (
@@ -1355,6 +1415,159 @@ async def issue_command(
 
     result = (await db.execute(text(f"{_COMMAND_SELECT} WHERE id = :id"), {"id": command_id})).first()
     return _command_out(result)
+
+
+# --- Desired-state config push: device-level operational config only -------------------
+#
+# docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md, Task 4.
+# Scoped to exactly the five fields backend/edge_agent/app/config.py already exposes as
+# runtime-tunable via CSENSE_* env vars (heartbeat interval, spool byte/row caps, backoff
+# parameters) - not model/pipeline config, which is Phase 4 AI-runtime territory this plan's
+# own header explicitly stays out of. Bounds here are deliberately loose (just "must be
+# positive"), not a second copy of config.py's exact numbers: FLOW-13 step 8's "applies
+# newer configuration only after artifact verification" is a *device*-side check
+# (`config.validate_config_push`, checked against the same bounds `AgentSettings.from_env`
+# enforces at boot) - duplicating those numbers here would create two sources of truth that
+# could drift apart, and the failure mode of a loosely-checked request here is an ordinary
+# 422, never a device applying something unsafe.
+CONFIG_PUSH_FIELD_NAMES = (
+    "heartbeat_interval_seconds", "spool_max_rows", "spool_max_bytes",
+    "backoff_initial_seconds", "backoff_max_seconds",
+)
+
+
+class ConfigPushIn(BaseModel):
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=1)
+    spool_max_rows: int | None = Field(default=None, ge=1)
+    spool_max_bytes: int | None = Field(default=None, ge=1)
+    backoff_initial_seconds: float | None = Field(default=None, gt=0)
+    backoff_max_seconds: float | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=DEFAULT_COMMAND_TTL_SECONDS, ge=30, le=MAX_COMMAND_TTL_SECONDS)
+
+
+class ConfigPushOut(BaseModel):
+    device: DeviceOut
+    command: CommandOut
+
+
+@router.post("/devices/{device_id}/config", response_model=ConfigPushOut, status_code=201)
+async def push_config(
+    device_id: uuid.UUID,
+    body: ConfigPushIn,
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> ConfigPushOut:
+    """Pushes device-level operational config as a signed, expiring, versioned command -
+    the only route that bumps `edge_devices.desired_state_version` (migration 0042's first
+    real writer). The new version is stamped into the signed payload as `target_version`,
+    which is what the device echoes back as `observed_state_version` once it has actually
+    applied the change (see `main.py::_apply_config_push` on the agent side) - that pairing
+    is what makes `GET /devices/{id}`'s two counters mean "converged" when equal and "still
+    in flight, or - if the command has since expired - never going to converge" when not.
+
+    Idempotent on `idempotency_key`, identically to `issue_command`: a retried request
+    returns the command already issued rather than bumping the version a second time - a
+    network retry must not cost a device two version increments for one intended change.
+
+    Reuses the exact same signed-envelope mechanism every other `device_commands` row
+    already uses (`sign_command`/`SignedCommandClaims`, `csense_shared.security.signed_
+    commands`) and the exact same `expires_at` enforcement `GET /commands/pending` and the
+    agent's own `_run_command` already apply - FLOW-13's "expired commands are not
+    executed" needs no new check here, only a payload shaped so those existing checks see
+    it as an ordinary command.
+    """
+    require_permission(context, "edge.manage")
+    await _load(db, device_id)  # 404s before doing anything if this isn't a real device
+
+    fields = body.model_dump(exclude={"idempotency_key", "ttl_seconds"}, exclude_none=True)
+    if not fields:
+        raise ApiError(
+            status_code=422,
+            code="empty_config_push",
+            message=(
+                "A config push must set at least one of: " + ", ".join(CONFIG_PUSH_FIELD_NAMES)
+            ),
+        )
+
+    existing = (
+        await db.execute(
+            text(f"{_COMMAND_SELECT} WHERE edge_device_id = :device_id AND idempotency_key = :key"),
+            {"device_id": device_id, "key": body.idempotency_key},
+        )
+    ).first()
+    if existing is not None:
+        return ConfigPushOut(device=await _load(db, device_id), command=_command_out(existing))
+
+    # One UPDATE, one row: Postgres's own row lock for the duration of this transaction is
+    # what makes two concurrent config pushes against the same device serialize into two
+    # distinct version numbers rather than a lost update - no table-level lock needed here,
+    # unlike `provision_vpn`'s cross-tenant collision check, because nothing here needs to
+    # see any other device's row.
+    new_version = (
+        await db.execute(
+            text(
+                "UPDATE edge_devices SET desired_state_version = desired_state_version + 1, "
+                "updated_at = now() WHERE id = :id RETURNING desired_state_version"
+            ),
+            {"id": device_id},
+        )
+    ).scalar_one()
+
+    settings = get_settings()
+    command_id = uuid.uuid4()
+    now = dt.datetime.now(dt.UTC)
+    expires_at = now + dt.timedelta(seconds=body.ttl_seconds)
+    payload = {**fields, "target_version": new_version}
+
+    signed_envelope = sign_command(
+        settings=settings, command_id=command_id, edge_device_id=device_id,
+        command_type=CONFIG_PUSH_COMMAND_TYPE, payload=payload,
+        idempotency_key=body.idempotency_key,
+        not_before=now.timestamp(), expires_at=expires_at.timestamp(),
+    )
+
+    await db.execute(
+        text(
+            "INSERT INTO device_commands "
+            "(id, tenant_id, edge_device_id, command_type, payload, idempotency_key, "
+            " not_before, expires_at, issued_by, signed_envelope) "
+            "VALUES (:id, :tenant_id, :device_id, :command_type, CAST(:payload AS jsonb), "
+            " :key, :not_before, :expires_at, :issued_by, :envelope)"
+        ),
+        {
+            "id": command_id, "tenant_id": context.tenant_id, "device_id": device_id,
+            "command_type": CONFIG_PUSH_COMMAND_TYPE, "payload": _json(payload),
+            "key": body.idempotency_key, "not_before": now, "expires_at": expires_at,
+            "issued_by": context.user_id, "envelope": signed_envelope,
+        },
+    )
+
+    await record_audit_and_outbox(
+        db,
+        tenant_id=context.tenant_id,
+        actor_type="user",
+        actor_id=str(context.user_id),
+        support_grant_id=context.support_grant_id,
+        action="edge.command.config_push",
+        outcome="success",
+        target_type="edge_device",
+        target_id=str(device_id),
+        reason=f"Pushed config, target_version={new_version}",
+        before_patch=None,
+        after_patch={"command_id": str(command_id), "target_version": new_version, "fields": sorted(fields)},
+        correlation_id=uuid.UUID(context.correlation_id) if context.correlation_id else None,
+        event_type="edge.command.config_pushed.v1",
+        event_payload={
+            "command_id": str(command_id), "edge_device_id": str(device_id),
+            "target_version": new_version,
+        },
+        aggregate_type="edge_device",
+        aggregate_id=str(device_id),
+    )
+
+    result = (await db.execute(text(f"{_COMMAND_SELECT} WHERE id = :id"), {"id": command_id})).first()
+    return ConfigPushOut(device=await _load(db, device_id), command=_command_out(result))
 
 
 @router.get("/devices/{device_id}/commands", response_model=list[CommandOut])

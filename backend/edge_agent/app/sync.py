@@ -406,6 +406,31 @@ class SyncEngine:
         self._online = True
         self._consecutive_failures = 0
 
+    def set_backoff(
+        self, *, initial_seconds: float | None = None, max_seconds: float | None = None
+    ) -> None:
+        """Changes the backoff parameters while the engine is running - a `config_push`
+        command's own "genuinely observed running, not just on next restart" requirement
+        (docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md,
+        Task 4). Either argument left `None` leaves that parameter untouched.
+
+        No lock, unlike `Spool.set_limits`: `self._backoff_initial`/`self._backoff_max` are
+        read only from coroutines running on `main.py`'s single asyncio event loop (the
+        backoff computation this feeds, and this setter itself, both run there - neither is
+        ever called from the thread pool `asyncio.to_thread` hands the *spool's own* blocking
+        calls to). A plain attribute assignment cannot be observed half-written by another
+        coroutine on the same loop.
+
+        Bounds are not re-checked here - by the time a caller reaches this method, `config.
+        validate_config_push` has already rejected anything out of range (including the
+        cross-field "ceiling below floor" case), and duplicating that check here would be a
+        second copy of the same rule with nothing to keep it in sync.
+        """
+        if initial_seconds is not None:
+            self._backoff_initial = initial_seconds
+        if max_seconds is not None:
+            self._backoff_max = max_seconds
+
     def snapshot(self) -> dict[str, Any]:
         """The numbers the heartbeat reports (`spool_depth` / `spool_dropped`)."""
         return {
