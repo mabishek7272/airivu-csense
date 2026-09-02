@@ -986,10 +986,23 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         #15/#16, never through this gate); a UI-driven way to *trigger* a run (today it's
         a script, matching `import_legacy_models.py`'s own precedent for operator
         tooling); the other six TRD §15.2 gates named above.
-- [ ] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
-      Runtime reference numbers otherwise
-- [ ] **[NEEDS DECISION]** YOLOv8/AGPL-3.0 licensing for commercial hosting — see
-      CLARIFICATIONS.md #15. Affects 5 of the 14 migrated models.
+- [~] **[NEEDS EXTERNAL INPUT]** GPU/edge hardware for real profiling; default to CPU/ONNX
+      Runtime reference numbers otherwise. A Raspberry Pi 5 became available 2026-09-02 -
+      real arm64 hardware for the edge agent (already cross-build-verified for
+      `linux/arm64` in the offline-spool work); still no GPU for the runtime's own
+      profiling numbers, which is the part this line is actually about.
+- [x] **[DECIDED]** YOLOv8/AGPL-3.0 licensing for commercial hosting — was already resolved
+      2026-08-26, before this checklist line was last updated to say otherwise (see
+      CLARIFICATIONS.md #15: owner accepted the position given these models' production
+      use since 2022, and directed all 5 be wired up). They already are -
+      `backend/migrations/legacy_model_manifest.py`'s `_AGPL` license_metadata is set on
+      all 5, all reached `production` status, none gated. Reconfirmed 2026-09-02: owner
+      directed retrained-on-our-data weights be used and wired in on the same basis.
+      **Retraining on proprietary data does not itself change the license** - AGPL-3.0
+      attaches to Ultralytics' architecture/training code, not cured by different weights
+      - so this remains the same accepted, recorded position CLARIFICATIONS.md #15
+      already carries, not a new legal fact. `license_metadata` stays the visible record
+      if the position is ever revisited.
 
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
