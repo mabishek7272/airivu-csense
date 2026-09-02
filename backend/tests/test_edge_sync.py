@@ -104,6 +104,9 @@ class FakeApi:
         self.calls: list[list[dict]] = []
         self.seen: set[str] = set()
         self.errors: dict[str, str] = {}       # source_event_id -> error_code
+        # source_event_id -> the server's own `retryable`. Absent means an older server
+        # that does not send the field at all, which is the fallback case.
+        self.retryable: dict[str, bool] = {}
         self.omit: set[str] = set()            # ids the response says nothing about
         self.reject_batch_containing: set[str] = set()  # batch-level 4xx, as pydantic does
         self.fail_from_call: int | None = None  # transport dies from this call onward
@@ -126,10 +129,13 @@ class FakeApi:
             if key in self.omit:
                 continue
             if key in self.errors:
-                results.append(
-                    {"source_event_id": key, "accepted": False, "error_code": self.errors[key],
-                     "error_message": "no"}
-                )
+                entry = {
+                    "source_event_id": key, "accepted": False,
+                    "error_code": self.errors[key], "error_message": "no",
+                }
+                if key in self.retryable:
+                    entry["retryable"] = self.retryable[key]
+                results.append(entry)
                 continue
             duplicate = key in self.seen
             self.seen.add(key)
@@ -423,6 +429,120 @@ async def test_a_clock_skew_rejection_is_retried_because_time_itself_cures_it(sp
 
     assert spool.depth() == 1
     assert spool.dropped_count() == 0
+
+
+# --- The server's own classification wins ------------------------------------------------
+#
+# `PERMANENT_ERROR_CODES` is a copy, on the device, of a decision the server makes. An edge
+# fleet updates in months and the API in days, so the copy is always the stale one: a
+# permanent code added server-side would read as retryable on every deployed agent and park
+# the row at the head of the spool until its deadline. The server now sends `retryable` per
+# item; the local table stays, but only as the answer for a server too old to have sent one.
+
+async def test_the_servers_retryable_flag_overrides_the_local_permanent_table(spool):
+    """`not_found` is in this agent's permanent list, but the server said to retry. The
+    server is the side that knows - keeping the row is also the safe direction."""
+    api = FakeApi()
+    api.online = False
+    eng = engine(spool, api)
+    await eng.submit(event(1))
+
+    api.online = True
+    api.errors = {"cam1-0001": "not_found"}
+    api.retryable = {"cam1-0001": True}
+    report = await eng.drain_once()
+
+    assert spool.depth() == 1
+    assert report.discarded == 0
+    assert spool.dropped_count() == 0
+
+
+async def test_a_code_this_agent_has_never_heard_of_is_dropped_when_the_server_says_so(spool):
+    """The case the flag exists for: a permanent rejection added to the API long after this
+    agent shipped. Without the flag it would be retried until its 24h deadline, holding a
+    slot in every batch behind it; with it, the device acts on the server's own statement."""
+    api = FakeApi()
+    api.online = False
+    eng = engine(spool, api)
+    await eng.submit(event(1))
+    await eng.submit(event(2))
+
+    api.online = True
+    api.errors = {"cam1-0001": "camera_decommissioned"}
+    api.retryable = {"cam1-0001": False}
+    report = await eng.drain_once()
+
+    assert spool.depth() == 0
+    assert report.discarded == 1
+    assert report.delivered == 1
+    assert spool.dropped_count() == 1  # counted, so the loss reaches the next heartbeat
+
+
+async def test_an_older_server_that_sends_no_flag_falls_back_to_the_local_table(spool):
+    """A device may be talking to an API that predates `retryable`. The table is not dead
+    code - it is the answer whenever the field is absent."""
+    api = FakeApi()
+    api.online = False
+    eng = engine(spool, api)
+    await eng.submit(event(1))
+    await eng.submit(event(2))
+
+    api.online = True
+    api.errors = {"cam1-0001": "not_found", "cam1-0002": "ingest_failed"}
+    api.retryable = {}  # an older server: the field is not in the response at all
+    report = await eng.drain_once()
+
+    assert report.discarded == 1   # not_found, per the local table
+    assert spool.depth() == 1      # ingest_failed, kept
+    assert spool.dropped_count() == 1
+
+
+async def test_an_entry_with_a_null_source_event_id_acks_nothing(spool):
+    """What the server returns when an item was so malformed that its own
+    `source_event_id` could not be recovered. It deliberately does not invent one, so there
+    is nothing here to match a spool row against - and an unmatched row is kept, never
+    deleted. The row still clears eventually, via the rejection deadline.
+    """
+    async def send(detections):
+        return {"accepted": 0, "failed": 1, "results": [
+            {"source_event_id": None, "accepted": False, "error_code": "validation_error",
+             "retryable": False},
+        ]}
+
+    spool.append(event(1))
+    eng = sync_mod.SyncEngine(spool=spool, send_fn=send)
+    report = await eng.drain_once()
+
+    assert spool.depth() == 1
+    assert report.discarded == 0
+    assert spool.dropped_count() == 0
+
+
+def test_a_non_boolean_retryable_is_read_as_absent_not_as_true(spool):
+    """A field of the wrong type says nothing, and `bool("false")` is True - the coercion
+    that would turn a garbled response into a discarded row."""
+    parsed = sync_mod.parse_batch_response(
+        {"results": [
+            {"source_event_id": "a", "accepted": False, "error_code": "not_found",
+             "retryable": "yes"},
+        ]}
+    )
+
+    assert parsed["a"].retryable is None
+    assert parsed["a"].permanently_rejected is True  # falls back to the local table
+
+
+def test_an_accepted_item_is_never_permanently_rejected_whatever_the_flag_says(spool):
+    """`retryable` is only ever consulted for a rejection. An accepted item is acked and
+    deleted; nothing about a flag on it may change that."""
+    parsed = sync_mod.parse_batch_response(
+        {"results": [
+            {"source_event_id": "a", "accepted": True, "retryable": False,
+             "result": {"duplicate": False}},
+        ]}
+    )
+
+    assert parsed["a"].permanently_rejected is False
 
 
 async def test_a_row_that_keeps_failing_is_given_up_on_once_its_deadline_passes(spool):

@@ -24,13 +24,14 @@ four different things to do, and getting any of them wrong wedges or drains the 
   at the head of the spool being re-sent forever — a permanently stuck spool that looks,
   from the outside, exactly like a busy one.
 
-  *A permanently rejected item* (`PERMANENT_ERROR_CODES`) → delete it, **count it as a
-  drop**, and log it with its `source_event_id`. The server has made a statement about this
-  specific row that re-sending the identical bytes cannot change: the camera does not exist
-  in this tenant, or the payload is malformed. Keeping it would park it at the head of every
-  drain — `batch_size` of these in a row and nothing behind them ever leaves the device.
-  Counting the discard is what stops the loss being silent: it reaches the server on the
-  next heartbeat as `spool_dropped`, and the platform escalates the device to `degraded`.
+  *A permanently rejected item* (`retryable: false`, or `PERMANENT_ERROR_CODES` when the
+  server did not say) → delete it, **count it as a drop**, and log it with its
+  `source_event_id`. The server has made a statement about this specific row that re-sending
+  the identical bytes cannot change: the camera does not exist in this tenant, or the
+  payload is malformed. Keeping it would park it at the head of every drain — `batch_size`
+  of these in a row and nothing behind them ever leaves the device. Counting the discard is
+  what stops the loss being silent: it reaches the server on the next heartbeat as
+  `spool_dropped`, and the platform escalates the device to `degraded`.
 
   *Any other rejection* → keep it and retry, up to a deadline. `ingest_failed` is the
   server saying "something broke, try again". `capture_time_in_future` is deliberately in
@@ -42,23 +43,36 @@ four different things to do, and getting any of them wrong wedges or drains the 
   does not recognise as permanent, still cannot hold a slot in every batch for the life of
   the device.
 
+**Which of those two a rejection is, the server decides.** Each entry carries `retryable`,
+and it wins over this file's own `PERMANENT_ERROR_CODES` whenever it is present. The list
+here is a copy of a decision the API makes, and an edge fleet updates in months while the
+API updates in days, so the copy is always the stale one — a permanent code added
+server-side would read as retryable on every deployed agent and hold the row until its
+deadline. The local table is kept strictly as the fallback for an API too old to send the
+field, since an agent in the field outlives the server it shipped against.
+
   *No entry at all for a row* → keep it. A truncated or partial response is not an
-  acknowledgement of anything it does not mention.
+  acknowledgement of anything it does not mention. An entry whose `source_event_id` is null
+  counts as no entry: the server returns one when an item was too malformed to recover the
+  id from, and refusing to invent one is right — an id that matches nothing deletes
+  nothing, while a guessed one could delete the wrong row.
 
 **A transport failure is never the row's fault.** A refused connection, a timeout, a 5xx, a
 401: nothing is acked, nothing is discarded, and no row's rejection clock starts. Only the
 backoff advances. Were it otherwise, a long enough outage would discard the spool on
 reconnect, which inverts the entire point of having one.
 
-**A batch-level 4xx is isolated by bisection.** FastAPI validates every item before the
-handler runs, so one malformed row rejects the *whole* request with a 422 and no per-item
-detail — the one shape of poison the batch endpoint's per-item error handling cannot catch.
-On a `BatchRejected` the engine splits the batch and re-sends each half, converging on the
-offending row in about log2(n) requests, then discards that single row and delivers the
-rest. Re-sending the halves is safe for the same reason every replay here is safe: the
-server dedupes. `source.py` refuses the likely offenders at the door, so this path should
-be rare; it exists because "should be rare" is not "cannot happen", and the alternative is
-a spool that never drains again.
+**A batch-level 4xx is still isolated by bisection**, though it should now be rare. The
+current API validates each item inside its handler, so a malformed row comes back as its
+own `validation_error` entry rather than 422-ing the whole request. That was not always
+true — an API that types its batch items rejects the entire body with no per-item detail —
+and it is not the only way to get here: an oversized body, a proxy's own 400, an envelope
+this agent got wrong. On a `BatchRejected` the engine splits the batch and re-sends each
+half, converging on the offending row in about log2(n) requests, then discards that single
+row and delivers the rest. Re-sending the halves is safe for the same reason every replay
+here is safe: the server dedupes. `source.py` refuses the likely offenders at the door too.
+The path stays because "should be rare" is not "cannot happen", and the alternative is a
+spool that never drains again.
 
 ---
 
@@ -102,11 +116,15 @@ from .spool import Spool, SpooledEvent
 
 logger = logging.getLogger(__name__)
 
-# Codes for which re-sending the identical bytes can never succeed. Deliberately short:
-# anything not listed is retried, so a code this agent has never heard of errs toward
-# keeping the event. See this module's docstring for why `capture_time_in_future` is
-# absent, and the accompanying report for why the server arguably ought to carry a
-# `retryable` flag rather than leaving every deployed agent to maintain this list.
+# The **fallback** classification, used only when the server's own `retryable` flag is
+# absent from an entry - an API older than that field, or a proxy that reshaped the body.
+# It is not the primary answer any more, and deliberately not deleted either: an agent in
+# the field long outlives the deployment it was shipped against, and having no opinion at
+# all would mean retrying a genuinely permanent rejection until its 24-hour deadline.
+#
+# Deliberately short: anything not listed is retried, so a code this agent has never heard
+# of errs toward keeping the event. See this module's docstring for why
+# `capture_time_in_future` is absent.
 PERMANENT_ERROR_CODES = frozenset(
     {
         # No such camera in this tenant: a misconfigured device, or a camera that has been
@@ -183,10 +201,31 @@ class ItemOutcome:
     duplicate: bool
     error_code: str | None = None
     error_message: str | None = None
+    # The server's own verdict on whether re-sending could ever work. `None` means it did
+    # not say - an older API, or a body that did not carry the field - not "unknown, assume
+    # retryable"; the two are settled differently below.
+    retryable: bool | None = None
 
     @property
     def permanently_rejected(self) -> bool:
-        return not self.accepted and self.error_code in PERMANENT_ERROR_CODES
+        """Whether this row will never be accepted, so the device should drop and count it.
+
+        The server's flag wins whenever it is present. It has to: this agent's own
+        `PERMANENT_ERROR_CODES` is a copy of a decision the API makes, and an edge fleet
+        updates in months while the API updates in days, so the copy is always the stale
+        one. A permanent code added server-side would read as retryable here and park the
+        row at the head of every batch until its deadline expired - and, in the other
+        direction, a code this agent lists that the server has since made transient would
+        be discarded as real, recoverable evidence.
+
+        The local table remains the answer when the field is absent, which is the only
+        thing an agent talking to an older API has to go on.
+        """
+        if self.accepted:
+            return False
+        if self.retryable is not None:
+            return not self.retryable
+        return self.error_code in PERMANENT_ERROR_CODES
 
 
 @dataclass
@@ -213,6 +252,12 @@ def parse_batch_response(body: Mapping[str, Any]) -> dict[str, ItemOutcome]:
     `duplicate` lives inside `result`, which is present only for accepted items - reading
     it off the top level would silently see `False` for every duplicate, and the ack path
     would still be right by accident while a future reader of `duplicate` was not.
+
+    An entry whose `source_event_id` is null is skipped, and that is a real case rather
+    than defensive padding: the server returns one for an item so malformed that it could
+    not recover the id, deliberately refusing to invent one. There is nothing here to match
+    a spool row against, so it authorises nothing; the row is kept and cleared by its
+    rejection deadline instead.
     """
     outcomes: dict[str, ItemOutcome] = {}
     for entry in body.get("results") or []:
@@ -224,12 +269,18 @@ def parse_batch_response(body: Mapping[str, Any]) -> dict[str, ItemOutcome]:
             logger.warning("batch_result_without_source_event_id")
             continue
         result = entry.get("result") or {}
+        retryable = entry.get("retryable")
         outcomes[key] = ItemOutcome(
             source_event_id=key,
             accepted=bool(entry.get("accepted")),
             duplicate=bool(result.get("duplicate")) if isinstance(result, Mapping) else False,
             error_code=entry.get("error_code"),
             error_message=entry.get("error_message"),
+            # Only a real boolean counts as the server having spoken. Anything else - a
+            # string, a number, a field a proxy mangled - falls back to the local table,
+            # because `bool("false")` is True and that coercion would turn a garbled
+            # response into a deleted row.
+            retryable=retryable if isinstance(retryable, bool) else None,
         )
     return outcomes
 
