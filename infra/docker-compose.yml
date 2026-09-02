@@ -263,6 +263,59 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [csense]
 
+  # Dev-only convenience container for exercising the edge agent against this stack
+  # (scripts/e2e_edge_spool.py, manual enrolment testing). It is deliberately absent
+  # from docker-compose.prod.yml: that file deploys *our* platform on *our* production
+  # box (CLAUDE.md: 16 cores/32GB, no GPU, x86). This agent's entire reason to exist is
+  # the opposite thing - software that runs on hardware we do not own, sitting in a
+  # customer's building, reachable only over whatever connectivity mode that site uses
+  # (see CLAUDE.md's "four ways cameras reach the platform" - the same shapes apply to
+  # how an edge box reaches the platform). Real fleet deployment is a provisioning
+  # problem (imaging a Pi/Jetson, shipping it, WireGuard-enrolling it on site), not a
+  # `docker compose up` on our server; putting it in the prod compose file would imply
+  # exactly the wrong deployment story.
+  edge-agent:
+    build:
+      context: ../backend/edge_agent
+      dockerfile: Dockerfile
+    environment:
+      # Deliberately NOT `<<: *backend-env` and no `secrets: *backend-secrets`. Those
+      # anchors carry the Postgres/Redis/MinIO passwords and the JWT/master-KEK secret
+      # mounts - the agent's entire interaction with the platform is unauthenticated-
+      # until-enrolled HTTPS to the Tenant API, and it has no legitimate use for any of
+      # them. Built explicitly here so a future edit widening *backend-env* cannot
+      # silently hand this customer-premises process a platform credential.
+      CSENSE_API_BASE_URL: http://tenant-api:8000
+      CSENSE_STATE_DIR: /var/lib/csense-agent
+      CSENSE_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Unset by default. A real device gets these from its provisioning step (a token
+      # minted for one site, a serial pinned to one box) - there is no sane default for
+      # either, and the whole point of this dev service is to show the honest
+      # unenrolled-agent behaviour (see app/main.py: enrolment is fatal, so the
+      # container exits rather than pretending to run). Set both in .env to exercise a
+      # real enrolment against this stack.
+      CSENSE_ENROLMENT_TOKEN: ${CSENSE_EDGE_ENROLMENT_TOKEN:-}
+      CSENSE_SERIAL_NUMBER: ${CSENSE_EDGE_SERIAL_NUMBER:-}
+    volumes:
+      # The spool (sqlite) and the device key live here. Must be a named volume, not the
+      # container's writable layer alone left implicit - an "offline spool" that resets
+      # on every restart defeats the one thing this feature exists to do.
+      - edgeagentstate:/var/lib/csense-agent
+    depends_on:
+      tenant-api: { condition: service_started }
+    # No ports published. The local detection-source listener binds to 127.0.0.1 inside
+    # the container by default (config.py refuses otherwise without a token); nothing in
+    # this dev stack runs a co-located inference process that would need to reach it, and
+    # a real deployment's inference process shares the device, not this container's
+    # published-port surface.
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    # No `restart:` policy: unenrolled, the agent fails fast (SystemExit(2), see
+    # app/main.py's module docstring on why enrolment failure is fatal rather than
+    # retried) and that single, readable exit is the point - a crash-loop would bury it.
+    networks: [csense]
+
   whatsapp-gateway:
     build:
       context: ../edge/whatsapp-gateway
@@ -325,6 +378,7 @@ volumes:
   miniodata:
   modelcache:
   whatsappgatewaylogs:
+  edgeagentstate:
 
 secrets:
   # Master key for envelope-encrypting stored credentials. Mounted as a file rather
