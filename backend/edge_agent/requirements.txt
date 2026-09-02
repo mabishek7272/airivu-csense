@@ -1,0 +1,12 @@
+# The whole dependency set, and it is meant to stay this short.
+#
+# The agent does NOT install ./shared (csense_shared). That package declares sqlalchemy,
+# asyncpg, redis, minio, argon2-cffi and pyjwt[crypto]; several need a C toolchain on
+# arm64, and a process whose entire interaction with the platform is HTTP needs none of
+# them. Both packages below publish prebuilt aarch64 wheels, so the image builds on a
+# Pi-class target without a compiler. See app/__init__.py.
+#
+# Everything else the agent needs is in the standard library - sqlite3 for the spool,
+# http.server for the local detection listener, asyncio for the loops.
+httpx>=0.27
+cryptography>=42.0
