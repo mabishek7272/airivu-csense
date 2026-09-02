@@ -24,171 +24,32 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
-import hashlib
-import importlib.util
 import os
-import pathlib
-import sys
 import uuid
 
-import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from ingest_harness import (
+    CAPTURED_AT,
+    count_detections,
+    count_incidents,
+    detection,
+    ingest_context,
+    ingest_module,
+    stored_device_id,
+)
 
-from csense_shared.errors import ApiError, api_error_handler
 from csense_shared.security.tokens import AUDIENCE_CUSTOMER, issue_access_token
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_POSTGRES_DSN"), reason="TEST_POSTGRES_DSN not set - skipping"
 )
 
-# 02:00 UTC is 07:30 in Kolkata; the fixture's site is in Kolkata so a dropped timezone
-# conversion would change rule scheduling rather than passing by luck (same choice, and
-# the same reason, as test_pipeline_ingest.py).
-CAPTURED_AT = dt.datetime(2026, 8, 27, 2, 0, tzinfo=dt.UTC)
-INSIDE_ZONE = [0.44, 0.36, 0.55, 0.92]
-ZONE_POLYGON = '{"polygon":[[0.35,0.30],[1.0,0.30],[1.0,1.0],[0.35,1.0]]}'
-
-
-def _load_ingest_module():
-    """Loads tenant_api's `app.api.ingest` by path.
-
-    Every service under backend/ names its package `app`, so a plain import resolves to
-    whichever service another test module happened to import first - `test_ai_runtime_*`
-    is collected before this file and leaves ai_runtime's `app` cached. Same fix, and the
-    same reasoning, as `test_worker_loop_isolation.py`: save and clear the cached `app*`
-    modules, put this service's own directory on `sys.path` for the load (ingest.py really
-    does import `app.deps_agent`, so that has to resolve), then put everything back.
-    """
-    service_dir = pathlib.Path(__file__).resolve().parents[1] / "tenant_api"
-    saved = {n: m for n, m in sys.modules.items() if n == "app" or n.startswith("app.")}
-    for name in list(saved):
-        del sys.modules[name]
-    sys.path.insert(0, str(service_dir))
-    try:
-        path = service_dir / "app" / "api" / "ingest.py"
-        spec = importlib.util.spec_from_file_location("csense_tenant_ingest_under_test", path)
-        module = importlib.util.module_from_spec(spec)
-        # Registered before execution, and left registered: `@dataclasses.dataclass` looks
-        # its own class's module up in `sys.modules` while the class body is being
-        # processed, so a module executing outside it cannot define one. The name is
-        # unique to this test, so it collides with nothing.
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        sys.path.remove(str(service_dir))
-        for name in [n for n in sys.modules if n == "app" or n.startswith("app.")]:
-            del sys.modules[name]
-        sys.modules.update(saved)
-
-
-ingest_module = _load_ingest_module()
-
-
-def _async_dsn() -> str:
-    parts = dict(p.split("=", 1) for p in os.environ["TEST_POSTGRES_DSN"].split())
-    return (
-        f"postgresql+asyncpg://{parts['user']}:{parts['password']}"
-        f"@{parts['host']}:{parts.get('port', '5432')}/{parts['dbname']}"
-    )
-
 
 @pytest_asyncio.fixture()
 async def ctx():
-    """A tenant with a site, a camera, an intrusion rule, one recipient, and a real
-    enrolled device credential - so the tests authenticate the same way a device does,
-    not through an overridden dependency."""
-    engine = create_async_engine(_async_dsn())
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    suffix = uuid.uuid4().hex[:8]
-    agent_token = f"bt{suffix}{uuid.uuid4().hex}"
-
-    async with factory() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        org_id = (await session.execute(
-            text("INSERT INTO organizations (organization_type, legal_name, display_name, "
-                 "slug, status) VALUES ('direct_customer', :n, :n, :s, 'active') RETURNING id"),
-            {"n": f"Batch Test {suffix}", "s": f"batch-{suffix}"},
-        )).scalar_one()
-        tenant_id = (await session.execute(
-            text("INSERT INTO tenants (organization_id, status) VALUES (:o,'active') RETURNING id"),
-            {"o": org_id},
-        )).scalar_one()
-        site_id = (await session.execute(
-            text("INSERT INTO sites (tenant_id, name, code, timezone) "
-                 "VALUES (:t,'Depot',:c,'Asia/Kolkata') RETURNING id"),
-            {"t": tenant_id, "c": f"site-{suffix}"},
-        )).scalar_one()
-        camera_id = (await session.execute(
-            text("INSERT INTO cameras (tenant_id, site_id, name, code, status) "
-                 "VALUES (:t,:s,'Bay 2',:c,'ready') RETURNING id"),
-            {"t": tenant_id, "s": site_id, "c": f"cam-{suffix}"},
-        )).scalar_one()
-        zone_id = (await session.execute(
-            text("INSERT INTO zones (tenant_id, site_id, name, zone_type, geometry_json) "
-                 "VALUES (:t,:s,'Dock','restricted', CAST(:g AS jsonb)) RETURNING id"),
-            {"t": tenant_id, "s": site_id, "g": ZONE_POLYGON},
-        )).scalar_one()
-        group_id = (await session.execute(
-            text("INSERT INTO recipient_groups (tenant_id, name) VALUES (:t,'On call') RETURNING id"),
-            {"t": tenant_id},
-        )).scalar_one()
-        await session.execute(
-            text("INSERT INTO recipient_group_members (tenant_id, recipient_group_id, "
-                 "display_name, email, channels) "
-                 "VALUES (:t,:g,'Guard','guard@example.com', CAST('[\"email\"]' AS jsonb))"),
-            {"t": tenant_id, "g": group_id},
-        )
-        await session.execute(
-            text("INSERT INTO detection_rules (tenant_id, site_id, camera_id, zone_id, name, "
-                 "type_code, alertable_classes, min_confidence, severity, min_roi_overlap) "
-                 "VALUES (:t,:s,:c,:z,'No entry','zone.intrusion', CAST('[\"person\"]' AS jsonb), "
-                 "0.4,'high',0.3)"),
-            {"t": tenant_id, "s": site_id, "c": camera_id, "z": zone_id},
-        )
-        device_id = (await session.execute(
-            text("INSERT INTO edge_devices (tenant_id, site_id, name, status, "
-                 "agent_token_prefix, agent_token_hash, agent_token_issued_at) "
-                 "VALUES (:t,:s,'Gateway','enrolled',:p,:h, now()) RETURNING id"),
-            {"t": tenant_id, "s": site_id, "p": agent_token[:8],
-             "h": hashlib.sha256(agent_token.encode()).hexdigest()},
-        )).scalar_one()
-
-    api = FastAPI()
-    api.include_router(ingest_module.router)
-    # The real services register this handler too; without it an ApiError would surface as
-    # an unhandled exception rather than the 401/404 a device actually sees.
-    api.add_exception_handler(ApiError, api_error_handler)
-    api.state.session_factory = factory
-    # No object store: evidence capture is exercised by the e2e script against MinIO.
-    api.state.object_store = None
-
-    transport = httpx.ASGITransport(app=api)
-    async with httpx.AsyncClient(transport=transport, base_url="http://ingest.test") as client:
-        yield {
-            "client": client, "factory": factory, "tenant_id": tenant_id,
-            "site_id": site_id, "camera_id": camera_id, "device_id": device_id,
-            "suffix": suffix, "auth": {"Authorization": f"Bearer {agent_token}"},
-        }
-
-    async with factory() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        await session.execute(text("DELETE FROM tenants WHERE organization_id = :o"), {"o": org_id})
-        await session.execute(text("DELETE FROM organizations WHERE id = :o"), {"o": org_id})
-    await engine.dispose()
-
-
-def detection(ctx, event_suffix: str, *, camera_id=None, captured_at=CAPTURED_AT, bbox=None):
-    return {
-        "camera_id": str(camera_id or ctx["camera_id"]),
-        "source_event_id": f"batch-{ctx['suffix']}-{event_suffix}",
-        "captured_at": captured_at.isoformat(),
-        "objects": [{"class_name": "person", "confidence": 0.94, "bbox": bbox or INSIDE_ZONE}],
-    }
+    async with ingest_context() as value:
+        yield value
 
 
 async def post_batch(ctx, detections):
@@ -197,23 +58,6 @@ async def post_batch(ctx, detections):
         json={"detections": detections},
         headers=ctx["auth"],
     )
-
-
-async def count_detections(ctx, source_event_id: str) -> int:
-    async with ctx["factory"]() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        return (await session.execute(
-            text("SELECT count(*) FROM detections WHERE tenant_id = :t AND source_event_id = :s"),
-            {"t": ctx["tenant_id"], "s": source_event_id},
-        )).scalar_one()
-
-
-async def count_incidents(ctx) -> int:
-    async with ctx["factory"]() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        return (await session.execute(
-            text("SELECT count(*) FROM incidents WHERE tenant_id = :t"), {"t": ctx["tenant_id"]},
-        )).scalar_one()
 
 
 # --- Shape and ordering ----------------------------------------------------------------
@@ -325,7 +169,7 @@ async def test_an_unanticipated_failure_does_not_roll_back_its_neighbours(ctx, m
     have discarded it, and could not have continued to item 3 either.
     """
     real_ingest = ingest_module.ingest_detection
-    poisoned = f"batch-{ctx['suffix']}-poison"
+    poisoned = f"{ctx['suffix']}-poison"
 
     async def exploding(session, store, **kwargs):
         if kwargs["source_event_id"] == poisoned:
@@ -341,8 +185,8 @@ async def test_an_unanticipated_failure_does_not_roll_back_its_neighbours(ctx, m
     body = response.json()
     assert [r["accepted"] for r in body["results"]] == [True, False, True]
     assert body["results"][1]["error_code"] == "ingest_failed"
-    assert await count_detections(ctx, f"batch-{ctx['suffix']}-before") == 1
-    assert await count_detections(ctx, f"batch-{ctx['suffix']}-after") == 1
+    assert await count_detections(ctx, f"{ctx['suffix']}-before") == 1
+    assert await count_detections(ctx, f"{ctx['suffix']}-after") == 1
     assert await count_detections(ctx, poisoned) == 0
 
 
@@ -386,7 +230,7 @@ async def test_no_credential_is_refused(ctx):
         json={"detections": [detection(ctx, "unauth")]},
     )
     assert response.status_code == 401
-    assert await count_detections(ctx, f"batch-{ctx['suffix']}-unauth") == 0
+    assert await count_detections(ctx, f"{ctx['suffix']}-unauth") == 0
 
 
 async def test_an_unknown_credential_is_refused(ctx, monkeypatch, settings):
@@ -443,7 +287,7 @@ async def test_a_customer_token_without_the_scope_is_refused(ctx, monkeypatch, s
     )
 
     assert response.status_code == 401
-    assert await count_detections(ctx, f"batch-{ctx['suffix']}-noscope") == 0
+    assert await count_detections(ctx, f"{ctx['suffix']}-noscope") == 0
 
 
 async def test_the_device_identity_comes_from_the_credential_not_the_body(ctx):
@@ -454,14 +298,7 @@ async def test_the_device_identity_comes_from_the_credential_not_the_body(ctx):
     item["edge_device_id"] = str(uuid.uuid4())
     await post_batch(ctx, [item])
 
-    async with ctx["factory"]() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        stored = (await session.execute(
-            text("SELECT edge_device_id FROM detections WHERE tenant_id = :t AND source_event_id = :s"),
-            {"t": ctx["tenant_id"], "s": item["source_event_id"]},
-        )).scalar_one()
-
-    assert stored == ctx["device_id"]
+    assert await stored_device_id(ctx, item["source_event_id"]) == ctx["device_id"]
 
 
 # --- The frame budget ------------------------------------------------------------------
