@@ -18,6 +18,16 @@ Three properties decide whether the spool design works at all, and each has a te
   and open no second incident. This is the property the whole at-least-once + server-dedup
   design rests on, so it is tested against a real database rather than a stand-in.
 
+  **A *malformed* item is a bad item like any other.** Not a separate class: the handler
+  validates each item itself, so a bad bbox or a missing field gets a `validation_error`
+  entry beside its accepted neighbours instead of 422-ing the request. This one is easy to
+  regress by re-typing `detections` as `list[DetectionIn]`, which is why it is tested from
+  several pydantic layers at once.
+
+  **The server says whether a rejection is worth retrying.** `retryable` is on every entry,
+  because an edge fleet updates far more slowly than the API and cannot be the place where
+  the list of permanent codes is maintained.
+
 Needs a migrated database; skipped otherwise.
 """
 from __future__ import annotations
@@ -188,6 +198,185 @@ async def test_an_unanticipated_failure_does_not_roll_back_its_neighbours(ctx, m
     assert await count_detections(ctx, f"{ctx['suffix']}-before") == 1
     assert await count_detections(ctx, f"{ctx['suffix']}-after") == 1
     assert await count_detections(ctx, poisoned) == 0
+
+
+# --- A malformed item is one item's problem, never the batch's -------------------------
+#
+# These are the same guarantee as the block above, for the one class of bad item that used
+# to escape it: `detections` was typed `list[DetectionIn]`, so pydantic rejected the whole
+# request with a 422 before the handler ran. A single malformed row in a device's spool
+# therefore poisoned every batch it was ever drained in, and the spool stopped draining
+# behind it - the exact failure the per-item contract exists to prevent.
+
+async def test_a_pydantic_invalid_item_fails_only_its_own_item(ctx):
+    """An inverted bbox is refused by `ObjectIn`'s own validator, i.e. before any database
+    work - the case that used to 422 the whole request."""
+    bad = detection(ctx, "badbox", bbox=[0.9, 0.9, 0.1, 0.1])
+    response = await post_batch(ctx, [detection(ctx, "vgood-1"), bad, detection(ctx, "vgood-2")])
+
+    assert response.status_code == 202
+    body = response.json()
+    assert [r["accepted"] for r in body["results"]] == [True, False, True]
+    assert body["results"][1]["error_code"] == "validation_error"
+    assert body["results"][1]["source_event_id"] == bad["source_event_id"]
+    assert body["accepted"] == 2 and body["failed"] == 1
+    assert await count_detections(ctx, f"{ctx['suffix']}-vgood-1") == 1
+    assert await count_detections(ctx, f"{ctx['suffix']}-vgood-2") == 1
+    assert await count_detections(ctx, bad["source_event_id"]) == 0
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        ("bad_uuid", lambda d: d.update(camera_id="not-a-uuid")),
+        ("missing_field", lambda d: d.pop("objects")),
+        ("wrong_type", lambda d: d.update(objects="person")),
+        ("empty_event_id", lambda d: d.update(source_event_id="")),
+        ("bad_confidence", lambda d: d["objects"][0].update(confidence=4.2)),
+    ],
+)
+async def test_every_shape_of_malformed_item_is_isolated_the_same_way(ctx, label, mutate):
+    """One test per way a device can send nonsense, because they fail in different pydantic
+    layers (a field type, a missing key, a nested model, a custom validator) and only the
+    handler doing its own per-item validation makes all of them behave alike."""
+    bad = detection(ctx, f"shape-{label}")
+    mutate(bad)
+    response = await post_batch(ctx, [bad, detection(ctx, f"after-{label}")])
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["results"][0]["accepted"] is False
+    assert body["results"][0]["error_code"] == "validation_error"
+    assert body["results"][1]["accepted"] is True
+    assert await count_detections(ctx, f"{ctx['suffix']}-after-{label}") == 1
+
+
+async def test_a_batch_of_nothing_but_malformed_items_still_answers_per_item(ctx):
+    """The degenerate case. A 422 here would be indistinguishable, to a device, from the
+    old whole-batch refusal - and it would keep bisecting a batch in which every half is
+    equally poisoned."""
+    response = await post_batch(ctx, [
+        detection(ctx, "all-bad-1", bbox=[0.9, 0.9, 0.1, 0.1]),
+        detection(ctx, "all-bad-2", bbox=[0.9, 0.9, 0.1, 0.1]),
+    ])
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] == 0 and body["failed"] == 2
+    assert [r["source_event_id"] for r in body["results"]] == [
+        f"{ctx['suffix']}-all-bad-1", f"{ctx['suffix']}-all-bad-2",
+    ]
+
+
+async def test_an_item_that_is_not_even_an_object_gets_its_own_entry(ctx):
+    """A device whose spool serialised something other than a detection. There is nothing
+    to recover a `source_event_id` from, so the entry says so with an explicit null rather
+    than inventing one - see `_validate_item`."""
+    response = await post_batch(ctx, ["not a detection", detection(ctx, "after-junk")])
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["results"][0]["source_event_id"] is None
+    assert body["results"][0]["error_code"] == "validation_error"
+    assert body["results"][1]["accepted"] is True
+
+
+async def test_a_malformed_item_still_echoes_its_source_event_id_when_one_survives(ctx):
+    """What the device deletes the right spool row on. Recovering it from an item that
+    failed validation for some *other* reason is the whole reason the recovery exists."""
+    bad = detection(ctx, "recoverable")
+    bad["camera_id"] = "not-a-uuid"
+    body = (await post_batch(ctx, [bad])).json()
+
+    assert body["results"][0]["source_event_id"] == f"{ctx['suffix']}-recoverable"
+
+
+async def test_an_unusable_source_event_id_is_reported_as_null_not_guessed(ctx):
+    """The field itself is the broken one. Echoing a coerced guess (`str(42)`) would be a
+    claim about how the device stringifies its own key, and the one mistake this design
+    cannot make is authorising the deletion of the wrong row."""
+    missing = detection(ctx, "gone")
+    missing.pop("source_event_id")
+    numeric = detection(ctx, "numeric")
+    numeric["source_event_id"] = 42
+
+    body = (await post_batch(ctx, [missing, numeric])).json()
+
+    assert [r["source_event_id"] for r in body["results"]] == [None, None]
+    assert all(r["error_code"] == "validation_error" for r in body["results"])
+
+
+async def test_the_validation_message_names_the_field_without_echoing_the_payload(ctx):
+    """A missing field makes pydantic's own `input` the entire submitted item - frame
+    bytes included. Returning `exc.errors()` raw would echo a multi-megabyte base64 frame
+    back to the device and into the logs, so only `loc` and `msg` are used."""
+    bad = detection(ctx, "leaky")
+    bad.pop("objects")
+    bad["frame_base64"] = "QUJD" * 200  # decodes to "ABC"*200; a marker, not a real frame
+
+    message = (await post_batch(ctx, [bad])).json()["results"][0]["error_message"]
+
+    assert "objects" in message
+    assert "QUJD" not in message  # the payload itself is never reflected
+    assert "http" not in message  # nor pydantic's docs URLs
+    assert len(message) <= ingest_module.MAX_VALIDATION_DETAIL_CHARS
+
+
+# --- retryable: the server classifies, the device obeys ---------------------------------
+#
+# Edge fleets update far more slowly than the API does, so a permanent code added here
+# would default to "retryable" on every already-deployed agent and sit at the head of its
+# spool until a 24h deadline expired. The side that knows says so.
+
+async def test_an_accepted_item_is_not_marked_retryable(ctx):
+    """Nothing to retry. `retryable` answers "should this be re-sent", and matches
+    `ProblemResponse.retryable`, which is False unless an error says otherwise."""
+    body = (await post_batch(ctx, [detection(ctx, "retry-ok")])).json()
+
+    assert body["results"][0]["retryable"] is False
+
+
+async def test_an_unknown_camera_is_not_retryable(ctx):
+    """Re-sending identical bytes cannot make the camera exist in this tenant."""
+    body = (await post_batch(ctx, [detection(ctx, "retry-404", camera_id=uuid.uuid4())])).json()
+
+    assert body["results"][0]["error_code"] == "not_found"
+    assert body["results"][0]["retryable"] is False
+
+
+async def test_a_malformed_item_is_not_retryable(ctx):
+    body = (await post_batch(ctx, [detection(ctx, "retry-bad", bbox=[0.9, 0.9, 0.1, 0.1])])).json()
+
+    assert body["results"][0]["error_code"] == "validation_error"
+    assert body["results"][0]["retryable"] is False
+
+
+async def test_a_clock_that_is_fast_is_retryable_because_time_cures_it(ctx):
+    """The one rejection whose identical bytes become acceptable later: the wall clock
+    catches up, or NTP corrects the device. Marking it permanent would discard real
+    evidence over a flat RTC battery."""
+    future = dt.datetime.now(dt.UTC) + dt.timedelta(days=2)
+    body = (await post_batch(ctx, [detection(ctx, "retry-skew", captured_at=future)])).json()
+
+    assert body["results"][0]["error_code"] == "capture_time_in_future"
+    assert body["results"][0]["retryable"] is True
+
+
+async def test_an_unanticipated_failure_is_retryable(ctx, monkeypatch):
+    """`ingest_failed` is the server saying "something broke here", not "this row is
+    wrong" - a deadlock, a full disk, a bug. The device keeps it."""
+    real_ingest = ingest_module.ingest_detection
+
+    async def exploding(session, store, **kwargs):
+        if kwargs["source_event_id"].endswith("-retry-boom"):
+            raise RuntimeError("something unanticipated, mid-transaction")
+        return await real_ingest(session, store, **kwargs)
+
+    monkeypatch.setattr(ingest_module, "ingest_detection", exploding)
+    body = (await post_batch(ctx, [detection(ctx, "retry-boom")])).json()
+
+    assert body["results"][0]["error_code"] == "ingest_failed"
+    assert body["results"][0]["retryable"] is True
 
 
 # --- Idempotency, against a real database ----------------------------------------------

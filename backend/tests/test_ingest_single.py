@@ -138,6 +138,10 @@ async def test_a_capture_time_past_the_skew_allowance_is_refused(ctx):
 
     assert response.status_code == 422
     assert response.json()["code"] == "capture_time_in_future"
+    # The one rejection time itself cures: the same bytes are accepted once the wall clock
+    # catches up or NTP corrects the device, so the problem response says so. The batch
+    # path's per-item `retryable` is this same flag, and reads it off the same exception.
+    assert response.json()["retryable"] is True
     assert await count_detections(ctx, f"{ctx['suffix']}-skew") == 0
 
 

@@ -50,10 +50,12 @@ import dataclasses
 import datetime as dt
 import logging
 import uuid
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +93,16 @@ MAX_BATCH = 100
 # detections still ingest: the same trade `_decode_frame` already makes for an undecodable
 # frame, and the only one that keeps a spool drain from stalling on its own imagery.
 MAX_BATCH_FRAME_BYTES = 32 * 1024 * 1024
+
+# How much of pydantic's complaint about a malformed batch item is echoed back. Pydantic's
+# own `errors()` carries `input` - which for a missing field is the *entire* submitted item,
+# multi-megabyte inline frame included - plus a docs URL and, in `ctx`, live exception
+# objects. Returning that raw would reflect the payload back to the caller and into the
+# logs, so only `loc` and `msg` are used, at most `MAX_VALIDATION_ERRORS` of them, truncated
+# here. A device operator needs the field name and what was wrong with it; anything more is
+# for the server's own logs.
+MAX_VALIDATION_ERRORS = 3
+MAX_VALIDATION_DETAIL_CHARS = 400
 
 
 @dataclasses.dataclass(frozen=True)
@@ -209,9 +221,24 @@ class IngestOut(BaseModel):
 
 
 class DetectionBatchIn(BaseModel):
-    # At least one: a device with nothing to send has no reason to call, and an empty body
-    # is far more likely a bug in its drain loop than a deliberate no-op worth accepting.
-    detections: list[DetectionIn] = Field(min_length=1, max_length=MAX_BATCH)
+    """The envelope only. The *items* are deliberately untyped here.
+
+    Typing this `list[DetectionIn]` is the obvious thing to write and it quietly breaks the
+    one guarantee the batch endpoint exists to make: pydantic validates every element while
+    parsing the request, so a single malformed item returns one 422 for the whole batch,
+    with no per-item detail, before `ingest_batch` runs at all. For a device draining an
+    offline spool that is fatal - one bad row poisons every batch it is ever drained in, and
+    the spool stops draining behind it. `_validate_item` does the identical validation
+    per item inside the handler instead, so a malformed item gets its own error entry beside
+    its accepted neighbours.
+
+    The envelope itself still validates, because there is nothing partial to preserve when
+    the body is not a JSON object with a bounded `detections` list at all. At least one: a
+    device with nothing to send has no reason to call, and an empty body is far more likely
+    a bug in its drain loop than a deliberate no-op worth accepting.
+    """
+
+    detections: list[Any] = Field(min_length=1, max_length=MAX_BATCH)
 
 
 class BatchItemOut(BaseModel):
@@ -222,15 +249,27 @@ class BatchItemOut(BaseModel):
     this whole design that silently loses events.
     """
 
-    source_event_id: str
+    # None only when the item was too malformed for one to be recovered - see
+    # `_recover_source_event_id`. Null rather than a guess: an id the device cannot match
+    # authorises deleting nothing, while a wrong one authorises deleting the wrong row.
+    source_event_id: str | None
     accepted: bool
     # Exactly what the single endpoint returns, and only when the item was accepted.
     result: IngestOut | None = None
     # The code the single endpoint's own error response would have carried, so a device
-    # can tell "this row will never be accepted, stop retrying it" (capture_time_in_future,
-    # not_found) from "try again later" (ingest_failed).
+    # can name in its logs what it is dealing with.
     error_code: str | None = None
     error_message: str | None = None
+    # Whether re-sending these identical bytes could ever succeed - the same field, with
+    # the same meaning, as `ProblemResponse.retryable`, and False for anything that is not
+    # an error (there is nothing to retry about an acceptance).
+    #
+    # This is on the response because the alternative is every edge agent keeping its own
+    # copy of the server's list of permanent codes, and an edge fleet updates in months
+    # while the API updates in days. A permanent code added here would read as "retryable"
+    # on every already-deployed agent and hold the row at the head of its spool until a
+    # 24-hour deadline expired. The side that knows the answer states it.
+    retryable: bool = False
 
 
 class BatchIngestOut(BaseModel):
@@ -352,6 +391,11 @@ async def _ingest_one(
                 "clock - a wrong timestamp puts the incident in the wrong place in every "
                 "list and breaks time-window rules."
             ),
+            # The one rejection here that time itself cures: nothing about the payload is
+            # wrong, the device's clock is simply ahead, and the identical bytes are
+            # accepted once NTP corrects it or the wall clock catches up. A device that
+            # discarded these would throw away real evidence over a flat RTC battery.
+            retryable=True,
         )
 
     site_id, timezone_name = await _camera_site(
@@ -392,8 +436,84 @@ async def _ingest_one(
     )
 
 
+def _recover_source_event_id(raw: object) -> str | None:
+    """The `source_event_id` of an item that failed validation, if one survives.
+
+    This is what the device deletes the right spool row on, so it is worth recovering even
+    from an item that is otherwise unusable - without it the row is kept and re-sent until
+    its 24-hour deadline, holding a slot in every batch behind it.
+
+    Only a non-empty string counts. A number or an object *could* be coerced - the agent
+    keys its own rows with `str(...)`, so `str(42)` would in practice match - but that is a
+    claim about how one particular device stringifies its own key, and the single mistake
+    this design must never make is authorising the deletion of the wrong row. An id that
+    cannot be recovered is reported as null instead; the row is then kept, which is the
+    safe direction, and cleared eventually by the device's own deadline.
+
+    Length is not checked against `DetectionIn`'s 200-character limit on purpose: an
+    over-long id is exactly one of the reasons the item was rejected, and echoing it back
+    is what lets the device drop the row now rather than in a day. It is bounded by the
+    request body it arrived in, so there is no amplification.
+    """
+    if isinstance(raw, Mapping):
+        value = raw.get("source_event_id")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """A malformed item's complaint, trimmed to what a device operator can act on.
+
+    Deliberately not `exc.errors()` or `exc.json()`: pydantic's error entries carry `input`
+    - for a missing field, the *whole* submitted item, inline frame and all - a docs URL,
+    and a `ctx` that can hold live exception objects. That would reflect the payload back to
+    the caller, put a multi-megabyte base64 frame in the response and the logs, and expose
+    the model's internal shape. `loc` and `msg` name the field and what was wrong with it,
+    which is the entire actionable content.
+    """
+    parts = [
+        f"{'.'.join(str(p) for p in error.get('loc', ())) or 'body'}: "
+        f"{error.get('msg', 'invalid')}"
+        for error in exc.errors()[:MAX_VALIDATION_ERRORS]
+    ]
+    message = (
+        "This detection does not match the ingest schema and was not stored; the rest of "
+        f"the batch was processed. {'; '.join(parts)}"
+    )
+    if len(message) > MAX_VALIDATION_DETAIL_CHARS:
+        return message[: MAX_VALIDATION_DETAIL_CHARS - 1] + "…"
+    return message
+
+
+def _validate_item(raw: object) -> tuple[DetectionIn | None, BatchItemOut | None]:
+    """One raw batch item, as either a validated detection or its own rejection.
+
+    Exactly one of the two is ever set. This is the per-item half of what pydantic would
+    otherwise do while parsing the request - see `DetectionBatchIn` for why doing it here
+    instead is the whole point of the endpoint.
+    """
+    try:
+        return DetectionIn.model_validate(raw), None
+    except ValidationError as exc:
+        source_event_id = _recover_source_event_id(raw)
+        logger.warning(
+            "batch_item_invalid",
+            extra={"source_event_id": source_event_id, "errors": exc.error_count()},
+        )
+        return None, BatchItemOut(
+            source_event_id=source_event_id,
+            accepted=False,
+            error_code="validation_error",
+            error_message=_validation_message(exc),
+            # The bytes themselves are wrong, and re-sending the identical bytes will be
+            # just as wrong next time. The device should drop the row and count the drop.
+            retryable=False,
+        )
+
+
 def _apply_frame_budget(
-    detections: list[DetectionIn], *, budget: int = MAX_BATCH_FRAME_BYTES
+    detections: list[DetectionIn | None], *, budget: int = MAX_BATCH_FRAME_BYTES
 ) -> list[str | None]:
     """Each detection's inline frame, or None once the batch's frame budget is spent.
 
@@ -411,7 +531,9 @@ def _apply_frame_budget(
     remaining = budget
     kept: list[str | None] = []
     for item in detections:
-        encoded = item.frame_base64
+        # A None is an item that failed validation: it keeps its slot so the result list
+        # stays positional, but it has no frame and spends no budget.
+        encoded = item.frame_base64 if item is not None else None
         if not encoded:
             kept.append(None)
             continue
@@ -466,11 +588,21 @@ async def ingest_batch(
 
     **One bad item never fails the batch.** Every detection gets its own result entry,
     in request order, carrying the `source_event_id` it belongs to. A rejected item -
-    unknown camera, a clock days out, an unanticipated failure - returns its own error and
-    the rest still process. A device draining a spool must not be permanently blocked by
-    one poisoned row: it would retry the batch forever, the spool would fill, and the
-    events behind the bad one would be lost to eviction. That is the single property this
-    endpoint exists to guarantee.
+    unknown camera, a clock days out, a malformed body, an unanticipated failure - returns
+    its own error and the rest still process. A device draining a spool must not be
+    permanently blocked by one poisoned row: it would retry the batch forever, the spool
+    would fill, and the events behind the bad one would be lost to eviction. That is the
+    single property this endpoint exists to guarantee.
+
+    **A malformed item is not an exception to that**, which is why the items arrive here
+    untyped and are validated one at a time by `_validate_item`. Typing them in
+    `DetectionBatchIn` would hand the job to pydantic, which does it while parsing the
+    request and answers one 422 for the whole batch - the exact failure above, reached by
+    the exact route this endpoint was written to close.
+
+    **Every entry says whether re-sending it could ever work** (`retryable`), so the list
+    of permanent failures lives on the side that defines it rather than being copied into
+    every deployed edge agent - see `BatchItemOut.retryable`.
 
     **Transaction boundary: one transaction per item, not one per request.** The single
     endpoint takes its session from `ingest_db_session`, which holds one transaction open
@@ -499,12 +631,20 @@ async def ingest_batch(
     a snapshot beats no alert.
     """
     factory = request.app.state.session_factory
+    # Every item validated up front, so the frame budget is spent in request order over the
+    # whole batch rather than shifting depending on where the malformed items happen to sit.
+    prepared = [_validate_item(raw) for raw in body.detections]
     # Passed explicitly rather than left to the default so the budget is read at call
     # time - a deployment (or a test) that overrides the constant is actually honoured.
-    frames = _apply_frame_budget(body.detections, budget=MAX_BATCH_FRAME_BYTES)
+    frames = _apply_frame_budget([item for item, _ in prepared], budget=MAX_BATCH_FRAME_BYTES)
 
     results: list[BatchItemOut] = []
-    for item, frame_base64 in zip(body.detections, frames, strict=True):
+    for (item, rejection), frame_base64 in zip(prepared, frames, strict=True):
+        if rejection is not None:
+            # Never reached the pipeline, so there is nothing to roll back and nothing to
+            # log beyond what `_validate_item` already logged.
+            results.append(rejection)
+            continue
         # Decoded outside the session: `cv2.imdecode` on a multi-megabyte frame is not
         # fast, and holding a pooled connection across it would starve other callers.
         frame = _decode_frame(frame_base64)
@@ -526,6 +666,20 @@ async def ingest_batch(
                     accepted=False,
                     error_code=exc.code,
                     error_message=exc.message,
+                    # Read off the exception rather than from a table of codes here, so a
+                    # rejection classifies itself once, where it is raised, and both
+                    # endpoints answer identically. The two reachable today are
+                    # `not_found` (False - resending cannot make the camera exist) and
+                    # `capture_time_in_future` (True - see where it is raised).
+                    #
+                    # The trap for whoever adds the third: `ApiError` defaults `retryable`
+                    # to False, and a device reads False as "delete this row". A new
+                    # rejection that is actually transient must say so explicitly or it
+                    # will quietly cost real evidence. It will at least be *visible* loss -
+                    # the device counts the discard and the next heartbeat escalates it to
+                    # `degraded` - which is why this errs on the exception's own word
+                    # rather than second-guessing it with a list of codes here.
+                    retryable=exc.retryable,
                 )
             )
         except Exception:  # noqa: BLE001 - one poisoned row must not block a drain
@@ -541,6 +695,9 @@ async def ingest_batch(
                         "This detection could not be ingested. The rest of the batch was "
                         "processed; retrying this one alone is safe."
                     ),
+                    # Nothing was said about the payload - a deadlock, a full disk, a bug
+                    # here. The bytes may well be fine, so the device keeps the row.
+                    retryable=True,
                 )
             )
         else:
