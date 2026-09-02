@@ -132,6 +132,13 @@ class DeviceOut(BaseModel):
     online: bool
     hardware: dict = {}
     capabilities: dict = {}
+    # The latest health snapshot and the summarised verdict drawn from it. Both were
+    # written by every heartbeat and returned by nothing, so the spool telemetry the UI is
+    # documented as showing ("spool use", docs/04_UI_UX_DESIGN_BRIEF.md) had no way of
+    # reaching it, and neither did the degradation rule further down this file.
+    # `/devices/{id}/health` is the *history* of transitions, not current state.
+    health: dict = {}
+    health_status: str | None = None
     os_name: str | None = None
     os_version: str | None = None
     agent_version: str | None = None
@@ -166,7 +173,11 @@ _SELECT = """
            host(d.vpn_address), text(d.lan_cidr), (d.wireguard_public_key IS NOT NULL),
            d.enrolled_at, d.last_seen_at, d.last_error, d.created_at,
            (SELECT count(*) FROM cameras c
-             WHERE c.edge_device_id = d.id AND c.deleted_at IS NULL)
+             WHERE c.edge_device_id = d.id AND c.deleted_at IS NULL),
+           -- Appended rather than slotted in beside `d.health` on purpose: every column
+           -- here is read back by ordinal, and renumbering twenty-odd of them to add one
+           -- is how an off-by-one gets shipped between two same-typed fields.
+           d.health_status, d.health
     FROM edge_devices d
     LEFT JOIN sites s ON s.id = d.site_id
 """
@@ -183,7 +194,7 @@ def _to_device(row, now: dt.datetime) -> DeviceOut:
         connectivity_reason=row[15], vpn_address=row[16], lan_cidr=row[17],
         has_wireguard_key=bool(row[18]), enrolled_at=row[19],
         last_seen_at=last_seen, last_error=row[21], created_at=row[22],
-        camera_count=row[23],
+        camera_count=row[23], health_status=row[24], health=row[25] or {},
     )
 
 
@@ -877,6 +888,108 @@ def _json(value: dict, limit: int = 8192) -> str:
 
 
 # --- Heartbeat -------------------------------------------------------------------------
+#
+# Spool telemetry (FLOW-13). A device that loses its uplink keeps running its pipeline and
+# writes events into an encrypted local spool. Two numbers describe that spool:
+# `spool_depth`, how many events are waiting in it right now, and `spool_dropped`, how many
+# it has had to evict because it filled. Both are named as device telemetry the UI shows
+# (docs/05_BACKEND_SCHEMA.md, docs/04_UI_UX_DESIGN_BRIEF.md's "spool use") and until now
+# neither had anywhere to arrive.
+#
+# **They land in the existing `health` JSONB snapshot, not in new columns.** That is a
+# decision, not a shortcut. `health` exists precisely because "a Jetson reporting GPU
+# temperature and a Pi reporting tunnel handshake age have little in common" (migration
+# 0026) - spool depth is one more per-device gauge of exactly that kind: overwritten in
+# place every heartbeat, read one device at a time, never filtered or sorted across the
+# fleet. Dedicated columns would buy an index nothing asks for and two NULLs on every
+# `gateway`-role device, which has no spool at all. `health_status` stays the summarised,
+# filterable field, and it is the one the degradation rule below moves.
+
+# A spool counter past this is a broken agent rather than a busy site: these events carry
+# frames, and no edge disk holds two billion of them. Bounded because the numbers come
+# from a device and end up verbatim in a JSON document an operator reads.
+MAX_SPOOL_COUNTER = 2**31 - 1
+
+
+def _spool_snapshot(
+    previous: dict | None, *, depth: int | None, dropped: int | None, now: dt.datetime
+) -> tuple[dict, int]:
+    """The `spool` entry for the health snapshot, and how many events this device has
+    dropped *since its last heartbeat*.
+
+    `spool_dropped` is a cumulative counter that lives with the spool file on the device -
+    it has to be, or it would reset on every reboot, and a reboot is how most outages end.
+    That makes the raw number useless as a health signal on its own: a box that evicted one
+    event a fortnight ago reports the same `1` forever. The delta against the value stored
+    at the previous heartbeat is the number that means "this device is losing events right
+    now", and it is the only one the rule below reads.
+
+    A counter that has gone *down* means the spool was recreated - a reimaged device, a
+    replaced disk, a wiped data volume - so the whole of its current value is loss we have
+    not seen before, rather than a negative delta to be clamped away.
+
+    `last_dropped_at` is carried forward when nothing new was dropped. It is what lets an
+    operator still see "this device did lose events, at 03:12 on Tuesday" after the status
+    has correctly gone back to `ok` - the half of the story a self-clearing status would
+    otherwise throw away.
+    """
+    previous = previous if isinstance(previous, dict) else {}
+    prior_dropped = previous.get("dropped")
+    if not isinstance(prior_dropped, int) or isinstance(prior_dropped, bool) or prior_dropped < 0:
+        # Whatever else is in this free-form snapshot, a heartbeat has to land: a device
+        # that cannot report is a device that looks offline.
+        prior_dropped = None
+
+    total = dropped if dropped is not None else (prior_dropped or 0)
+    if prior_dropped is None:
+        # No prior value: an agent reporting spool telemetry for the first time. Charging
+        # its whole counter to "now" costs one heartbeat of `degraded` and no more, which
+        # is the right way round - a box that has been silently evicting events should say
+        # so once, loudly, rather than never.
+        new_drops = total
+    elif total < prior_dropped:
+        new_drops = total
+    else:
+        new_drops = total - prior_dropped
+
+    block: dict = {
+        "depth": depth if depth is not None else previous.get("depth"),
+        "dropped": total,
+        "dropped_since_last_heartbeat": new_drops,
+    }
+    if new_drops > 0:
+        block["last_dropped_at"] = now.isoformat()
+    elif previous.get("last_dropped_at"):
+        block["last_dropped_at"] = previous["last_dropped_at"]
+    return block, new_drops
+
+
+def _health_status_with_spool(reported: str, new_drops: int) -> str:
+    """Whether the platform overrides a device's own verdict on itself because of the spool.
+
+    A device that has dropped events since its last heartbeat is degraded whether it says
+    so or not: those events are gone permanently, and the agent whose spool is overflowing
+    is the one least likely to notice. So new loss escalates `ok` to `degraded`.
+
+    Two things this deliberately does not do:
+
+    **Depth alone is never degradation.** A deep spool is the spool working - a device
+    offline for a day is *supposed* to have thousands of rows waiting - and treating that
+    as a fault would flag every site whose broadband blinked.
+
+    **It cannot latch.** The escalation is driven by the per-heartbeat delta, never by the
+    cumulative counter, so a device that stops dropping is back to `ok` on its very next
+    heartbeat with no flag for anything to clear. Nothing here persists a verdict that
+    stale data could keep alive. The historical fact stays visible as `spool.dropped` and
+    `spool.last_dropped_at` in the snapshot, which is where a fact belongs - not as a
+    status that no longer describes the device.
+
+    It never downgrades: a device reporting `failed` knows something we do not.
+    """
+    if new_drops > 0 and reported == "ok":
+        return "degraded"
+    return reported
+
 
 class HealthCheckIn(BaseModel):
     """One check the agent ran.
@@ -908,6 +1021,13 @@ class HeartbeatIn(BaseModel):
     connectivity_reason: str | None = Field(default=None, max_length=500)
     agent_version: str | None = Field(default=None, max_length=40)
     last_error: str | None = Field(default=None, max_length=1000)
+    # The offline spool, per FLOW-13. Both optional, and they have to be: a fleet already
+    # in the field predates the spool entirely, and a `gateway`-role device never has one.
+    # A heartbeat is not the place to start demanding a field a deployed device cannot
+    # send - the failure mode is the device looking offline, which is worse than the
+    # telemetry being absent.
+    spool_depth: int | None = Field(default=None, ge=0, le=MAX_SPOOL_COUNTER)
+    spool_dropped: int | None = Field(default=None, ge=0, le=MAX_SPOOL_COUNTER)
 
 
 class HeartbeatOut(BaseModel):
@@ -945,6 +1065,33 @@ async def heartbeat(
     device_id = uuid.UUID(agent.device_id)
     tenant_id = uuid.UUID(agent.tenant_id)
 
+    health = dict(body.health)
+    health_status = body.status
+    if body.spool_depth is not None or body.spool_dropped is not None:
+        # One extra read, and only for devices that actually report a spool, because the
+        # drop *delta* cannot be computed without the previous heartbeat's counter. See
+        # `_spool_snapshot` for why the delta rather than the counter is the health signal.
+        previous_spool = (
+            await db.execute(
+                text("SELECT health -> 'spool' FROM edge_devices WHERE id = :id"),
+                {"id": device_id},
+            )
+        ).scalar_one_or_none()
+        health["spool"], new_drops = _spool_snapshot(
+            previous_spool, depth=body.spool_depth, dropped=body.spool_dropped, now=now
+        )
+        health_status = _health_status_with_spool(body.status, new_drops)
+        if new_drops:
+            logger.warning(
+                "edge_spool_dropped_events",
+                extra={
+                    "device_id": agent.device_id,
+                    "dropped_since_last_heartbeat": new_drops,
+                    "dropped_total": health["spool"]["dropped"],
+                    "spool_depth": health["spool"]["depth"],
+                },
+            )
+
     await db.execute(
         text(
             """
@@ -965,8 +1112,8 @@ async def heartbeat(
         ),
         {
             "id": device_id,
-            "health": _json(body.health, limit=16384),
-            "health_status": body.status,
+            "health": _json(health, limit=16384),
+            "health_status": health_status,
             "method": body.connectivity_method,
             "reason": body.connectivity_reason,
             "agent_version": body.agent_version,
@@ -1004,14 +1151,16 @@ async def heartbeat(
         )
         recorded += 1
 
-    if body.status != "ok" or recorded:
+    if health_status != "ok" or recorded:
         # Only worth a log line when something is wrong or changed; an "everything fine"
-        # line every 30 seconds per device drowns out the ones that matter.
+        # line every 30 seconds per device drowns out the ones that matter. The escalated
+        # status is what gets logged, not the device's own claim - the whole point of the
+        # override is that the device's `ok` was not the last word.
         logger.info(
             "edge_heartbeat",
             extra={
                 "device_id": agent.device_id,
-                "health_status": body.status,
+                "health_status": health_status,
                 "events": recorded,
             },
         )
