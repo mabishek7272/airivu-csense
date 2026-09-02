@@ -1449,3 +1449,113 @@ async def ack_command(
 
     result = (await db.execute(text(f"{_COMMAND_SELECT} WHERE id = :id"), {"id": command_id})).first()
     return _command_out(result)
+
+
+# --- Diagnostics: read-only troubleshooting, no shell/exec -----------------------------
+#
+# docs/superpowers/plans/2026-09-02-diagnostic-access-and-config-desired-state.md, Task 2.
+# The user (2026-09-02) scoped diagnostic access explicitly narrow: logs + health
+# snapshot, read-only, nothing that mutates device state. This route is that whole scope -
+# it composes two things that already exist (the health snapshot Task 1 taught the agent
+# to fill with a redacted `logs` tail, and this file's own command history) rather than
+# adding a new channel to the device.
+#
+# Gated on `diagnostic.read` alone, deliberately. `current_tenant_context` already decides
+# whether the caller is an ordinary tenant user or a support-grant-elevated platform
+# developer (`support_grants` + `elevate_from_grant`) - this route does not need, and must
+# not grow, a second opinion on that distinction. That is exactly what makes it a real
+# "time-limited diagnostic access" mechanism for free: a support grant's own expiry is the
+# only clock here, because a grant is the only way a platform developer's token carries
+# `diagnostic.read` in the first place.
+
+# "Enough to answer why is this device unreachable/degraded without a database console"
+# (the plan's own words) - a handful of recent attempts, not a paginated history. An
+# operator troubleshooting live degradation cares about the last few commands, not the
+# device's whole lifetime; `GET /devices/{id}/commands` already exists for the latter.
+DIAGNOSTICS_COMMAND_LIMIT = 10
+
+
+class DiagnosticCommandOut(BaseModel):
+    """Deliberately narrower than `CommandOut`: `type, status, result_code/result_summary,
+    timestamps` per the plan, and no more. `CommandOut.payload`/`.signed_envelope` are
+    left out on purpose, not by oversight - the whole reason `diagnostic.read` is safe to
+    hand out on its own in a support grant's `requested_scopes`, without also granting
+    `edge.read`/`edge.manage`, is that it stays a small, narrow read surface. A command's
+    payload can carry operational config values, and `signed_envelope` is the raw signed
+    JWT a device would treat as authorization to act - neither belongs behind a scope
+    whose entire premise is "logs and a health snapshot, nothing more". An operator
+    troubleshooting degradation needs to see *that* a command failed and why
+    (`result_code`/`result_summary`); `GET /devices/{id}/commands` (`edge.read`) is where
+    the full record, payload included, already lives.
+    """
+
+    command_type: str
+    status: str
+    result_code: str | None
+    result_summary: str | None
+    issued_at: dt.datetime
+    delivered_at: dt.datetime | None
+    completed_at: dt.datetime | None
+
+
+def _diagnostic_command_out(row) -> DiagnosticCommandOut:
+    """Reads the same `_COMMAND_SELECT` row `_command_out` does, but keeps only the
+    fields `DiagnosticCommandOut` allows - see that model's own docstring for why the
+    query is shared while the projection deliberately is not."""
+    return DiagnosticCommandOut(
+        command_type=row[2], status=row[5], result_code=row[11], result_summary=row[12],
+        issued_at=row[8], delivered_at=row[9], completed_at=row[10],
+    )
+
+
+class DiagnosticsOut(BaseModel):
+    device_id: uuid.UUID
+    # Includes Task 1's `logs` tail under `health["logs"]` - whatever the device's most
+    # recent heartbeat reported, verbatim. Nothing here is re-derived or summarised: the
+    # whole point is showing what the device itself said.
+    health: dict
+    health_status: str | None = None
+    connectivity_method: str | None = None
+    connectivity_reason: str | None = None
+    last_seen_at: dt.datetime | None = None
+    commands: list[DiagnosticCommandOut]
+
+
+@router.get("/devices/{device_id}/diagnostics", response_model=DiagnosticsOut)
+async def device_diagnostics(
+    device_id: uuid.UUID,
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> DiagnosticsOut:
+    """A device's current health (including its log tail) plus its recent command
+    history, in one read-only call.
+
+    Reuses `_load` and `_COMMAND_SELECT` rather than a parallel query shape: RLS already
+    narrows both to the caller's tenant, and a device that does not exist must look
+    identical to one that belongs to someone else - `_load`'s 404 already guarantees that
+    everywhere else in this file, and this route inherits it rather than re-deciding it.
+    The *query* is shared with `list_commands`/`ack_command`; the *response shape* is not
+    - see `DiagnosticCommandOut`.
+    """
+    require_permission(context, "diagnostic.read")
+    device = await _load(db, device_id)
+
+    rows = (
+        await db.execute(
+            text(
+                f"{_COMMAND_SELECT} WHERE edge_device_id = :device_id "
+                "ORDER BY issued_at DESC LIMIT :limit"
+            ),
+            {"device_id": device_id, "limit": DIAGNOSTICS_COMMAND_LIMIT},
+        )
+    ).all()
+
+    return DiagnosticsOut(
+        device_id=device.id,
+        health=device.health,
+        health_status=device.health_status,
+        connectivity_method=device.connectivity_method,
+        connectivity_reason=device.connectivity_reason,
+        last_seen_at=device.last_seen_at,
+        commands=[_diagnostic_command_out(r) for r in rows],
+    )
