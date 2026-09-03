@@ -937,16 +937,45 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           feature's relay decision
     - Full JSON-Schema-draft validation of `tenant_overrides` against
           `allowed_overrides_schema` — a simple key/type check today
-- [ ] Redis config cache + invalidation, desired-state deployment to edge
-  - **Deliberately deferred, not silently dropped**: the Redis cache half is the same
-        TRD §16 3-layer distributed cache already deferred for pipeline config just above
-        (line ~935) - Postgres-authoritative direct reads are enough at this scale, same
-        reasoning as the WS-realtime relay decision. The desired-state-deployment half
-        needs a real edge agent to push to and verify against (`backend/edge/agent/` is
-        still empty) - `device_commands` (migration 0042) already ships the signed
-        transport this would ride on once an agent exists to consume it; building the
-        "deployment" half against no real consumer would be exactly the kind of
-        mocked/unverifiable work this session has avoided everywhere else.
+- [~] Redis config cache + invalidation, desired-state deployment to edge
+  - [ ] **The Redis cache half stays deferred, deliberately** - the same TRD §16 3-layer
+        distributed cache already deferred for pipeline config above (line ~935) -
+        Postgres-authoritative direct reads are enough at this scale, same reasoning as
+        the WS-realtime relay decision. Not revisited by this pass.
+  - [x] **The desired-state-deployment half is built**, now that a real edge agent exists
+        to push to and verify against (the offline-spool work, earlier in this phase).
+        `POST /api/v1/tenant/edge/devices/{id}/config` pushes a signed, versioned config
+        over the *existing* `device_commands` transport (migration 0042's signed-command
+        mechanism, unmodified - no parallel channel built) - `edge_devices.
+        desired_state_version`/`observed_state_version` get their first real writers.
+        **Scope deliberately bounded to device-level operational config** (heartbeat
+        interval, spool row/byte caps, backoff parameters) - not model/pipeline weights,
+        the same boundary the edge agent itself held to (Phase 4 AI-runtime territory).
+        Honors FLOW-13's conflict policy exactly: cloud desired state wins, an already-
+        expired command is never applied (proven against the *real* existing `expires_at`
+        filter, not a new one), and "artifact verification" for this narrow payload means
+        the agent validates against the same bounds `config.py` already enforces at its
+        own startup - shared, not duplicated with different numbers - so an out-of-bounds
+        push is refused and logged, never coerced or silently ignored.
+  - [x] **Applied to the running process, not just on next restart** - a device needing a
+        power cycle to pick up a heartbeat-interval change isn't "deployed." Two real bugs
+        found and fixed by code review before this was called done: the spool's live
+        cap-lowering call was blocking the agent's single event loop (a violation of
+        `spool.py`'s own documented contract, on the exact SD-card-class hardware this
+        project's storage reasoning is built around) - now runs off-loop; and the
+        heartbeat's server-side cadence-widening advisory (`next_interval_seconds`, "so
+        the cadence can be widened during an incident without shipping firmware") was
+        being silently and permanently disabled by *any* config push, even one that never
+        touched the heartbeat interval - now pinned only when a push actually sets that
+        field.
+  - [x] Verified for real, against the live stack, with a real `edge-agent` container:
+        `scripts/e2e_edge_desired_state.py` - a real config push measurably halves the
+        agent's *actual* heartbeat cadence (30.03s avg -> 15.02s avg, real elapsed
+        wall-clock time between real heartbeats, not an echoed version number),
+        `observed_state_version` converges to `desired_state_version` via the real API,
+        an already-expired push is genuinely never applied (version gap stays visible,
+        cadence unaffected), and the server refuses two out-of-bounds pushes with 422
+        before either ever reaches the device. Full PASS.
 - [x] **Golden dataset + benchmark harness (one reference use case): `license-plate-detector`.**
       TRD §15.2 has nine validation gates - this covers gates 2-4 (load/shape
       compatibility, golden dataset functional tests, accuracy against declared
@@ -1402,7 +1431,60 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         validation are covered by `test_ingest_batch.py` and exercised for real inside
         `e2e_edge_spool.py`, but not by a standalone e2e script the way most other
         endpoints in this file have one.
-- [ ] WireGuard/relay integration design + time-limited diagnostic access
+- [x] WireGuard/relay integration design + time-limited diagnostic access
+  - [x] **"Integration design" was already substantively done** by earlier work this
+        phase (`CLAUDE.md`'s documented WireGuard peer-isolation/fleet-address-allocation/
+        cross-tenant-overlap fixes). Confirmed by grep that `cloud_relay`/`port_forward`
+        are connectivity modes a device self-*reports*, never backing infrastructure we
+        operate - correct, since a relay is the customer's own setup, not ours to run.
+        So the only real gap was diagnostic access itself.
+  - [x] **Scoped deliberately, by owner direction (2026-09-02): read-only - logs + health
+        snapshot. No shell, no exec, nothing that mutates device state.** Closed without
+        building any new relay/session-broker service at all - it rides entirely on
+        infrastructure already shipped this phase: the heartbeat channel (agent ->
+        `tenant_api`) and support-grant elevation (an active `support_grants` row turning
+        a platform-audience token into a real, scope-limited `TenantContext`). This is the
+        second real consumer of that elevation mechanism, proving it generalizes rather
+        than being special-cased to the incident-access work it first shipped for.
+  - [x] New `diagnostic.read` permission (migration 0053, customer-audience, granted to
+        `tenant_owner`/`tenant_member`) - deliberately **not** added to
+        `DANGEROUS_SUPPORT_SCOPES` (the denylist that keeps a support grant from minting
+        persistent access): read-only telemetry is exactly the class that denylist exists
+        to distinguish from things like `membership.manage`. The same permission and the
+        same `GET /devices/{id}/diagnostics` route serve both an ordinary tenant admin
+        self-diagnosing their own device and a platform developer under an elevated grant
+        - the route doesn't know or care which, by design.
+  - [x] The edge agent now reports a real, bounded (~4 KiB), redacted log tail on every
+        heartbeat (`backend/edge_agent/app/logbuf.py`) - a `logging.Handler` subclass, not
+        a log-shipping subsystem. **Found and fixed during review, not shipped as written**:
+        the first redaction regex (any 20+ character token-shaped run) was also silently
+        eating this package's own real event names 20+ characters long
+        (`spool_row_permanently_undeliverable` and 21 others) - would have destroyed the
+        one thing every log entry exists to carry. Fixed with a shape-based heuristic
+        (digit, hyphen, or mixed case - properties every real secret in this codebase has
+        and a `snake_case` event name never does). Also found: the tail's first version
+        only captured `record.getMessage()`, and this package's own logging convention
+        puts nearly all real diagnostic detail (`str(exc)`, error codes) in `extra=`,
+        which the handler didn't read - shipped, it would have surfaced bare event names
+        with none of the detail an operator needs. Fixed with a small, explicit allowlist
+        of `extra` keys this package's own call sites actually use, through the same
+        redaction path.
+  - [x] Verified for real, against the live stack, with a real elevated session:
+        `scripts/e2e_diagnostic_access.py` - a real device heartbeats real content-bearing
+        logs; the tenant owner and a support-grant-elevated platform developer both read
+        *identical* diagnostics through the *same* route; **the single assertion that
+        proves read-only is real, not just intended**: the still-active elevated session
+        is refused (403) both an unrelated device command and a device PATCH, since the
+        grant's `requested_scopes` never included `edge.manage`; the diagnostics response
+        never leaks a command's `payload`/`signed_envelope` even under elevation (a
+        review-caught over-exposure, fixed before this shipped - `diagnostic.read` alone
+        must not incidentally see more than diagnostics); and revoking the grant stops
+        elevation immediately. Full PASS.
+  - [ ] **Deliberately deferred, stated plainly**: full remote shell/exec was explicitly
+        declined as its own dedicated project (real security stakes - session recording,
+        command auditing, a much larger attack surface if the support-grant layer above it
+        is ever bypassed), not a corner cut. No Customer CRM UI surfaces diagnostics or
+        the config-push mechanism yet, even though both are fully usable via the API.
 - [x] Support grant request/approve/active-banner/expiry/revoke + authorization + audit
   - [x] `support_grants` (SCH §5.10, previously spec'd but never built - migration 0043).
         `support_grant_id` had already existed on `TenantContext`/`PlatformContext` and
