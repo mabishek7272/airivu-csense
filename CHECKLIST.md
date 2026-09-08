@@ -894,22 +894,55 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         validation-run step yet (`pipeline_test_runs`, deferred below).
   - [x] **Only one stage type is interpreted anywhere in this codebase: `infer`.** The
         TRD's own pipeline diagram (§16) has more (preprocess, filter, tracking...), and
-        `definition_json` is shaped to hold them later, but nothing executes a pipeline
-        at all yet — see the next point. Version creation validates the one real thing:
-        the named model has a version in a deployable state (the same
-        `DEPLOYABLE_STATES` bar the registry's own promote endpoint uses).
+        `definition_json` is shaped to hold them later. Version creation validates the
+        one real thing: the named model has a version in a deployable state (the same
+        `DEPLOYABLE_STATES` bar the registry's own promote endpoint uses). **2026-09-08:
+        this stage type is now genuinely executed**, not just interpreted at
+        publish-validation time — see the next point.
   - [x] `pipeline_assignments` — tenant-owned, RLS, a published version bound to one of
-        the tenant's own cameras. **This records intent, not execution**: nothing pulls
-        a camera's stream and runs the assigned pipeline against it yet — that's a
-        materially different, larger piece of work (a gateway device pulling RTSP, or
-        the cloud doing so, and calling `/infer` continuously) than the registry itself,
-        and is still the real gap behind "models never leave the central server" being
-        proven for the registry/runtime but not yet *enforced* end-to-end. Tracked here,
-        not silently implied by the assignment endpoint existing. A partial unique index
-        on `(camera_id, priority) WHERE status = 'active'` enforces SCH §8.8's overlap
+        the tenant's own cameras. **2026-09-08: this used to record intent, not
+        execution — it now does both.** A partial unique index on
+        `(camera_id, priority) WHERE status = 'active'` enforces SCH §8.8's overlap
         constraint (a simplified form of it — a full overlapping-time-range exclusion
         would need `btree_gist` and buys nothing yet, since nothing reads
         `effective_to`).
+    - [x] **The execution gap this bullet used to name is closed** — a real, running
+          camera-to-incident loop, not just the registry proving it *could* be enforced.
+          Built across 4 tasks
+          ([plan](docs/superpowers/plans/2026-09-08-pipeline-execution-runtime.md)):
+          `csense_shared.cameras.frame_grab`/`connection` (a real, TCP-forced, fd-leak-
+          proof RTSP frame grab reusing `camera_probe.py`'s own DNS-rebinding-safe
+          resolve-then-dial path, not a second copy of it);
+          `csense_shared.pipeline.runtime` (the pure-logic execution cycle — grab, infer,
+          ingest on a qualifying detection, with a deterministic `source_event_id` so a
+          retried/overlapping cycle can never double-ingest); the new
+          [backend/pipeline_runtime/](backend/pipeline_runtime/) service (one
+          `asyncio.Task` per active `runtime_target="cloud"` camera, a 5s discovery poll,
+          one camera's exception or a whole failed discovery poll never taking another
+          camera's task or the service itself down); and a real end-to-end proof
+          ([scripts/e2e_pipeline_execution.py](scripts/e2e_pipeline_execution.py)) that a
+          real published video, with nobody posting a detection by hand, produces a real
+          incident with real evidence on its own within ~95s, that revoking actually
+          stops the camera's task (not just stops it mattering), and that an unreachable
+          camera never takes another camera's own progress down.
+          **The honest remainder, named rather than silently implied fixed:**
+      - `runtime_target="edge"` assignments are still not executed. The edge agent
+            (built earlier this phase) deliberately does not run inference — executing
+            an edge-targeted assignment is its own, separate, not-yet-started body of
+            work, not a small extension of this one.
+      - **No admission control or core-budget enforcement across concurrently-running
+            cameras yet.** Every active cloud assignment gets its own task regardless of
+            how many are already running on the box; nothing here caps concurrency
+            against the production server's real 13-usable-core budget CLAUDE.md's own
+            capacity table names. Real capacity planning is still blocked on real
+            traffic — tracked separately, this file's own existing Phase 8 entry on real
+            capacity/SLO validation.
+      - **CLAUDE.md's own night/IR detection confidence caveat for `yolov8n-general`
+            (0.09–0.21 measured, broken at a 0.5 threshold) now applies for real**, for
+            the first time — this is the first code path that runs that model
+            continuously against a live camera rather than on a single manually-pushed
+            frame. Not a new problem this work introduced; a dormant, already-documented
+            one that now has a real execution path to actually surface through.
     - [x] **2026-09-08: closed the "never browse the catalogue" stance.** This module's
           own docstring used to say a tenant reads `pipeline_versions` only to validate
           an assignment target, never to list or browse it — reasonable while nothing
