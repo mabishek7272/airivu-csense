@@ -495,9 +495,15 @@ async def test_a_turned_away_assignment_is_admitted_on_the_next_cycle_after_a_sl
 async def test_capacity_refusal_is_logged_with_the_camera_id_and_running_count(caplog):
     """No existing test in this file asserts on log output, so this follows
     `test_edge_spool_crypto.py`/`test_envelope.py`'s own established `caplog.at_level` +
-    substring-on-`caplog.text` pattern rather than inventing a new one."""
+    substring-on-`caplog.text` pattern rather than inventing a new one.
+
+    Code-quality review found the original version of this admission-refusal log fired
+    at INFO per refused candidate, per cycle - unbounded volume at fleet scale. Fixed by
+    moving the per-camera detail to DEBUG and adding one INFO-level aggregate summary per
+    cycle instead; this test now checks both levels explicitly, matching what actually
+    ships rather than only the DEBUG-level detail or only the INFO-level summary."""
     cam_a, cam_b = _assignment(), _assignment()
-    with caplog.at_level("INFO"):
+    with caplog.at_level("DEBUG"):
         async with _DiscoveryHarness(max_concurrent_cameras=1) as harness:
             harness.active = [cam_a]
             await harness.calls_for(cam_a.camera_id, at_least=1)
@@ -509,11 +515,21 @@ async def test_capacity_refusal_is_logged_with_the_camera_id_and_running_count(c
     refusal_records = [
         r for r in caplog.records if r.getMessage() == "camera_admission_refused_capacity"
     ]
-    assert refusal_records, "expected at least one camera_admission_refused_capacity log record"
+    assert refusal_records, "expected at least one camera_admission_refused_capacity DEBUG record"
     record = refusal_records[0]
     assert record.camera_id == str(cam_b.camera_id)
     assert record.running_count == 1
     assert record.max_concurrent_cameras == 1
+
+    summary_records = [
+        r for r in caplog.records if r.getMessage() == "camera_admission_refused_capacity_summary"
+    ]
+    assert summary_records, "expected at least one INFO-level aggregate summary record"
+    summary = summary_records[0]
+    assert summary.levelname == "INFO"
+    assert summary.refused_count >= 1
+    assert summary.running_count == 1
+    assert summary.max_concurrent_cameras == 1
 
 
 # --- Real container decode: the real, built pipeline-runtime image against a real, ------

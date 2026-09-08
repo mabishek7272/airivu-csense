@@ -439,19 +439,33 @@ async def run_discovery_loop(
 
     **Admission control**: a newly-discovered active assignment only gets a task spawned
     for it while the number of already-running tasks is below `max_concurrent_cameras`.
-    At capacity, it is turned away - logged as `camera_admission_refused_capacity` (at the
-    same INFO level, and the same "logged again next cycle for as long as it keeps being
-    true" cadence, as this module's own `camera_endpoint_blocked` for an unreachable
-    camera) so an operator can see *why* a camera silently isn't running rather than
-    guessing, matching this service's own "capacity refusal is a health fact, not a
-    crash" posture. This never touches an already-running task - nothing here cancels a
-    running camera to make room for a new one - so recomputing "who's running vs. who's
-    active" every cycle is also what makes a freed slot (a revoke, a deprecated pipeline,
-    a changed assignment) pick up a previously-turned-away assignment on the very next
-    discovery cycle, with no special-case code for it: it falls out of the same "spawn
-    whatever's active and not already running, up to the cap" pass. `rotate_for_admission`
-    (see its own docstring) is what keeps that pass from always favoring the same waiting
+    At capacity, it is turned away - a per-camera detail line at DEBUG
+    (`camera_admission_refused_capacity`), plus one INFO-level summary per discovery
+    cycle (`camera_admission_refused_capacity_summary`, a single line naming how many
+    were refused) so an operator can see *why* cameras silently aren't running without
+    the per-camera line flooding INFO-level logs at fleet scale - unlike
+    `camera_endpoint_blocked`, which is naturally rate-limited to one line per *that
+    camera's own* cycle interval, a saturated cap can turn away hundreds of candidates
+    in a single discovery poll, so this needed its own, coarser cadence rather than
+    reusing that one. This never touches an already-running task - nothing here cancels
+    a running camera to make room for a new one - so recomputing "who's running vs.
+    who's active" every cycle is also what makes a freed slot (a revoke, a deprecated
+    pipeline) pick up a previously-turned-away assignment on the very next discovery
+    cycle, with no special-case code for it: it falls out of the same "spawn whatever's
+    active and not already running, up to the cap" pass. `rotate_for_admission` (see its
+    own docstring) is what keeps that pass from always favoring the same waiting
     candidates over others when the cap is saturated.
+
+    **Known limitation, found in code-quality review, not yet fixed**: a *changed*
+    assignment (not revoked - a `tenant_overrides` edit, a pipeline version promotion)
+    is stopped and re-added to the candidate pool the same as a brand-new arrival. At a
+    saturated cap, the one slot that change just freed is up for grabs by
+    `rotate_for_admission` on equal footing with everyone else waiting - the camera that
+    owned it a moment ago is not guaranteed to win it back, and can sit refused
+    indefinitely afterward even though nothing about its own health changed, only a
+    config edit did. Not fixed here for lack of time to do it carefully rather than
+    hastily; the honest fix is giving a just-freed-by-its-own-change assignment priority
+    for that same slot before rotation considers anyone else.
 
     One poll failing (a transient DB hiccup) leaves every already-running camera task
     exactly as it was - it does not tear anything down - and is logged, matching this
@@ -480,9 +494,16 @@ async def run_discovery_loop(
                         live_assignments.pop(camera_id, None)
 
                 candidates = [camera_id for camera_id in current if camera_id not in tasks]
+                refused_camera_ids: list[uuid.UUID] = []
                 for camera_id in rotate_for_admission(candidates, admission_round):
                     if len(tasks) >= max_concurrent_cameras:
-                        logger.info(
+                        refused_camera_ids.append(camera_id)
+                        # Per-camera detail at DEBUG only - at INFO this would be one line
+                        # per refused candidate, per discovery poll (a saturated cap with a
+                        # large candidate pool floods the very logs an overloaded operator
+                        # most needs signal from, not noise). The aggregate summary below
+                        # is the INFO-level signal instead.
+                        logger.debug(
                             "camera_admission_refused_capacity",
                             extra={
                                 "camera_id": str(camera_id),
@@ -497,6 +518,15 @@ async def run_discovery_loop(
                         name=f"pipeline-camera-{camera_id}",
                     )
                     live_assignments[camera_id] = assignment
+                if refused_camera_ids:
+                    logger.info(
+                        "camera_admission_refused_capacity_summary",
+                        extra={
+                            "refused_count": len(refused_camera_ids),
+                            "running_count": len(tasks),
+                            "max_concurrent_cameras": max_concurrent_cameras,
+                        },
+                    )
                 admission_round += 1
 
             with contextlib.suppress(TimeoutError):

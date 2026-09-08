@@ -936,33 +936,46 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             *default* config, not a live measurement: ~0.08 cores/camera at the default
             mainstream-keyframe-only 0.5fps sampling, against ~13 usable cores on the
             production box. At capacity, a newly-discovered active assignment is turned
-            away rather than spawned, logged as `camera_admission_refused_capacity`
-            (camera_id + current running count) at the same cadence and level as this
-            module's own already-established `camera_endpoint_blocked` — an operator can
-            see *why* a camera isn't running, not just that it isn't. Already-running
-            tasks are never disturbed by a new candidate showing up at capacity (no
-            cancel-and-respawn thrashing), and recomputing "who's running vs. who's
-            active" every discovery cycle is exactly what makes a freed slot (a revoke, a
-            deprecated pipeline, a changed assignment) pick a turned-away assignment back
-            up on the very next cycle with no special-case code — confirmed for real with
-            an `asyncio`-real test
+            away rather than spawned — a per-camera DEBUG line
+            (`camera_admission_refused_capacity`) plus one INFO-level aggregate summary
+            per discovery cycle (`camera_admission_refused_capacity_summary`, a count of
+            how many were refused) so an operator can see *why* cameras aren't running
+            without the per-camera line flooding INFO logs at fleet scale — code-quality
+            review caught the first version of this logging at INFO per refused
+            candidate, per cycle, unbounded; fixed before this was ever exercised near
+            its real cap. Already-running tasks are never disturbed by a new candidate
+            showing up at capacity (no cancel-and-respawn thrashing), and recomputing
+            "who's running vs. who's active" every discovery cycle is exactly what makes
+            a freed slot (a revoke, a deprecated pipeline) pick a turned-away assignment
+            back up on the very next cycle with no special-case code — confirmed for real
+            with an `asyncio`-real test
             (`test_a_turned_away_assignment_is_admitted_on_the_next_cycle_after_a_slot_frees`
             in `backend/tests/test_pipeline_runtime_service.py`), not assumed. A small
             `rotate_for_admission` rotation keeps a saturated cap from always favoring the
             same waiting candidates cycle after cycle for a slot that just freed, without
             ever preempting an already-running camera to do it.
-            **The honest remainder, named rather than silently implied fixed**: this is a
-            flat cap on task *count*, not a weighted core budget. It says nothing about
-            each assignment's *actual* cost — `sample_fps`, resolution, whether live view
-            is concurrently active for that camera — none of which factor in today. A
-            fleet where every camera ran at, say, 2fps full-decode mainstream (~0.72
-            cores/camera per CLAUDE.md's own table) would exhaust the real 13-core budget
-            at ~18 cameras, well before this count-based cap of 160 ever engages. A
-            proper weighted admission control — summing each assignment's actual
-            `sample_fps`-derived cost against a real core budget — is still future work,
-            not attempted here. Real capacity planning stays blocked on real traffic —
-            tracked separately, this file's own existing Phase 8 entry on real
-            capacity/SLO validation.
+            **The honest remainder, named rather than silently implied fixed**:
+        - This is a flat cap on task *count*, not a weighted core budget. It says
+              nothing about each assignment's *actual* cost — `sample_fps`, resolution,
+              whether live view is concurrently active for that camera — none of which
+              factor in today. A fleet where every camera ran at, say, 2fps full-decode
+              mainstream (~0.72 cores/camera per CLAUDE.md's own table) would exhaust the
+              real 13-core budget at ~18 cameras, well before this count-based cap of 160
+              ever engages. A proper weighted admission control — summing each
+              assignment's actual `sample_fps`-derived cost against a real core budget —
+              is still future work, not attempted here. Real capacity planning stays
+              blocked on real traffic — tracked separately, this file's own existing
+              Phase 8 entry on real capacity/SLO validation.
+        - **A *changed* assignment (not revoked — a `tenant_overrides` edit, a
+              pipeline version promotion) can lose its own slot at saturation and not get
+              it back.** It's stopped and re-added to the candidate pool the same as a
+              brand-new arrival; at a saturated cap, the one slot its own change just
+              freed is up for grabs by `rotate_for_admission` on equal footing with every
+              other waiting candidate, not reserved for the camera that owned it a moment
+              ago. Found in code-quality review, documented in `run_discovery_loop`'s own
+              docstring, not fixed — the honest fix (priority for a just-self-freed slot
+              before rotation considers anyone else) needs more care than there was time
+              for tonight.
       - **CLAUDE.md's own night/IR detection confidence caveat for `yolov8n-general`
             (0.09–0.21 measured, broken at a 0.5 threshold) now applies for real**, for
             the first time — this is the first code path that runs that model
