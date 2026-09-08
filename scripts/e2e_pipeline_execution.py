@@ -57,6 +57,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import time
@@ -249,13 +250,17 @@ def download_sample_image(dest_path: pathlib.Path) -> None:
         raise RuntimeError(f"downloaded sample image is suspiciously small: {dest_path.stat().st_size} bytes")
 
 
-def start_throwaway_mediamtx(network: str, suffix: str) -> tuple[str, int, int]:
+def start_throwaway_mediamtx(network: str, suffix: str) -> tuple[str, int, int, pathlib.Path]:
     """Starts a real, throwaway MediaMTX server joined to the *same* Docker network the
     live stack's own containers are on (unlike backend/tests/test_frame_grab.py's own
     fixture, which only needs the host to reach it) - so the real, already-running
     pipeline-runtime container can dial it by IP. Returns (container_id, host_rtsp_port,
-    host_api_port); the host ports are only for this script's own publish/readiness-check
-    use, never what pipeline-runtime dials.
+    host_api_port, config_dir); the host ports are only for this script's own publish/
+    readiness-check use, never what pipeline-runtime dials. `config_dir` is returned so
+    the caller can remove it in cleanup - it's bind-mounted read-only into the container
+    (Linux keeps the mount valid via the held inode even after the source path is
+    unlinked, so removing it here after the container is already up is safe), but nothing
+    was deleting it before, leaking one throwaway temp dir per run.
     """
     container_name = f"csense-pipeline-exec-e2e-mtx-{suffix}"
     rtsp_port = _free_tcp_port()
@@ -288,7 +293,7 @@ def start_throwaway_mediamtx(network: str, suffix: str) -> tuple[str, int, int]:
         MEDIAMTX_IMAGE,
     )
     _wait_for_tcp("127.0.0.1", rtsp_port, timeout=15.0)
-    return container_name, rtsp_port, api_port
+    return container_name, rtsp_port, api_port, config_dir
 
 
 def publish_sample_image_loop(image_path: pathlib.Path, rtsp_port: int, api_port: int) -> subprocess.Popen:
@@ -380,6 +385,8 @@ def main() -> int:
     mediamtx_container = None
     publisher: subprocess.Popen | None = None
     pipeline_version_id = None
+    image_dir: pathlib.Path | None = None
+    mediamtx_config_dir: pathlib.Path | None = None
 
     try:
         step(0, "Confirm the real pipeline-runtime container is up (not imported as a module)")
@@ -389,11 +396,12 @@ def main() -> int:
         check(container_running(runtime_container), "pipeline-runtime container is running", failures)
 
         step(1, "Publish a real photograph yolov8n-general genuinely detects into a real RTSP stream")
-        image_path = pathlib.Path(tempfile.mkdtemp(prefix="csense-pipeline-exec-e2e-")) / "bus.jpg"
+        image_dir = pathlib.Path(tempfile.mkdtemp(prefix="csense-pipeline-exec-e2e-"))
+        image_path = image_dir / "bus.jpg"
         download_sample_image(image_path)
         print(f"    downloaded sample image: {image_path.stat().st_size:,} bytes")
 
-        mediamtx_container, rtsp_port, api_port = start_throwaway_mediamtx(network, suffix)
+        mediamtx_container, rtsp_port, api_port, mediamtx_config_dir = start_throwaway_mediamtx(network, suffix)
         publisher = publish_sample_image_loop(image_path, rtsp_port, api_port)
         mediamtx_ip = container_ip(mediamtx_container, network)
         print(f"    throwaway mediamtx {mediamtx_container} joined to '{network}' at {mediamtx_ip}")
@@ -568,6 +576,16 @@ def main() -> int:
         if mediamtx_container is not None:
             docker("rm", "-f", mediamtx_container, check=False)
             print(f"    removed throwaway mediamtx container {mediamtx_container}")
+        # Both temp dirs (the downloaded sample image, the mediamtx.yml bind-mount source)
+        # were leaked on every run - a real, if small, disk-litter bug found by code
+        # review, not present in any exception path only: shutil.rmtree(..., ignore_errors=True)
+        # so a missing/already-cleaned dir never masks a real failure being reported above.
+        if image_dir is not None:
+            shutil.rmtree(image_dir, ignore_errors=True)
+            print(f"    removed temp image dir {image_dir}")
+        if mediamtx_config_dir is not None:
+            shutil.rmtree(mediamtx_config_dir, ignore_errors=True)
+            print(f"    removed temp mediamtx config dir {mediamtx_config_dir}")
         if tenant_id:
             psql(f"DELETE FROM tenants WHERE id = '{tenant_id}'")
             psql(f"DELETE FROM organizations WHERE display_name = '{organization_name}'")
