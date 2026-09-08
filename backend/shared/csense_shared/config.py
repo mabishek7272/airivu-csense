@@ -163,6 +163,23 @@ class Settings(BaseSettings):
     model_cache_dir: str = "/var/cache/csense/models"
     model_pool_size: int = 4
 
+    # ai-runtime's own internal base URL, reached container-to-container - never exposed
+    # to a browser (see ai_runtime/app/main.py's own module docstring: "deliberately
+    # internal"). Only pipeline-runtime calls this today.
+    ai_runtime_base_url: str = "http://ai-runtime:8000"
+    ai_runtime_infer_timeout_seconds: float = 15.0
+
+    # Pipeline execution runtime (backend/pipeline_runtime). The discovery poll bounds how
+    # long a newly-assigned or just-revoked camera waits before its own asyncio task
+    # starts/stops - deliberately short, matching notification_poll_seconds's own
+    # "seconds, not minutes" reasoning, and cheap: the query is a straightforward join over
+    # `pipeline_assignments`/`pipeline_versions`/`cameras`, not a per-camera cost.
+    pipeline_runtime_discovery_poll_seconds: float = 5.0
+    # Bounds one camera's own RTSP open+read (CAP_PROP_OPEN_TIMEOUT_MSEC/READ_TIMEOUT_MSEC
+    # inside grab_frame) - kept equal to frame_grab's own documented default rather than a
+    # second, independently-tuned number.
+    pipeline_runtime_frame_grab_timeout_seconds: float = 10.0
+
     @property
     def minio_presign_endpoint(self) -> str:
         return self.minio_public_endpoint or self.minio_endpoint

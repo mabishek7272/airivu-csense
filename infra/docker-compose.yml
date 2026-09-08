@@ -263,6 +263,39 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [csense]
 
+  # Runs the pipeline_assignments the Tenant API only ever *records* (see that API's own
+  # module docstring: "This records intent, not execution"). One asyncio task per active
+  # cloud camera, pulling a real RTSP frame, calling ai-runtime, and ingesting any
+  # qualifying detection - the loop `runtime_target="cloud"` assignments actually run
+  # against. `runtime_target="edge"` is out of scope here; the edge agent doesn't infer.
+  pipeline-runtime:
+    build:
+      context: ../backend
+      dockerfile: pipeline_runtime/Dockerfile
+    env_file: [../.env]
+    environment:
+      <<: *backend-env
+      # Serves every tenant's active cloud assignments from one process - the same
+      # "dispatch legitimately spans every tenant" role notification-worker/ai-runtime
+      # already connect as. Every actual detection write still goes through a
+      # tenant-scoped session for that camera's own tenant (csense_shared.pipeline.
+      # runtime's own module docstring).
+      POSTGRES_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+      AI_RUNTIME_BASE_URL: http://ai-runtime:8000
+    secrets: *backend-secrets
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      ai-runtime: { condition: service_started }
+    # No ports published: this service accepts no requests at all, same as
+    # notification-worker - it only dials cameras and calls ai-runtime/Postgres/MinIO.
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [csense]
+
   # Dev-only convenience container for exercising the edge agent against this stack
   # (scripts/e2e_edge_spool.py, manual enrolment testing). It is deliberately absent
   # from docker-compose.prod.yml: that file deploys *our* platform on *our* production
