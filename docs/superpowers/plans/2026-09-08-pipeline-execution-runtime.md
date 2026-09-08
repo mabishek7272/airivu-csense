@@ -122,7 +122,7 @@ handling) must mirror it exactly, not reinvent it.
 **Files:** Create `backend/shared/csense_shared/pipeline/runtime.py`; test
 `backend/tests/test_pipeline_runtime.py`.
 
-- [ ] `active_cloud_assignments(session) -> list[Assignment]` — real DB query, platform-
+- [x] `active_cloud_assignments(session) -> list[Assignment]` — real DB query, platform-
       scoped: every `pipeline_assignments` row with `status='active'` joined to a
       `pipeline_versions` row that is `published` (a `draft`/`deprecated` version must
       never run), filtered to `runtime_target='cloud'` on the version (not the assignment —
@@ -131,7 +131,17 @@ handling) must mirror it exactly, not reinvent it.
       this still holds). Returns everything the loop needs: camera connection details,
       `model_name`, merged `resource_profile` + `tenant_overrides` (overrides win, matching
       `allowed_overrides_schema`'s existing validation semantics).
-- [ ] `run_one_cycle(camera_assignment, *, http_infer_fn, ingest_fn, now) -> str` — the
+      Confirmed against migration 0031 / `csense_shared.db.models.PipelineVersion`:
+      `runtime_target` is on `pipeline_versions`, exactly as the plan expected.
+      `pipeline_assignments` carries its own, differently-named, currently-unused
+      `runtime_location` — a real, distinct column, not a naming accident; this filters on
+      the version's `runtime_target` per the plan. Merge is a plain dict-merge
+      (`merge_resource_profile`) with `{sample_fps: 0.5, confidence: 0.5}` module defaults
+      for a pipeline version shipped with no `resource_profile` at all — not specified
+      anywhere else, documented in-module as the decision it is (0.5 fps matches
+      CLAUDE.md's cheapest no-GPU recommendation; 0.5 confidence matches
+      `csense_shared.pipeline.rules.Rule`'s own default).
+- [x] `run_one_cycle(camera_assignment, *, http_infer_fn, ingest_fn, now) -> str` — the
       single-camera unit: grab a frame (Task 1), call `http_infer_fn` (injected — real
       `ai-runtime` `/infer` in production, a fake in tests, matching this session's
       established "no real network call in a unit test" discipline), and if any detection
@@ -139,6 +149,17 @@ handling) must mirror it exactly, not reinvent it.
       `ingest_detection` in production) with the synthesized `source_event_id`. Returns a
       status string (`"detected"` / `"clean"` / `"unreachable"` / `"skipped_not_due"`) for
       the loop wrapper's own logging/metrics.
+      Shipped with one addition beyond the literal signature: `grab_frame_fn` is also an
+      injected keyword-only parameter (the plan's own text allowed this — "injected via a
+      parameter too if that's cleaner for testing"). It takes the whole `Assignment`, not
+      just an RTSP URL, so the real resolve-address / decrypt-credential / build-URL /
+      `grab_frame` sequence (all async, DB-bound) can live entirely behind Task 3's own
+      production callable rather than inside this pure-logic function; every test here
+      passes a synchronous fake. `"skipped_not_due"` (named in the plan as one of the four
+      outcomes but never specified further) is implemented as an `effective_from`/
+      `effective_to` bounds check — dead code against today's assignment-creation API
+      (nothing lets a tenant schedule a future `effective_from` yet) but free, real
+      insurance against a later scheduled-assignment feature silently running early/late.
       Tests, injected fakes, no real network or real camera needed here (Task 1 already
       proved the real I/O boundary separately):
       - a frame with a clearing-confidence detection results in exactly one `ingest_fn`
@@ -150,7 +171,20 @@ handling) must mirror it exactly, not reinvent it.
         `source_event_id` both times (the idempotency property this whole design rests on)
       - `resource_profile.confidence` and a `tenant_overrides` confidence override are both
         honoured, with the override winning when both are present
-- [ ] Full suite + ruff. Commit.
+      Also proved against the real dev-stack Postgres (`TEST_POSTGRES_DSN`, same fixture
+      shape as `test_pipeline_ingest.py`): a draft version's assignment, a deprecated
+      version's assignment, an edge-`runtime_target` assignment, and a revoked assignment
+      are each excluded; a genuinely active+published+cloud assignment is included with
+      the right merged `resource_profile`/`tenant_overrides` (0.6 default overridden to 0.9
+      by `tenant_overrides`, `sample_fps` left at the version's own 1.0 with no override).
+      A deliberate negative-control run (removing the `pv.state = 'published'` filter)
+      confirmed the two state-exclusion tests actually fail without that filter, rather
+      than passing vacuously.
+- [x] Full suite + ruff. Commit.
+      696 passed / 73 skipped / 1 unrelated pre-existing failure
+      (`test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`, the same
+      macOS filesystem artifact Task 1 already tracked as out of scope). `ruff check
+      backend scripts` clean.
 
 ---
 
