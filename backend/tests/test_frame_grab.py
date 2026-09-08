@@ -30,6 +30,8 @@ fixture's timing realistic instead of coin-flip flaky.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import shutil
 import socket
 import subprocess
@@ -79,21 +81,59 @@ def _wait_for_path_ready(api_port: int, path_name: str, *, timeout: float) -> No
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{api_port}/v3/paths/get/{path_name}", timeout=1.0
             ) as resp:
-                import json
-
                 if json.loads(resp.read()).get("ready"):
                     return
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            # The last of these covers a transient malformed/empty response body from
+            # MediaMTX's own API during its own startup window - same treatment as a
+            # connection error, since either way the right move is "not ready yet, retry".
             pass
         time.sleep(0.2)
     raise RuntimeError(f"mediamtx path '{path_name}' never became ready")
 
 
+def _rtsp_reader_transports(api_port: int, path_name: str) -> list[str]:
+    """Asks MediaMTX's own control API what transport it observed on its *server* side
+    of the handshake for every currently-connected reader session on `path_name` - e.g.
+    `["TCP"]` - as opposed to anything the client side claims it configured. This is the
+    one piece of ground truth this test file uses to actually distinguish `grab_frame`
+    negotiating TCP from it negotiating UDP, confirmed by testing (see
+    `test_grab_frame_forces_tcp_transport_not_udp`'s own docstring) to genuinely report
+    `"UDP"` when a client is configured to ask for it.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{api_port}/v3/rtspsessions/list", timeout=1.0
+        ) as resp:
+            data = json.loads(resp.read())
+    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        return []
+    return [
+        item["transport"]
+        for item in data.get("items", [])
+        if item.get("path") == path_name and item.get("state") == "read"
+    ]
+
+
+@dataclasses.dataclass(frozen=True)
+class RealRtspStream:
+    """Everything a test needs about the throwaway stream: the `rtsp://` URL a consumer
+    like `grab_frame` dials directly, plus the MediaMTX API port and path name a test can
+    use to ask the *server* what it observed - e.g. via `_rtsp_reader_transports` - which
+    is not otherwise derivable from the URL alone.
+    """
+
+    url: str
+    api_port: int
+    path_name: str
+
+
 @pytest.fixture(scope="module")
 def real_rtsp_stream(tmp_path_factory: pytest.TempPathFactory):
     """A real, actually-published RTSP stream: a throwaway MediaMTX server plus a real
-    ffmpeg publisher pushing a synthetic test pattern into it. Yields the `rtsp://` URL a
-    consumer (like `grab_frame`) can dial directly.
+    ffmpeg publisher pushing a synthetic test pattern into it. Yields a `RealRtspStream`
+    - most tests only need `.url`, the `rtsp://` a consumer (like `grab_frame`) can dial
+    directly.
     """
     rtsp_port = _free_tcp_port()
     api_port = _free_tcp_port()
@@ -149,7 +189,11 @@ def real_rtsp_stream(tmp_path_factory: pytest.TempPathFactory):
         )
         _wait_for_path_ready(api_port, path_name, timeout=15.0)
 
-        yield f"rtsp://127.0.0.1:{rtsp_port}/{path_name}"
+        yield RealRtspStream(
+            url=f"rtsp://127.0.0.1:{rtsp_port}/{path_name}",
+            api_port=api_port,
+            path_name=path_name,
+        )
     finally:
         if publisher is not None:
             publisher.terminate()
@@ -161,7 +205,7 @@ def real_rtsp_stream(tmp_path_factory: pytest.TempPathFactory):
 
 
 def test_grab_frame_returns_a_real_decoded_frame(real_rtsp_stream):
-    frame = grab_frame(real_rtsp_stream, timeout_seconds=10.0)
+    frame = grab_frame(real_rtsp_stream.url, timeout_seconds=10.0)
 
     assert frame is not None
     assert isinstance(frame, np.ndarray)
@@ -171,6 +215,60 @@ def test_grab_frame_returns_a_real_decoded_frame(real_rtsp_stream):
     # testsrc is a colour-bar/gradient pattern - a genuinely decoded frame has real
     # variation, not the near-zero variance of an all-black or otherwise blank buffer.
     assert float(frame.std()) > 10.0
+
+
+def test_grab_frame_forces_tcp_transport_not_udp(real_rtsp_stream):
+    """The one property CLAUDE.md cites as this module's actual production motivation
+    ("UDP over the public internet smears frames") - proven here against ground truth
+    from the *server* side of the RTSP handshake, not by inspecting `grab_frame`'s source
+    or the `OPENCV_FFMPEG_CAPTURE_OPTIONS` environment variable it sets.
+
+    MediaMTX's own `/v3/rtspsessions/list` control-API endpoint reports a live
+    `transport` field (`"TCP"`/`"UDP"`) per connected RTSP session, taken from what the
+    server itself negotiated with that client - confirmed by testing (not assumed) that
+    this endpoint can actually tell the difference: pointing a plain `cv2.VideoCapture`
+    at this same kind of fixture with `OPENCV_FFMPEG_CAPTURE_OPTIONS` set to
+    `rtsp_transport;udp` instead makes MediaMTX report that reader session's transport as
+    `"UDP"`. So a regression that silently dropped or broke `grab_frame`'s forced-TCP
+    option (e.g. the AVOption name changing, or the params constructor eating it) would
+    show up here as an observed `"UDP"`, not pass silently the way asserting only that
+    the read succeeded would (OpenCV's default RTP/UDP negotiation would very likely also
+    succeed over loopback).
+
+    Polls MediaMTX's session API from a background thread concurrently with the blocking
+    `grab_frame` call (rather than checking once after it returns) because the RTSP
+    session only exists for the lifetime of the open capture - `grab_frame` sends
+    TEARDOWN and the session is gone by the time a post-hoc check could see it.
+    """
+    observed_transports: list[str] = []
+    stop_polling = threading.Event()
+
+    def _poll() -> None:
+        while not stop_polling.is_set():
+            observed_transports.extend(
+                _rtsp_reader_transports(real_rtsp_stream.api_port, real_rtsp_stream.path_name)
+            )
+            time.sleep(0.05)
+
+    poller = threading.Thread(target=_poll, daemon=True)
+    poller.start()
+    try:
+        result = grab_frame(real_rtsp_stream.url, timeout_seconds=10.0)
+    finally:
+        stop_polling.set()
+        poller.join(timeout=2)
+
+    # Sanity check: this test is meaningless if the call itself didn't actually succeed.
+    assert result is not None
+    assert observed_transports, (
+        "never observed a 'read' RTSP session on MediaMTX's own session API while "
+        "grab_frame held the connection open - the polling loop and grab_frame's "
+        "connection window didn't overlap, so this run proves nothing either way"
+    )
+    assert set(observed_transports) == {"TCP"}, (
+        f"MediaMTX's own session API reported transport(s) {sorted(set(observed_transports))} "
+        "for grab_frame's reader session - expected only 'TCP'"
+    )
 
 
 def test_grab_frame_on_a_dead_host_never_hangs_or_raises():
@@ -286,7 +384,7 @@ def test_grab_frame_releases_the_capture_on_every_path(real_rtsp_stream):
         closed_port = probe.getsockname()[1]
 
     def _one_round() -> None:
-        grab_frame(real_rtsp_stream, timeout_seconds=10.0)  # success path
+        grab_frame(real_rtsp_stream.url, timeout_seconds=10.0)  # success path
         grab_frame(f"rtsp://127.0.0.1:{blackhole_port}/blackhole", timeout_seconds=1.5)  # timeout path
         grab_frame(f"rtsp://127.0.0.1:{closed_port}/nope", timeout_seconds=1.5)  # refused path
         # Close out this round's server-side accepted socket(s) immediately - they exist
@@ -321,8 +419,8 @@ def test_grab_frame_produces_the_same_result_shape_for_repeated_calls(real_rtsp_
     """Not a formal idempotency requirement (that belongs to the runtime loop built on top
     of this, see Task 2) - just confirms `grab_frame` is safely callable more than once
     against the same live source without state leaking between calls."""
-    first = grab_frame(real_rtsp_stream, timeout_seconds=10.0)
-    second = grab_frame(real_rtsp_stream, timeout_seconds=10.0)
+    first = grab_frame(real_rtsp_stream.url, timeout_seconds=10.0)
+    second = grab_frame(real_rtsp_stream.url, timeout_seconds=10.0)
 
     assert first is not None and second is not None
     assert first.shape == second.shape

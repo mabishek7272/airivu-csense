@@ -16,8 +16,11 @@ this - `rtsp_transport` is an FFmpeg `AVOption` string, not one of the small set
 properties the `VideoCapture(url, apiPreference, params)` numeric-params constructor
 accepts - so the documented mechanism is the `OPENCV_FFMPEG_CAPTURE_OPTIONS` environment
 variable, which OpenCV's FFmpeg backend reads at capture-open time and forwards into
-`avformat_open_input`. `backend/tests/test_frame_grab.py` proves this against a real
-listen-mode RTSP server, not by inspection.
+`avformat_open_input`. `backend/tests/test_frame_grab.py` proves this by asking a real
+RTSP server (MediaMTX) what transport it actually negotiated with `grab_frame`'s own
+connection - via MediaMTX's `/v3/rtspsessions/list` API, which reports a live `transport`
+field (`"TCP"`/`"UDP"`) per session from the server's own side of the handshake - not by
+inspecting `grab_frame`'s source or the environment variable it sets.
 
 **The capture is released unconditionally.** A `VideoCapture` that is never `.release()`-d
 keeps a real socket and a decoder thread alive for the life of the process. With one
