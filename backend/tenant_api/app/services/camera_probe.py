@@ -29,8 +29,14 @@ from dataclasses import dataclass, replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# `tunnel_networks` is re-exported here (rather than only living in csense_shared) purely
+# for backward compatibility: `camera_stream.py` already imports it from this module, and
+# breaking that import wasn't part of this refactor. The implementation itself moved to
+# csense_shared.cameras.connection so csense_shared's own frame-grab module can share it
+# too, without a shared-library module reaching into a tenant_api-only service module.
+from csense_shared.cameras import resolve_camera_endpoint, tunnel_networks  # noqa: F401
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
-from csense_shared.security.outbound import parse_networks, resolve_public_endpoint
+from csense_shared.security.outbound import parse_networks
 from csense_shared.security.secret_store import read_secret
 
 logger = logging.getLogger(__name__)
@@ -210,15 +216,17 @@ async def _probe_stream(
     camera is unreachable" is information the operator needs rather than an error.
     """
     # A camera reached over a tunnel legitimately has a private address - that is the
-    # recommended production deployment. The allowlist is built from what this tenant has
-    # actually provisioned, so it is the peer's own address and the LAN that peer routes,
-    # never "private addresses are fine".
-    allowed = await tunnel_networks(session, camera_id=camera_id)
-
-    # Resolve first, then dial the resolved IP. Connecting by name would re-resolve and
-    # reopen the DNS rebinding window the guard exists to close.
-    endpoints = resolve_public_endpoint(hostname, port, allowed_networks=allowed)
-    family, address = endpoints[0]
+    # recommended production deployment. `resolve_camera_endpoint` builds its allowlist
+    # from what this tenant has actually provisioned (the peer's own address and the LAN
+    # that peer routes, never "private addresses are fine") and resolves DNS exactly once,
+    # so nothing here re-resolves the hostname and reopens the rebinding window the guard
+    # exists to close. Shared with the pipeline-runtime frame grab
+    # (`csense_shared.cameras.connection`) rather than kept as this function's own inline
+    # sequence - two independent copies of "which address is this camera actually
+    # reachable on" is exactly the kind of duplication that goes quietly wrong.
+    address, port = await resolve_camera_endpoint(
+        session, camera_id=camera_id, hostname=hostname, port=port
+    )
 
     # The URL sent on the wire carries no credentials - they go in the Authorization
     # header. The Host header keeps the original name so virtual-hosted devices still work.
@@ -251,8 +259,13 @@ async def _probe_stream(
 
     writer = None
     try:
+        # `address` is already the resolved literal from `resolve_camera_endpoint` above,
+        # never a hostname - `open_connection` needs no explicit family for it: resolving
+        # a literal IP is unambiguous and involves no real DNS lookup, unlike resolving a
+        # name, so it carries none of the rebinding risk `resolve_camera_endpoint` exists
+        # to close.
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(address, port, family=family),
+            asyncio.open_connection(address, port),
             timeout=CONNECT_TIMEOUT,
         )
 
@@ -348,54 +361,6 @@ def camera_secret_query():
     from sqlalchemy import text
 
     return text("SELECT endpoint_secret_id FROM cameras WHERE id = :id")
-
-
-async def tunnel_networks(session: AsyncSession, *, camera_id: uuid.UUID) -> list:
-    """The private ranges this camera is legitimately reachable on, if any.
-
-    Derived entirely from what the tenant has provisioned: the edge device's own VPN
-    address and the site LAN that device's tunnel routes. A camera in `direct` mode gets
-    an empty list and is therefore held to the public-address rule, which is correct - a
-    DDNS name has no business resolving to 10.x.
-
-    Row-level security scopes this query, so one tenant's camera can never pick up
-    another tenant's tunnel. The lookup joins through the camera rather than taking a
-    device id from the caller, for the same reason.
-    """
-    from sqlalchemy import text
-
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT c.connection_mode, host(d.vpn_address), text(d.lan_cidr)
-                FROM cameras c
-                LEFT JOIN edge_devices d
-                       ON d.id = c.edge_device_id AND d.deleted_at IS NULL
-                WHERE c.id = :id
-                """
-            ),
-            {"id": camera_id},
-        )
-    ).first()
-
-    if row is None or row[0] not in ("vpn", "edge"):
-        return []
-
-    candidates = []
-    if row[1]:
-        # The peer itself, as a single address - never the /24 it sits in, which would
-        # allowlist every other tenant's peer on the same interface.
-        candidates.append(f"{row[1]}/32")
-    if row[2]:
-        candidates.append(row[2])
-
-    if not candidates:
-        logger.info(
-            "camera_tunnel_has_no_provisioned_addresses",
-            extra={"camera_id": str(camera_id)},
-        )
-    return parse_networks(candidates)
 
 
 async def device_tunnel_networks(session: AsyncSession, *, device_id: uuid.UUID) -> list:
