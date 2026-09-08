@@ -441,6 +441,14 @@ async def scenario():
         await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
         await session.execute(text("DELETE FROM tenants WHERE organization_id = :o"), {"o": org_id})
         await session.execute(text("DELETE FROM organizations WHERE id = :o"), {"o": org_id})
+        # pipelines/pipeline_versions are platform-global (migration 0031's own docstring:
+        # same reasoning models/model_versions got in migration 0006) - the tenant cascade
+        # above never reaches them, and pipeline_versions.pipeline_id is ondelete=RESTRICT,
+        # so leaving this out would leak 1 pipeline + 4 versions on every test run.
+        # test_model_registry.py's own teardown does the equivalent cleanup for
+        # models/model_versions; mirrored here. Versions first, to satisfy RESTRICT.
+        await session.execute(text("DELETE FROM pipeline_versions WHERE pipeline_id = :p"), {"p": pipeline_id})
+        await session.execute(text("DELETE FROM pipelines WHERE id = :p"), {"p": pipeline_id})
     await engine.dispose()
 
 
