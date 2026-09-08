@@ -318,7 +318,7 @@ task specifically — read before writing the per-camera loop wrapper:**
 pattern, and `scripts/e2e_edge_spool.py`/`e2e_diagnostic_access.py` for this session's
 real-container e2e conventions.
 
-- [ ] Must prove, against the live stack, with the new `pipeline-runtime` container
+- [x] Must prove, against the live stack, with the new `pipeline-runtime` container
       actually running (not imported as a module):
       1. Publish a real video into `mediamtx` containing something `yolov8n-general`
          (already `production`) will genuinely detect (a real clip with a person/vehicle —
@@ -336,7 +336,34 @@ real-container e2e conventions.
          running (doesn't crash, doesn't take other cameras' tasks down) — reuse whatever
          real health/probe signal already exists rather than inventing a new one to check.
       6. Full cleanup; PASS/FAIL summary; non-zero exit on failure.
-- [ ] Run until genuinely passing. `ruff check backend scripts`. Commit.
+      Shipped as `scripts/e2e_pipeline_execution.py`, reusing the real `bus.jpg` photo
+      `scripts/e2e_detection_to_incident.py` already proved `yolov8n-general` detects
+      (person + bus) rather than a synthetic pattern, looped via real `ffmpeg` into a
+      real RTSP stream on a throwaway MediaMTX container joined to the live stack's own
+      Docker network. The camera is provisioned as a real `vpn`-mode camera + edge-device
+      tunnel (Task 1's own established SSRF-allowlist-passing pattern, reused not
+      reinvented) so the real, already-running `pipeline-runtime` container's own
+      `resolve_camera_endpoint` genuinely permits reaching it — no allowlist bypass.
+      Steps 4/5 run in the order 5-then-4 rather than the literal 4-then-5 above (a
+      documented, reviewed deviation): the unreachable-camera isolation check runs
+      *concurrently* with the working camera's own continued progress, proving isolation
+      under real concurrent load rather than in two disconnected sequential steps — both
+      required properties are still fully asserted, just observed together.
+      Verified for real, independently, **four separate times** across implementation and
+      two rounds of review (including a fix for a real, if minor, bug the second review
+      round found — two leaked temp dirs, `abe0335`): every run produced a real incident
+      within ~95s with real, retrievable evidence linked to it; the unreachable camera
+      logged `camera_endpoint_blocked` 35-39 times while `pipeline-runtime` kept running
+      and the working camera's own detection count kept climbing concurrently; revoking
+      produced a real `camera_task_stopped` log line and no further detections; full
+      cleanup left zero rows (and, after the temp-dir fix, zero leftover files) every time.
+- [x] Run until genuinely passing. `ruff check backend scripts`. Commit.
+      Committed as `d285b13` (script) + `abe0335` (temp-dir cleanup fix from code-quality
+      review). `ruff check backend scripts` clean throughout. Two-stage review: spec
+      compliance ✅ (including an independent third real run by the reviewer, before the
+      implementer's own two runs); code quality: Approved with follow-ups (one Important
+      issue — the temp-dir leak — fixed and re-verified with a fourth real run). Task 4
+      closed.
 
 ---
 
