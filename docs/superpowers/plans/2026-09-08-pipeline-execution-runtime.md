@@ -231,6 +231,24 @@ wrapper around already-tested `csense_shared` functions) and the same loop-isola
 discipline (one camera's task dying must never take down every other camera's task, or the
 whole service).
 
+**Two things carried forward from Task 2's own code-quality review, both about this
+task specifically — read before writing the per-camera loop wrapper:**
+1. `run_one_cycle`'s `grab_frame_fn` parameter must be a **plain synchronous callable,
+   never `async def`.** `run_one_cycle` calls it unawaited (`frame = grab_frame_fn(...)`)
+   — if it were a coroutine function, `frame` would bind to a coroutine object, which is
+   not `None`, so the `if frame is None: return "unreachable"` check would silently pass
+   a coroutine into `http_infer_fn` instead of catching the mistake. The correct shape:
+   this service's own per-camera loop does the async work first (`resolve_camera_endpoint`,
+   credential decrypt, URL build — all `await`ed) and passes `run_one_cycle` a trivial
+   synchronous closure that just returns the frame already fetched.
+2. `grab_frame` (Task 1) is a **blocking** call with up to a 10s timeout. Calling it
+   inline inside a per-camera `asyncio.Task` without `loop.run_in_executor` stalls the
+   *entire process's* event loop for up to 10s on one unreachable camera — delaying every
+   other camera's due cycle too. This is a different failure mode from the crash-isolation
+   this task already tests for below (one camera's *exception* not affecting others) —
+   stall-isolation needs the frame grab itself dispatched to an executor, not just wrapped
+   in a try/except.
+
 - [ ] **Per-camera task, not a shared poll loop.** On each pass over
       `active_cloud_assignments`, spawn or continue one `asyncio.Task` per camera, each
       sleeping to its own `sample_fps`-derived interval between cycles. A newly-assigned
