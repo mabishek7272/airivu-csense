@@ -6,6 +6,7 @@ import { CamerasPage } from "./pages/CamerasPage";
 import { EdgePage } from "./pages/EdgePage";
 import { NotificationPoliciesPage } from "./pages/NotificationPoliciesPage";
 import { RecipientGroupsPage } from "./pages/RecipientGroupsPage";
+import { PipelineAssignmentsPage } from "./pages/PipelineAssignmentsPage";
 import { RulesPage } from "./pages/RulesPage";
 import { SitesPage } from "./pages/SitesPage";
 import { ZonesPage } from "./pages/ZonesPage";
@@ -132,6 +133,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <EdgePage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pipelines"
+        element={
+          <RequireAuth>
+            <PipelineAssignmentsPage />
           </RequireAuth>
         }
       />

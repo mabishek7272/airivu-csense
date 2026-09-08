@@ -896,6 +896,15 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         constraint (a simplified form of it — a full overlapping-time-range exclusion
         would need `btree_gist` and buys nothing yet, since nothing reads
         `effective_to`).
+    - [x] **2026-09-08: closed the "never browse the catalogue" stance.** This module's
+          own docstring used to say a tenant reads `pipeline_versions` only to validate
+          an assignment target, never to list or browse it — reasonable while nothing
+          consumed it, but it doesn't survive a real self-service assignment page: a
+          tenant cannot pick a `pipeline_version_id` blind. Added
+          `GET /api/v1/tenant/pipelines/assignable`, deliberately still narrower than
+          the admin catalogue (`published` versions only, never `draft`/`deprecated`;
+          no `owner_team`, no pipeline-level `status`) — the docstring itself now
+          records this as the corrected, current scope rather than "never".
   - [x] `pipeline.publish` and `pipeline.assign` were already seeded in migration 0007,
         ahead of any table that made them do anything — but only ever granted to
         `platform_admin`, and `pipeline.assign` is a *tenant* action
@@ -906,9 +915,20 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         closely: grouped-by-pipeline cards, state badges, publish/deprecate dialogs. The
         "builder" is a model dropdown, not a stage editor — there's exactly one stage
         type to configure right now, so a general-purpose DAG UI would be building
-        controls for stage types nothing executes. No Customer CRM page this pass —
-        tenant-facing assignment is API-only for now, verified by the e2e script, not
-        wrapped in a CRM page yet.
+        controls for stage types nothing executes.
+  - [x] **2026-09-08: Customer CRM assignment page** (`/pipelines`,
+        `PipelineAssignmentsPage.tsx`) — closes the gap the line above used to name
+        ("tenant-facing assignment is API-only for now"). Lists a tenant's own cameras
+        with their current assignment (or "Not assigned"), assigns from the new
+        `GET .../pipelines/assignable` list with dynamic override fields built from the
+        chosen version's `allowed_overrides_schema`, and revokes — same empty/no-
+        results/loading/error discipline as `CamerasPage.tsx`. Verified against the
+        live stack with a real browser
+        ([scripts/e2e_pipeline_assignments_crm.py](scripts/e2e_pipeline_assignments_crm.py)):
+        register a tenant, add a site and camera, confirm the page starts at "Not
+        assigned", confirm the Assign dropdown never shows a draft/deprecated version,
+        assign for real, confirm the pill and Revoke button appear, revoke for real,
+        confirm it's back to "Not assigned" and "Assign pipeline".
     - [x] **A pipeline with no versions yet was invisible in the list** — found while
           writing the e2e script: `GET /pipelines` inner-joined versions, so a pipeline
           had nowhere to appear until its first version existed, and the "New version"

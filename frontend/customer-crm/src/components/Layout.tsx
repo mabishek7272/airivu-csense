@@ -28,6 +28,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/sites">Sites</NavLink>
           <NavLink to="/zones">Zones</NavLink>
           <NavLink to="/cameras">Cameras</NavLink>
+          <NavLink to="/pipelines">Pipelines</NavLink>
           <NavLink to="/rules">Rules</NavLink>
           <NavLink to="/edge">Edge</NavLink>
           <NavLink to="/recipient-groups">Recipients</NavLink>

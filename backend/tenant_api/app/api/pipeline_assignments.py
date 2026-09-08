@@ -11,9 +11,17 @@ same way a `pipeline_version` in `draft` state is real even before it's ever ass
 anywhere. Executing it is future work, tracked in CHECKLIST.md, not silently implied by
 this endpoint existing.
 
-`pipeline_versions` itself is platform-global (no RLS, same as `models`) - a tenant reads
-it here only to validate an assignment target, never to list or browse the catalogue; that
-stays an Admin/Console concern (`GET /api/v1/admin/pipelines`).
+`pipeline_versions` itself is platform-global (no RLS, same as `models`). Originally this
+module's own docstring said a tenant reads it only to validate an assignment target, never
+to browse the catalogue - that held while nothing consumed it, but it doesn't survive
+contact with a real self-service assignment page: a tenant cannot pick a
+`pipeline_version_id` to assign against blind. So `GET /pipelines/assignable` below is a
+second, deliberately narrow reading of `pipeline_versions` - **decision made 2026-09-08**:
+published versions only (never `draft`/`deprecated`, so no unreleased or retired state
+leaks to a tenant), and only the fields a tenant needs to choose one, not the full admin
+shape (no `owner_team`, no internal pipeline `status`). Browsing every state, or the full
+row, stays an Admin/Console concern (`GET /api/v1/admin/pipelines`,
+`backend/admin_api/app/api/pipelines.py`).
 """
 from __future__ import annotations
 
@@ -116,6 +124,58 @@ def _validate_overrides(overrides: dict, allowed_schema: dict) -> None:
                 message=f"'{key}' must be a {allowed_schema[key]}.",
                 details={"key": key, "expected_type": allowed_schema[key]},
             )
+
+
+class AssignableVersionOut(BaseModel):
+    """The minimal shape a tenant needs to choose an assignment target - narrower than
+    `backend/admin_api/app/api/pipelines.py`'s own `PipelineVersionOut` on purpose (see
+    the module docstring): no `owner_team`, no pipeline-level `status`, and this endpoint
+    never returns a row whose `state` isn't `published` in the first place."""
+
+    pipeline_version_id: str
+    pipeline_code: str
+    pipeline_name: str
+    version_number: int
+    use_case: str
+    description: str | None
+    resource_profile: dict | None
+    allowed_overrides_schema: dict
+
+
+@router.get("/pipelines/assignable", response_model=list[AssignableVersionOut])
+async def list_assignable_pipelines(
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> list[AssignableVersionOut]:
+    """What a tenant may point a camera at right now - see the module docstring for why
+    this exists and why it stops at `published`. Behind `pipeline.assign`, the same
+    permission the actual create/revoke below require, rather than `pipeline.read`
+    (platform-only, migration 0032) - the tenant-facing question here is "what can I
+    assign", not "let me read the registry"."""
+    require_permission(context, "pipeline.assign")
+
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT pv.id, p.code, p.name, pv.version_number, p.use_case,
+                       p.description, pv.resource_profile, pv.allowed_overrides_schema
+                FROM pipeline_versions pv
+                JOIN pipelines p ON p.id = pv.pipeline_id
+                WHERE pv.state = 'published'
+                ORDER BY p.code, pv.version_number DESC
+                """
+            )
+        )
+    ).all()
+    return [
+        AssignableVersionOut(
+            pipeline_version_id=str(row[0]), pipeline_code=row[1], pipeline_name=row[2],
+            version_number=row[3], use_case=row[4], description=row[5],
+            resource_profile=row[6], allowed_overrides_schema=row[7] or {},
+        )
+        for row in rows
+    ]
 
 
 @router.post("/cameras/{camera_id}/pipeline-assignments", response_model=AssignmentOut, status_code=201)
