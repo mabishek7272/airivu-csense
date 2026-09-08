@@ -682,6 +682,20 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         `no_hairnet`) - CLARIFICATIONS #18 and this checklist both said this was still
         missing; it wasn't, found while checking the OCR item below against the real
         database rather than trusting the doc.
+  - [~] **2026-09-08: found and fixed a real drift between this database and this
+        checklist's own claim below.** This machine's Postgres volume was lost mid-session
+        (unrelated to the biometric decision itself) and re-seeded from
+        `import_legacy_models.py` alone, which lands every model at its conservative
+        manifest default (`revoked` for the biometric set) - the *separate*
+        owner-directed promotion walk (`promote_legacy_models.py`, run once already in
+        commit `c1a7a1b`) never got re-applied. All 5 InsightFace models sat at `revoked`
+        in the live database for some period even though this checklist and
+        CLARIFICATIONS.md #16 both still (correctly) said `production`. Re-ran
+        `promote_legacy_models.py --target production` for real (confirmed via dry-run
+        first) after explicit user confirmation given the sensitivity - restores the
+        already-decided, already-audited state, not a new decision. 5 more
+        `model.promote` audit_events rows now exist recording this second promotion
+        explicitly; `test_model_registry.py` (9/9) reconfirmed passing after.
   - [~] 5 InsightFace models load; 2 now decode correctly. All 5 are `production`
         (CLARIFICATIONS #16), so this was reachable through the real internal API before
         this work, just returning `OutputContractUnknownError` - decoding closes a real gap,
