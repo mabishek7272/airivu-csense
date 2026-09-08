@@ -258,20 +258,56 @@ task specifically — read before writing the per-camera loop wrapper:**
       not left running against a pipeline that no longer applies — test this specifically
       (revoke an assignment mid-run, confirm its task stops within one discovery cycle and
       makes no further `ingest_fn` calls).
-- [ ] **One camera's exception never kills another's**, nor the discovery loop itself —
+      [x] Shipped as `run_discovery_loop` + `_camera_loop`, 5s discovery poll
+      (`pipeline_runtime_discovery_poll_seconds`). Also covers more than a bare revoke: a
+      `tenant_overrides` edit or the pipeline moving to `deprecated` restarts that
+      camera's task with the new `Assignment` too, since `Assignment` is a frozen
+      dataclass and `!=` is compared field-by-field — one code path for "new," "changed,"
+      and "revoked" rather than three. Tested for real with actual `asyncio.Task`
+      spawn/cancel (`test_run_discovery_loop_spawns_a_separate_real_task_per_active_camera`,
+      `test_newly_assigned_camera_is_picked_up_within_one_discovery_interval`,
+      `test_revoked_assignment_task_is_cancelled_and_makes_no_further_run_cycle_calls`,
+      `test_a_changed_assignment_restarts_the_cameras_task_with_the_new_config`).
+- [x] **One camera's exception never kills another's**, nor the discovery loop itself —
       the same `_isolated`/loop-isolation shape `notification_worker/app/main.py`'s
       `_webhook_dispatch_never_takes_alerts_down_with_it` already established for exactly
       this reason. Reuse that pattern's *shape*, not a copy-paste — write the equivalent
       for "per-camera task" instead of "per-loop-type task."
-- [ ] `Dockerfile`: needs `opencv-python-headless` + its real ffmpeg/RTSP shared-library
+      `_isolated_camera_loop` (per camera) + a try/except around `fetch_assignments()`
+      itself inside `run_discovery_loop` (one poisoned poll leaves every already-running
+      camera task untouched). This isolation caught something real during verification,
+      not just in the test suite: under real concurrent load a latent bug in
+      `platform_session()` (fixed separately, `2edc829`) made every single discovery poll
+      fail for a stretch, and the loop kept every camera task alive and kept retrying
+      exactly as designed the whole time — proof this property holds under a genuine
+      failure, not just an injected-fake one.
+      Tested: `test_one_cameras_exception_never_stops_its_own_or_another_cameras_task`,
+      `test_a_failed_discovery_poll_does_not_stop_an_already_running_cameras_task`.
+- [x] `Dockerfile`: needs `opencv-python-headless` + its real ffmpeg/RTSP shared-library
       dependencies (unlike the edge agent, this service legitimately needs OpenCV — it is
       not fighting the same ARM/no-compiler constraint the edge agent was built around,
       since this runs on the full x86 production box). Confirm the image actually starts
       and can decode a real RTSP frame inside the container, not just on the host.
-- [ ] Wire into `infra/docker-compose.yml` (and `docker-compose.prod.yml` — this one
+      Built and run for real (not just in CI-style tests): a real, non-cached image
+      rebuild, started against the live stack with a real published pipeline assigned to
+      a real (privately-addressed, correctly-refused) camera, ran cleanly for 44+ real
+      seconds with zero crashes. `test_the_built_pipeline_runtime_image_decodes_a_real_rtsp_frame_inside_the_container`
+      proves the in-container decode specifically.
+- [x] Wire into `infra/docker-compose.yml` (and `docker-compose.prod.yml` — this one
       **does** belong there, unlike the edge agent; it runs on infrastructure we own).
       Platform DB role, same as `notification-worker`.
-- [ ] Full suite + ruff. Rebuild and confirm the new container starts clean. Commit.
+- [x] Full suite + ruff. Rebuild and confirm the new container starts clean. Commit.
+      Committed as `4206ebc` (service) with a separate, foundational fix (`2edc829`,
+      `platform_session` pinning `app.tenant_id` to a nil UUID) committed first — that fix
+      was found *while* doing this task's own real-container verification, not invented
+      speculatively; see that commit's own message for the full diagnosis. Full suite:
+      760 passed / 26 skipped / 1 already-tracked pre-existing unrelated failure.
+      `ruff check backend scripts` clean. Two-stage review done by direct inspection this
+      session (spec text checked line-by-line against the shipped code; `ingest_fn`'s
+      kwarg wiring specifically cross-checked against `ingest_detection`'s real signature
+      to rule out a silent mismatch) rather than a dispatched subagent review, due to a
+      session-wide spend-limit constraint at the time — noted here for the record, not to
+      be silently indistinguishable from this plan's other two-stage subagent reviews.
 
 ---
 
