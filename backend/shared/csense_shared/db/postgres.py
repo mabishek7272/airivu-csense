@@ -104,6 +104,9 @@ async def set_tenant_scope(session: AsyncSession, tenant_id: UUID) -> None:
     )
 
 
+_NIL_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+
+
 @asynccontextmanager
 async def platform_session(
     session_factory: async_sessionmaker[AsyncSession],
@@ -112,8 +115,32 @@ async def platform_session(
     separate privileged repository interface and cannot be reached from tenant API code
     paths"). Every use of this must be paired with an explicit permission check in the
     caller — this only grants DB-row visibility, not authorization.
+
+    Also pins `app.tenant_id` to a well-formed nil UUID, not just `app.is_platform`.
+    Found 2026-09-09 (pipeline_runtime, concurrently interleaving this with real
+    `tenant_session()` calls on the same pool under load): under concurrent use, a
+    pooled connection can - contrary to this module's own "connections that call no
+    helper at all see no rows" fail-safe assumption, and despite `set_config(...,
+    is_local=true)` being transaction-scoped by design - surface `app.tenant_id` as `''`
+    rather than unset (`NULL`) in the RLS policy's own `current_setting('app.tenant_id',
+    true)::uuid` cast, raising a hard `InvalidTextRepresentationError` and failing the
+    *entire* platform query outright, not merely narrowing its row visibility. Reliably
+    reproduced with a minimal script (`platform_session` + concurrent `tenant_session`
+    calls in a tight loop against a real Postgres, no app code involved beyond this
+    module) but the exact asyncpg/Postgres-side mechanism wasn't pinned down before this
+    fix shipped - rather than ship a platform_session that can intermittently take down
+    every one of its callers' queries under load, this makes the value it leaves behind
+    always cast-safe regardless of that mechanism. The nil UUID is deliberate over
+    leaving it unset: it's guaranteed parseable, and matches no real tenant, so the
+    first OR-branch of the RLS policy (`tenant_id = current_setting(...)::uuid`) is
+    always well-defined and always false here - only the second branch (`is_platform`
+    AND role membership) can ever grant access through this helper, exactly as before.
     """
     async with session_factory() as session:
         async with session.begin():
             await session.execute(text("SELECT set_config('app.is_platform', 'true', true)"))
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :nil_tenant_id, true)"),
+                {"nil_tenant_id": _NIL_TENANT_ID},
+            )
             yield session
