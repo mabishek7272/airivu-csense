@@ -85,14 +85,21 @@ Read `backend/tenant_api/app/services/camera_probe.py`'s `_probe_stream` in full
 this task's connection-establishment half (tunnel allowlist, resolve-then-dial, credential
 handling) must mirror it exactly, not reinvent it.
 
-- [ ] `resolve_camera_endpoint(settings, session, *, tenant_id, camera_id, hostname, port,
+- [x] `resolve_camera_endpoint(settings, session, *, tenant_id, camera_id, hostname, port,
       path, username, secret_purpose) -> tuple[str, int]` — thin wrapper factoring out
       `_probe_stream`'s own `tunnel_networks()` + `resolve_public_endpoint()` call pair
       into a shared helper both `camera_probe.py` and this new module call, so there is
       one place this logic can be wrong, not two. Update `camera_probe.py` to use it too
       (a real, small refactor — confirm `scripts/e2e_camera_onboarding.py` and the existing
       probe tests still pass unchanged after).
-- [ ] `grab_frame(rtsp_url: str, *, timeout_seconds: float = 10.0) -> np.ndarray | None` —
+      Shipped as `resolve_camera_endpoint(session, *, camera_id, hostname, port) ->
+      tuple[str, int]` in `csense_shared/cameras/connection.py` — narrower than the
+      signature above. `settings`/`tenant_id`/`path`/`username`/`secret_purpose` were
+      dropped because the factored-out logic (`tunnel_networks()` +
+      `resolve_public_endpoint()`) never touches them; those params exist elsewhere in
+      `_probe_stream` only for credential decryption and URI text, which stayed put.
+      Spec-reviewed and confirmed as a defensible simplification, not a gap.
+- [x] `grab_frame(rtsp_url: str, *, timeout_seconds: float = 10.0) -> np.ndarray | None` —
       opens `cv2.VideoCapture` against the URL (built from the *resolved* IP per the
       Decisions section — never the original hostname), forces `cv2.CAP_PROP_...` /
       FFmpeg options for **TCP transport** (not UDP), reads exactly one frame, releases the
@@ -112,8 +119,25 @@ handling) must mirror it exactly, not reinvent it.
       - the capture is verifiably released after both success and failure paths (check the
         process's open file descriptors / socket count before and after, or an equivalent
         real check — not just "the function returned")
-- [ ] Full suite + `ruff check backend scripts`. Rebuild `tenant-api` if `camera_probe.py`
+- [x] Full suite + `ruff check backend scripts`. Rebuild `tenant-api` if `camera_probe.py`
       changed; confirm existing camera e2e scripts still pass. Commit.
+      Committed as `e25c413`. Full suite: 491 passed / 266 skipped / 1 unrelated
+      pre-existing failure (`test_site_timezones.py::test_unusable_values_are_refused
+      [asia/kolkata]` — a macOS case-insensitive-filesystem artifact, not caused by this
+      task; out of scope, tracked separately). `ruff check backend scripts` clean.
+      `tenant-api` container confirmed running the new code by introspecting it live.
+      Two pre-existing `test_model_registry.py` failures surfaced by this same full-suite
+      run (unrelated to this task — a biometric-classification policy gap and a missing
+      audit trail from the original legacy import) were fixed separately in `a786354`.
+
+      **Two-stage review: both passed.** Spec review: ✅ compliant. Code quality review
+      found two Important gaps (undeclared `psutil` test dependency that would break CI
+      collection; the "TCP transport is forced" docstring claim wasn't actually
+      distinguished from OpenCV's default UDP negotiation by any test) — fixed in
+      `f4f769b` with a real MediaMTX-session-observed TCP/UDP test, then independently
+      re-verified by the reviewer (including a negative-control run proving the new test
+      genuinely fails under UDP, not just passes vacuously). Final assessment: Approved.
+      Task 1 closed.
 
 ---
 
