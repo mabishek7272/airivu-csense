@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { Camera } from "../api/cameras";
@@ -60,6 +60,19 @@ export function PipelineAssignmentsPage() {
   // list itself has arrived — there is nothing to look up before then — and re-fetched
   // whenever that list's own reference changes (a reload, or a local mutate after assign/
   // revoke below).
+  //
+  // `firstRealFetchDone` is deliberately separate from `assignments.loading`/`.data`.
+  // The fetcher below has to return *something* before `cameras.data` exists (there is
+  // nothing to look up yet), and useResource's own hasData tracking treats that first
+  // resolved `{}` placeholder as "this resource has loaded" — so the moment the real
+  // camera list arrives and the real per-camera fetch kicks off, useResource reports
+  // `refreshing`, not `loading`, and every row below fell back to reading `undefined` out
+  // of the still-{} data, rendering "Not assigned" on every camera (including ones with a
+  // real active assignment) until that real fetch resolved. Gating the loading-row branch
+  // on this ref instead — set only once inside the fetcher, after a real (possibly empty)
+  // camera list has actually been looked up — fixes that without changing useResource's
+  // own semantics, which other pages also rely on.
+  const firstRealFetchDone = useRef(false);
   const assignments = useResource(async () => {
     const list = cameras.data;
     if (!list) return {} as Record<string, Assignment | null>;
@@ -68,6 +81,7 @@ export function PipelineAssignmentsPage() {
     list.forEach((camera, i) => {
       map[camera.id] = perCamera[i].find((a) => a.status === "active") ?? null;
     });
+    firstRealFetchDone.current = true;
     return map;
   }, [cameras.data]);
 
@@ -214,9 +228,9 @@ export function PipelineAssignmentsPage() {
                     {camera.site_name && <div className="muted">{camera.site_name}</div>}
                   </td>
                   <td>
-                    {assignments.loading && !assignments.data ? (
+                    {!firstRealFetchDone.current && !assignments.error ? (
                       <InlineSpinner label="Loading assignment" />
-                    ) : assignments.error && !assignments.data ? (
+                    ) : assignments.error && !firstRealFetchDone.current ? (
                       <span className="muted">
                         Could not load.{" "}
                         <button type="button" className="btn-quiet" onClick={assignments.reload}>
