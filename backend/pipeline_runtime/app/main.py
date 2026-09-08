@@ -90,6 +90,39 @@ def interval_seconds(sample_fps: float) -> float:
     return 1.0 / sample_fps
 
 
+def rotate_for_admission(
+    candidate_camera_ids: list[uuid.UUID], admission_round: int
+) -> list[uuid.UUID]:
+    """Decides which not-yet-running candidate is considered first for an open capacity
+    slot this discovery cycle, given `run_discovery_loop`'s own hard cap on concurrently-
+    running camera tasks (`pipeline_runtime_max_concurrent_cameras`).
+
+    Without this, "who gets the next open slot" would always be whatever order
+    `current.items()` happens to iterate in - itself just `fetch_assignments()`'s own
+    returned order, which real Postgres query plans tend to keep stable poll over poll.
+    At a saturated cap, that would mean the same tail of candidates loses the race for a
+    freed slot every single time a slot opens, cycle after cycle, purely as an accident of
+    dict/list ordering rather than any real priority. Rotating the starting offset by one
+    each discovery cycle (`admission_round`, incremented once per poll) spreads "first in
+    line for the next open slot" across every waiting candidate over time instead.
+
+    **What this does NOT do, deliberately**: it never touches an already-*running* task.
+    `run_discovery_loop` only ever calls this on the subset of `current` that is not
+    already in `tasks`, so rotation can change who is offered the *next* open slot, but it
+    can never preempt a slot that is already filled - doing that would be exactly the
+    "cancel and respawn something already running just because a new candidate showed up"
+    thrashing this module's own docstring already rules out. So this closes the "same
+    candidates always lose" bias for *waiting* cameras; it does not, and should not,
+    prevent a fully saturated fleet with no revokes for a long time from continuing to run
+    whichever cameras happened to be admitted first - that is inherent to "no thrashing,"
+    not a bug in this rotation.
+    """
+    if not candidate_camera_ids:
+        return []
+    offset = admission_round % len(candidate_camera_ids)
+    return candidate_camera_ids[offset:] + candidate_camera_ids[:offset]
+
+
 def sync_frame_closure(frame: np.ndarray | None) -> Callable[[Assignment], np.ndarray | None]:
     """The trivial synchronous closure `run_one_cycle` gets as `grab_frame_fn`.
 
@@ -378,9 +411,13 @@ async def run_discovery_loop(
     fetch_assignments: Callable[[], Awaitable[list[Assignment]]],
     build_run_cycle: Callable[[Assignment], RunCycle],
     discovery_interval_seconds: float,
+    max_concurrent_cameras: int,
     stop: asyncio.Event,
 ) -> None:
-    """Spawns or continues one `asyncio.Task` per active cloud camera, on a short poll.
+    """Spawns or continues one `asyncio.Task` per active cloud camera, on a short poll -
+    up to `max_concurrent_cameras` at once (`pipeline_runtime_max_concurrent_cameras`; see
+    that setting's own comment in `csense_shared.config` for exactly where the default of
+    160 comes from and its real, flat-count-not-weighted-budget limitation).
 
     `fetch_assignments()` -> the current `list[Assignment]` (production: `amain` wires in
     `active_cloud_assignments` under a `platform_session`, matching that function's own
@@ -400,12 +437,29 @@ async def run_discovery_loop(
     assigned camera gets picked up within one discovery-poll interval" and "a revoked
     assignment's task is cancelled cleanly" the same code path rather than two.
 
+    **Admission control**: a newly-discovered active assignment only gets a task spawned
+    for it while the number of already-running tasks is below `max_concurrent_cameras`.
+    At capacity, it is turned away - logged as `camera_admission_refused_capacity` (at the
+    same INFO level, and the same "logged again next cycle for as long as it keeps being
+    true" cadence, as this module's own `camera_endpoint_blocked` for an unreachable
+    camera) so an operator can see *why* a camera silently isn't running rather than
+    guessing, matching this service's own "capacity refusal is a health fact, not a
+    crash" posture. This never touches an already-running task - nothing here cancels a
+    running camera to make room for a new one - so recomputing "who's running vs. who's
+    active" every cycle is also what makes a freed slot (a revoke, a deprecated pipeline,
+    a changed assignment) pick up a previously-turned-away assignment on the very next
+    discovery cycle, with no special-case code for it: it falls out of the same "spawn
+    whatever's active and not already running, up to the cap" pass. `rotate_for_admission`
+    (see its own docstring) is what keeps that pass from always favoring the same waiting
+    candidates over others when the cap is saturated.
+
     One poll failing (a transient DB hiccup) leaves every already-running camera task
     exactly as it was - it does not tear anything down - and is logged, matching this
     service's own "an unreachable camera/database is a health fact, not a crash" stance.
     """
     tasks: dict[uuid.UUID, asyncio.Task] = {}
     live_assignments: dict[uuid.UUID, Assignment] = {}
+    admission_round = 0
 
     try:
         while not stop.is_set():
@@ -425,13 +479,25 @@ async def run_discovery_loop(
                         await _stop_camera_task(tasks.pop(camera_id))
                         live_assignments.pop(camera_id, None)
 
-                for camera_id, assignment in current.items():
-                    if camera_id not in tasks:
-                        tasks[camera_id] = asyncio.create_task(
-                            _isolated_camera_loop(assignment, run_cycle=build_run_cycle(assignment), stop=stop),
-                            name=f"pipeline-camera-{camera_id}",
+                candidates = [camera_id for camera_id in current if camera_id not in tasks]
+                for camera_id in rotate_for_admission(candidates, admission_round):
+                    if len(tasks) >= max_concurrent_cameras:
+                        logger.info(
+                            "camera_admission_refused_capacity",
+                            extra={
+                                "camera_id": str(camera_id),
+                                "running_count": len(tasks),
+                                "max_concurrent_cameras": max_concurrent_cameras,
+                            },
                         )
-                        live_assignments[camera_id] = assignment
+                        continue
+                    assignment = current[camera_id]
+                    tasks[camera_id] = asyncio.create_task(
+                        _isolated_camera_loop(assignment, run_cycle=build_run_cycle(assignment), stop=stop),
+                        name=f"pipeline-camera-{camera_id}",
+                    )
+                    live_assignments[camera_id] = assignment
+                admission_round += 1
 
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=discovery_interval_seconds)
@@ -491,6 +557,7 @@ async def amain() -> None:
                 fetch_assignments=_fetch_assignments,
                 build_run_cycle=_build_run_cycle,
                 discovery_interval_seconds=settings.pipeline_runtime_discovery_poll_seconds,
+                max_concurrent_cameras=settings.pipeline_runtime_max_concurrent_cameras,
                 stop=stop,
             )
         finally:

@@ -179,6 +179,27 @@ class Settings(BaseSettings):
     # inside grab_frame) - kept equal to frame_grab's own documented default rather than a
     # second, independently-tuned number.
     pipeline_runtime_frame_grab_timeout_seconds: float = 10.0
+    # Hard cap on concurrently-running camera tasks (`run_discovery_loop`). 160 comes
+    # straight from CLAUDE.md's own measured capacity table: mainstream, keyframe-only
+    # sampling at the default 0.5fps (`DEFAULT_SAMPLE_FPS` in
+    # `csense_shared.pipeline.runtime`) costs ~0.08 cores/camera, and the production box
+    # has ~13 usable cores after ~3 reserved for platform services - 13 / 0.08 ≈ 160.
+    # This is a rough sizing for the *default* config, not a live measurement of this
+    # deployment's actual load.
+    #
+    # **Known, deliberate limitation**: this is a flat cap on task *count*, not a weighted
+    # core budget. Every assignment's real cost varies with its own effective
+    # `sample_fps` (`Assignment.sample_fps`, already per-camera-overridable via
+    # `tenant_overrides`), resolution, and whether live view is concurrently active for
+    # that camera - none of which this cap accounts for. A fleet where every camera runs
+    # at, say, 2fps full-decode mainstream (~0.72 cores/camera per CLAUDE.md's own table)
+    # would exhaust the real 13-core budget at ~18 cameras, well before this count-based
+    # cap of 160 ever engages. A proper weighted admission control - summing each
+    # assignment's actual `sample_fps`-derived cost against a real core budget - is future
+    # work, not attempted here; this cap only prevents unbounded task growth, it does not
+    # yet prevent overrunning the box's real CPU budget for a fleet configured richer than
+    # the default.
+    pipeline_runtime_max_concurrent_cameras: int = 160
 
     @property
     def minio_presign_endpoint(self) -> str:

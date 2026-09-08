@@ -930,12 +930,38 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             (built earlier this phase) deliberately does not run inference — executing
             an edge-targeted assignment is its own, separate, not-yet-started body of
             work, not a small extension of this one.
-      - **No admission control or core-budget enforcement across concurrently-running
-            cameras yet.** Every active cloud assignment gets its own task regardless of
-            how many are already running on the box; nothing here caps concurrency
-            against the production server's real 13-usable-core budget CLAUDE.md's own
-            capacity table names. Real capacity planning is still blocked on real
-            traffic — tracked separately, this file's own existing Phase 8 entry on real
+      - [x] **2026-09-09: a hard cap on concurrently-running camera tasks now exists —
+            `pipeline_runtime_max_concurrent_cameras` (default 160), enforced inside
+            `run_discovery_loop` itself.** 160 is CLAUDE.md's own measured number for the
+            *default* config, not a live measurement: ~0.08 cores/camera at the default
+            mainstream-keyframe-only 0.5fps sampling, against ~13 usable cores on the
+            production box. At capacity, a newly-discovered active assignment is turned
+            away rather than spawned, logged as `camera_admission_refused_capacity`
+            (camera_id + current running count) at the same cadence and level as this
+            module's own already-established `camera_endpoint_blocked` — an operator can
+            see *why* a camera isn't running, not just that it isn't. Already-running
+            tasks are never disturbed by a new candidate showing up at capacity (no
+            cancel-and-respawn thrashing), and recomputing "who's running vs. who's
+            active" every discovery cycle is exactly what makes a freed slot (a revoke, a
+            deprecated pipeline, a changed assignment) pick a turned-away assignment back
+            up on the very next cycle with no special-case code — confirmed for real with
+            an `asyncio`-real test
+            (`test_a_turned_away_assignment_is_admitted_on_the_next_cycle_after_a_slot_frees`
+            in `backend/tests/test_pipeline_runtime_service.py`), not assumed. A small
+            `rotate_for_admission` rotation keeps a saturated cap from always favoring the
+            same waiting candidates cycle after cycle for a slot that just freed, without
+            ever preempting an already-running camera to do it.
+            **The honest remainder, named rather than silently implied fixed**: this is a
+            flat cap on task *count*, not a weighted core budget. It says nothing about
+            each assignment's *actual* cost — `sample_fps`, resolution, whether live view
+            is concurrently active for that camera — none of which factor in today. A
+            fleet where every camera ran at, say, 2fps full-decode mainstream (~0.72
+            cores/camera per CLAUDE.md's own table) would exhaust the real 13-core budget
+            at ~18 cameras, well before this count-based cap of 160 ever engages. A
+            proper weighted admission control — summing each assignment's actual
+            `sample_fps`-derived cost against a real core budget — is still future work,
+            not attempted here. Real capacity planning stays blocked on real traffic —
+            tracked separately, this file's own existing Phase 8 entry on real
             capacity/SLO validation.
       - **CLAUDE.md's own night/IR detection confidence caveat for `yolov8n-general`
             (0.09–0.21 measured, broken at a 0.5 threshold) now applies for real**, for

@@ -107,6 +107,25 @@ def test_interval_seconds_never_produces_a_zero_or_negative_sleep():
     assert _main.interval_seconds(-1.0) > 0
 
 
+def test_rotate_for_admission_returns_empty_for_no_candidates():
+    assert _main.rotate_for_admission([], admission_round=0) == []
+    assert _main.rotate_for_admission([], admission_round=7) == []
+
+
+def test_rotate_for_admission_rotates_the_starting_offset_by_round():
+    """Round 0 is the identity order; each later round moves the starting point one
+    further along, wrapping around - so which waiting candidate is "first in line" for
+    the next open slot changes cycle over cycle instead of always being the same one
+    (see `rotate_for_admission`'s own docstring for why this matters)."""
+    a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    candidates = [a, b, c]
+
+    assert _main.rotate_for_admission(candidates, admission_round=0) == [a, b, c]
+    assert _main.rotate_for_admission(candidates, admission_round=1) == [b, c, a]
+    assert _main.rotate_for_admission(candidates, admission_round=2) == [c, a, b]
+    assert _main.rotate_for_admission(candidates, admission_round=3) == [a, b, c]  # wraps
+
+
 def test_sync_frame_closure_is_a_plain_callable_never_a_coroutine_function():
     """Task 2 code-review warning #1: `run_one_cycle` calls `grab_frame_fn` unawaited, so
     this closure must never be `async def` - a coroutine function here would silently
@@ -223,7 +242,15 @@ class _DiscoveryHarness:
     real discovery poll picking up a new/changed/removed assignment.
     """
 
-    def __init__(self, *, discovery_interval_seconds: float = 0.03) -> None:
+    def __init__(
+        self,
+        *,
+        discovery_interval_seconds: float = 0.03,
+        # Large enough not to interfere with any test that isn't specifically about the
+        # cap itself - matching this task's own "existing tests must still pass with a
+        # cap large enough not to interfere" requirement.
+        max_concurrent_cameras: int = 1_000_000,
+    ) -> None:
         self.active: list[Assignment] = []
         self.calls: dict[uuid.UUID, list[dt.datetime]] = {}
         self.poll_count = 0
@@ -231,6 +258,7 @@ class _DiscoveryHarness:
         self._run_cycle_factory = None
         self.stop = asyncio.Event()
         self._discovery_interval_seconds = discovery_interval_seconds
+        self._max_concurrent_cameras = max_concurrent_cameras
         self._task: asyncio.Task | None = None
 
     async def _fetch_assignments(self) -> list[Assignment]:
@@ -259,6 +287,7 @@ class _DiscoveryHarness:
                 fetch_assignments=self._fetch_assignments,
                 build_run_cycle=self.build_run_cycle,
                 discovery_interval_seconds=self._discovery_interval_seconds,
+                max_concurrent_cameras=self._max_concurrent_cameras,
                 stop=self.stop,
             )
         )
@@ -412,6 +441,79 @@ async def test_a_failed_discovery_poll_does_not_stop_an_already_running_cameras_
         harness.poll_should_raise = False
         calls_before_recovery = len(harness.calls[cam.camera_id])
         await harness.calls_for(cam.camera_id, at_least=calls_before_recovery + 2)
+
+
+# --- Admission control: max_concurrent_cameras -----------------------------------------
+
+
+async def test_at_capacity_a_new_assignment_is_not_spawned_and_the_running_task_is_untouched():
+    """The cap's whole point: once it's saturated, a newly-discovered active assignment
+    must not get a task - and the already-running one must not be disturbed by the new
+    candidate showing up (no cancel-and-respawn thrashing)."""
+    cam_a, cam_b = _assignment(), _assignment()
+    build_counts: dict[uuid.UUID, int] = {}
+
+    class _Harness(_DiscoveryHarness):
+        def build_run_cycle(self, assignment: Assignment):
+            build_counts[assignment.camera_id] = build_counts.get(assignment.camera_id, 0) + 1
+            return super().build_run_cycle(assignment)
+
+    async with _Harness(max_concurrent_cameras=1) as harness:
+        harness.active = [cam_a]
+        await harness.calls_for(cam_a.camera_id, at_least=3)
+
+        harness.active = [cam_a, cam_b]
+        await asyncio.sleep(0.15)  # several discovery intervals
+
+        assert harness.calls.get(cam_b.camera_id, []) == [], (
+            "cam_b must never run while the cap is saturated by cam_a"
+        )
+        assert build_counts[cam_a.camera_id] == 1, (
+            "cam_a's task must not have been cancelled and respawned just because a new "
+            "candidate showed up while at capacity"
+        )
+
+        # cam_a keeps running normally, untouched by cam_b's presence.
+        count_before = len(harness.calls[cam_a.camera_id])
+        await harness.calls_for(cam_a.camera_id, at_least=count_before + 2)
+
+
+async def test_a_turned_away_assignment_is_admitted_on_the_next_cycle_after_a_slot_frees():
+    """Confirms the "falls out naturally from recompute every cycle" claim for real,
+    rather than assuming it: revoke the camera occupying the only slot, and the
+    previously-refused one must be picked up on the very next discovery cycle."""
+    cam_a, cam_b = _assignment(), _assignment()
+    async with _DiscoveryHarness(max_concurrent_cameras=1) as harness:
+        harness.active = [cam_a, cam_b]
+        await harness.calls_for(cam_a.camera_id, at_least=2)
+        assert harness.calls.get(cam_b.camera_id, []) == [], "cam_b should be turned away first"
+
+        harness.active = [cam_b]  # revoke cam_a - frees the only slot
+        await harness.calls_for(cam_b.camera_id, at_least=2, timeout=1.0)
+
+
+async def test_capacity_refusal_is_logged_with_the_camera_id_and_running_count(caplog):
+    """No existing test in this file asserts on log output, so this follows
+    `test_edge_spool_crypto.py`/`test_envelope.py`'s own established `caplog.at_level` +
+    substring-on-`caplog.text` pattern rather than inventing a new one."""
+    cam_a, cam_b = _assignment(), _assignment()
+    with caplog.at_level("INFO"):
+        async with _DiscoveryHarness(max_concurrent_cameras=1) as harness:
+            harness.active = [cam_a]
+            await harness.calls_for(cam_a.camera_id, at_least=1)
+
+            harness.active = [cam_a, cam_b]
+            await asyncio.sleep(0.15)
+
+    assert "camera_admission_refused_capacity" in caplog.text
+    refusal_records = [
+        r for r in caplog.records if r.getMessage() == "camera_admission_refused_capacity"
+    ]
+    assert refusal_records, "expected at least one camera_admission_refused_capacity log record"
+    record = refusal_records[0]
+    assert record.camera_id == str(cam_b.camera_id)
+    assert record.running_count == 1
+    assert record.max_concurrent_cameras == 1
 
 
 # --- Real container decode: the real, built pipeline-runtime image against a real, ------
