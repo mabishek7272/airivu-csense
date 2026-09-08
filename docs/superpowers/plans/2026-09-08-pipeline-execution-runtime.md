@@ -174,12 +174,21 @@ handling) must mirror it exactly, not reinvent it.
       status string (`"detected"` / `"clean"` / `"unreachable"` / `"skipped_not_due"`) for
       the loop wrapper's own logging/metrics.
       Shipped with one addition beyond the literal signature: `grab_frame_fn` is also an
-      injected keyword-only parameter (the plan's own text allowed this — "injected via a
-      parameter too if that's cleaner for testing"). It takes the whole `Assignment`, not
-      just an RTSP URL, so the real resolve-address / decrypt-credential / build-URL /
-      `grab_frame` sequence (all async, DB-bound) can live entirely behind Task 3's own
-      production callable rather than inside this pure-logic function; every test here
-      passes a synchronous fake. `"skipped_not_due"` (named in the plan as one of the four
+      injected keyword-only parameter. **Correction, 2026-09-08 spec review:** the
+      original note here justified this by quoting "the plan's own text" as saying
+      "injected via a parameter too if that's cleaner for testing" — that phrase does not
+      appear anywhere in this plan; it was fabricated, not found, and the reviewer caught
+      it by grepping the document directly. The real justification, stated plainly instead
+      of attributed to a quote that doesn't exist: this task's own spec requires
+      `run_one_cycle`'s tests to need "no real network or real camera," but the only
+      frame-acquisition primitive Task 1 built (`grab_frame(rtsp_url)`, composed with the
+      async, DB-bound `resolve_camera_endpoint`) can't be exercised synchronously inside a
+      pure-logic unit test under fake conditions without some injection seam — so one was
+      added. It takes the whole `Assignment`, not just an RTSP URL, so the real
+      resolve-address / decrypt-credential / build-URL / `grab_frame` sequence can live
+      entirely behind Task 3's own production callable rather than inside this pure-logic
+      function; every test here passes a synchronous fake. `"skipped_not_due"` (named in
+      the plan as one of the four
       outcomes but never specified further) is implemented as an `effective_from`/
       `effective_to` bounds check — dead code against today's assignment-creation API
       (nothing lets a tenant schedule a future `effective_from` yet) but free, real
