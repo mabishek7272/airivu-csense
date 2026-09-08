@@ -92,8 +92,23 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/uniface/releases/download/weights/retinaface_mv2.onnx",),
         legacy_classes=(),
         license_metadata=_MIT,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface RetinaFaceWeights.MNET_V2 - smallest of 7 available RetinaFace sizes.",
+        notes=(
+            "uniface RetinaFaceWeights.MNET_V2 - smallest of 7 available RetinaFace sizes. "
+            "Biometric-classified 2026-09-08: this manifest originally reserved that label "
+            "for identity-embedding (recognition) models only, on the reasoning that a pure "
+            "detector locates a face without identifying who it belongs to. "
+            "test_biometric_models_keep_their_classification (pre-existing, written before "
+            "this import) takes the broader, more conservative position that any "
+            "face_detection/face_recognition/face_landmark/face_attribute task_code is "
+            "biometric for privacy-review purposes - the classification is how a data-subject "
+            "request or an incident responder finds every face-processing model in one query, "
+            "regardless of whether it identifies anyone. That reasoning predates this import "
+            "and matches this project's own conservative bias everywhere else biometric/face "
+            "data is involved; loosening an existing test to fit a new import would have been "
+            "the wrong direction to resolve the disagreement."
+        ),
     ),
     LegacyModel(
         local_name="mobilenetv2_mobilenetv2.onnx",
@@ -171,8 +186,9 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/uniface/releases/download/weights/centerface.onnx",),
         legacy_classes=(),
         license_metadata=_MIT,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface CenterFaceWeights.DEFAULT.",
+        notes="uniface CenterFaceWeights.DEFAULT. Biometric-classified - see uniface-retinaface-detect's own notes for why a pure detector still gets the label.",
     ),
     LegacyModel(
         local_name="blazeface_face_detection_short_range.onnx",
@@ -186,8 +202,9 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/uniface/releases/download/weights/face_detection_short_range.onnx",),
         legacy_classes=(),
         license_metadata=_APACHE,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface BlazeFaceWeights.DEFAULT. Architecture and weights from Google MediaPipe.",
+        notes="uniface BlazeFaceWeights.DEFAULT. Architecture and weights from Google MediaPipe. Biometric-classified - see uniface-retinaface-detect's own notes for why a pure detector still gets the label.",
     ),
     LegacyModel(
         local_name="pipnet_r18_wflw_98_pipnet_r18_wflw_98.onnx",
@@ -201,8 +218,9 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/pipnet-onnx/releases/download/weights/pipnet_r18_wflw_98.onnx",),
         legacy_classes=(),
         license_metadata=_MIT,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface PIPNetWeights.WFLW_98.",
+        notes="uniface PIPNetWeights.WFLW_98. Biometric-classified - see uniface-retinaface-detect's own notes for why a landmark localizer still gets the label.",
     ),
     LegacyModel(
         local_name="parsing_resnet18_resnet18.onnx",
@@ -246,8 +264,9 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/uniface/releases/download/weights/face_mesh_Nx3x192x192.onnx",),
         legacy_classes=(),
         license_metadata=_APACHE,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface FaceMeshWeights.V1_468. Topology and weights from Google MediaPipe.",
+        notes="uniface FaceMeshWeights.V1_468. Topology and weights from Google MediaPipe. Biometric-classified - see uniface-retinaface-detect's own notes for why a landmark localizer still gets the label.",
     ),
     LegacyModel(
         local_name="modnet_photographic_modnet_photographic.onnx",
@@ -291,8 +310,9 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/uniface/releases/download/weights/face_attrib_net.onnx",),
         legacy_classes=(),
         license_metadata=_BSD,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface FaceAttribNetWeights.DEFAULT. Architecture and weights (c) Qualcomm Technologies, Inc.",
+        notes="uniface FaceAttribNetWeights.DEFAULT. Architecture and weights (c) Qualcomm Technologies, Inc. Biometric-classified - see uniface-retinaface-detect's own notes for why an attribute classifier still gets the label.",
     ),
     LegacyModel(
         local_name="fairface_fairface.onnx",
@@ -306,7 +326,8 @@ UNIFACE_MODELS: tuple[LegacyModel, ...] = (
         legacy_paths=("https://github.com/yakhyo/fairface-onnx/releases/download/weights/fairface.onnx",),
         legacy_classes=(),
         license_metadata=_CC_BY,
+        access_classification="biometric",
         initial_state="uploaded",
-        notes="uniface FairFaceWeights.DEFAULT. CC BY 4.0 - attribution required wherever its output is shown, not just in code.",
+        notes="uniface FairFaceWeights.DEFAULT. CC BY 4.0 - attribution required wherever its output is shown, not just in code. Biometric-classified - see uniface-retinaface-detect's own notes for why an attribute classifier still gets the label.",
     ),
 )

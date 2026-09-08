@@ -116,7 +116,34 @@ def _register_version(cur, model: LegacyModel, model_id: str, upload, local_path
             model.state_reason,
         ),
     )
-    return cur.fetchone()[0]
+    version_id = cur.fetchone()[0]
+
+    # A version that lands anywhere other than the class default ('uploaded') changed
+    # state without ever going through the real, audited /model-versions/{id}/promote
+    # endpoint - this import script *is* that state change, so it has to leave the same
+    # trail that endpoint would have, or test_every_biometric_promotion_is_audited's own
+    # question ("whatever state these end up in, the path there must be reconstructable")
+    # goes unanswered. Found missing 2026-09-08, well after the first real import - the
+    # gap was real and latent, not hypothetical.
+    if model.initial_state != "uploaded":
+        cur.execute(
+            """
+            INSERT INTO audit_events
+                (tenant_id, actor_type, actor_id, action, target_type, target_id, outcome,
+                 reason, before_patch, after_patch)
+            VALUES (NULL, 'system', %s, 'model.promote', 'model_version', %s, 'success',
+                    %s, %s, %s)
+            """,
+            (
+                "import_legacy_models.py",
+                str(version_id),
+                model.state_reason or f"Registered directly at '{model.initial_state}' by the import script.",
+                psycopg.types.json.Json({"state": "uploaded"}),
+                psycopg.types.json.Json({"state": model.initial_state}),
+            ),
+        )
+
+    return version_id
 
 
 def main() -> None:
