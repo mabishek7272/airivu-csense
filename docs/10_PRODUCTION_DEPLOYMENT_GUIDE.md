@@ -176,3 +176,18 @@ actually built:
 - **An independent security audit / penetration test.** Automated scanning
   (`docs/07_OPERATIONS_MANUAL.md` §B.7) is real and running; it is not a substitute for
   one, and `CHECKLIST.md` names this as needing a contracted third party.
+- **A real per-camera core budget, not just a camera-count ceiling.** `pipeline-runtime`
+  (added 2026-09-09, real cloud-camera-to-incident execution — see `CHECKLIST.md`'s
+  `pipeline_assignments` entry) is already wired into this compose file with a resource
+  limit, and caps itself at `pipeline_runtime_max_concurrent_cameras` (default 160,
+  CLAUDE.md's own measured number for the *default* 0.5fps sampling config). That default
+  assumes every camera runs at roughly that sampling rate — a fleet configured for a
+  materially higher `sample_fps` per camera will exhaust the real CPU budget well before
+  160 cameras, since the cap counts cameras, not cores actually spent. Tune
+  `pipeline_runtime_max_concurrent_cameras` down (or raise the container's own CPU limit)
+  to match your actual fleet's configured sampling rate before relying on the default at
+  scale; a real weighted admission control is still future work.
+- **`runtime_target="edge"` pipeline assignments still don't run.** The edge agent
+  deliberately does not perform inference yet (`CHECKLIST.md`) — only
+  `runtime_target="cloud"` assignments, which `pipeline-runtime` executes, actually turn
+  a camera's stream into detections today.
