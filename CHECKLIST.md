@@ -2114,10 +2114,42 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
 
 - [x] Model estate migration (idempotent, digest-verified) — done ahead of schedule as
       part of Phase 4 above
-- [ ] Legacy source inventory frozen and mapping approved (users, tenants, cameras,
+- [~] Legacy source inventory frozen and mapping approved (users, tenants, cameras,
       credentials, detections, snapshots)
-- [ ] Idempotent migration tools for the remaining entity types
-- [ ] Password migration or forced-reset strategy (legacy uses SQLite `csense_users.db`)
+  - [x] **`users`** table: 61 rows total, 60 real + 1 excluded (`first_name='Test',
+        last_name='User'`, `@example.com`) — frozen and mapped. See the migration tool
+        below.
+  - [ ] The rest of the estate is a **separate, not-yet-started inventory pass**. Real
+        counts already known from the legacy pull, recorded here so they don't need
+        rediscovering: `user_cameras` — 4 rows, look like placeholder/test data, not
+        real camera assignments; `camera_ip_changes` — 0 rows; the separate legacy DDNS
+        SQLite file's `hosts` table — 0 rows; ~15,225 real snapshot image files on the
+        legacy server, ~1.5 GB total. None of these have a migration tool yet — nothing
+        beyond counting them was attempted in this pass (scope was users only).
+- [ ] Idempotent migration tools for the remaining entity types (`user_cameras`,
+      `camera_ip_changes`, DDNS `hosts`, snapshots — see inventory counts above)
+- [x] Password migration or forced-reset strategy (legacy uses SQLite `csense_users.db`)
+  - **Force-reset, not re-hash** — decided by the account owner directly
+    (CLARIFICATIONS.md #30, 2026-09-09). No legacy bcrypt hash is migrated, or ever read
+    into memory beyond skipping past it.
+  - `backend/migrations/import_legacy_users.py`: idempotent, verify-before-write, raw-
+    psycopg operator script (house style of `import_legacy_models.py`). Creates one
+    organization + tenant + `invited`/`password_hash=NULL` user + `invited` `tenant_owner`
+    membership per real legacy user, plus a real `audit_events` row recording the legacy
+    numeric id and that a hash existed but was never migrated. Run for real against the
+    live legacy pull: **60 created, 1 test/placeholder account excluded, re-running
+    creates 0** (idempotency verified against the real data, not just the test fixture).
+  - `backend/migrations/send_legacy_migration_invitations.py`: the separate, deliberately
+    manual step that actually issues the real invitation ticket + email for the accounts
+    the import created — selection is narrowed to rows with a matching
+    `user.legacy_import` audit event, so it can never touch an unrelated normal team
+    invitation or reseller-provisioned account. Refuses to send anything without an
+    explicit `--confirm-send` flag (dry run otherwise: prints exactly who would be
+    emailed and the real link origin, zero side effects). **Run for real in dry-run mode
+    against the live 60 migrated accounts — confirmed correct.**
+  - **`--confirm-send` has deliberately not been run.** The real invitation emails to the
+    60 migrated legacy customers are the account owner's own call to trigger, not
+    something to fire as a side effect of building the tooling.
 - [ ] Snapshot-to-MinIO digest verification
 - [ ] DDNS/edge protocol compatibility or edge upgrade package
 - [ ] Per-tenant reconciliation dashboard/report
