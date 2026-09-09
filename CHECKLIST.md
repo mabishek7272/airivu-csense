@@ -27,8 +27,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked on
       at `/var/www/csense` on `103.118.158.92` (12 GB). Model estate inventoried and
       migrated; remaining W9 migration work (users, tenants, cameras, credentials,
       detections, snapshots) is now unblocked.
-- [!] Pilot tenant, target countries/privacy jurisdiction, camera/NVR hardware list —
+- [~] Pilot tenant, target countries/privacy jurisdiction, camera/NVR hardware list —
       **[NEEDS HUMAN INPUT]**, see [CLARIFICATIONS.md](CLARIFICATIONS.md)
+  - [x] **2026-09-09: two real named customers and their real camera hardware now
+        exist in the system** (see the Phase 3 camera/NVR entry for the full detail) —
+        `abelamm57@bigpond.com` (7 cameras, live-probed, one actively running the real
+        pipeline execution loop) and `paresh@aptiservices.com` (1 camera, correctly
+        SSRF-refused pending a real edge device on their LAN). What's still genuinely
+        open: **target countries/privacy jurisdiction was not stated for either
+        customer** - still needed before any real reliance on this for those tenants -
+        and **an agreed pilot cutover window** (tracked separately, Phase 7).
 - [x] Write this checklist and CLARIFICATIONS.md
 
 ## Phase 1 — Engineering Foundation
@@ -621,6 +629,42 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       either way. What's still genuinely blocked: a real ONVIF-speaking device to validate
       `csense_shared/onvif/discovery.py`'s WS-Discovery probe against, and the edge agent
       it's waiting for.
+  - [x] **2026-09-09: two real named customers onboarded, through the real API, not a
+        script.** `abelamm57@bigpond.com` (org "Abelamm", site "Autotek Dorani Site") —
+        the same reference NVR above, now the real customer's own hardware, not a test
+        fixture. Registered a real account, real site, 7 real cameras (channels c1-c7;
+        c8 probed and confirmed to have no camera attached), real encrypted RTSP
+        credentials via `PUT .../credentials` (never written to a plain column, never
+        committed anywhere). All 7 probed live and reachable
+        (`POST /cameras/{id}/probe` → `reachable: true`, real H.265/20fps detected).
+        A real published pipeline (`autotek-zone-watch`, `yolov8n-general`,
+        `runtime_target=cloud`) assigned to channel 1 - confirmed `pipeline-runtime`
+        picked it up within one discovery cycle (`camera_task_started`) and made a real
+        successful call to `ai-runtime`'s `/internal/v1/infer` against a genuinely
+        decoded frame from this live external feed (`HTTP/1.1 200 OK`, logged). No
+        detection cleared threshold on the frames observed - real footage, not staged,
+        so an empty loading bay at that moment is a real and expected outcome, not a
+        failure.
+        `paresh@aptiservices.com` (org "Apti Services") — one real camera
+        (`10.0.0.2:554/stream1`, RTSP credentials stored encrypted the same way). Probed
+        for real and correctly refused: `address_not_permitted`, the exact behavior the
+        customer's own "only works on server" already predicted - a private-LAN camera
+        with no edge device/tunnel provisioned is exactly what this SSRF guard exists to
+        refuse. This is the security boundary working correctly, not a gap; validating
+        this camera for real needs either a real edge device provisioned on that LAN, or
+        running this stack on a host that is itself on `10.0.0.0/24` (matching "only
+        works on server").
+        One environment-specific finding, not a product bug: this sandbox's own DNS
+        resolver synthesizes a NAT64 IPv6 address for the NVR's public DDNS hostname
+        alongside its real IPv4 (`64:ff9b::/96` + `206.148.37.112` - confirmed via `dig`
+        and `socket.getaddrinfo`), which the SSRF policy's own "every resolved address
+        must pass" rule correctly refuses (a synthesized address, reserved-range-shaped).
+        Worked around here only by temporarily pointing the camera records at the literal
+        IPv4 - correct for continued validation in *this* sandbox, wrong for real
+        production (this NVR's IP is dynamic; that's the entire reason it has a DDNS
+        name) - noted here so nobody mistakes the workaround for the real config. A
+        normal production host without DNS64 configured (the actual Phase 9 target)
+        would never hit this in the first place.
 
 ## Phase 4 — AI Registry, Pipeline Runtime, and Control Plane
 
