@@ -1902,13 +1902,55 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         Backend suite: 429 passed, 59 skipped (plus the one known unrelated failure,
         `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`);
         `ruff check backend scripts` clean.
-  - [ ] **Still genuinely not done, stated plainly**: no Customer CRM or Developer Console
-        UI for webhook delivery history - `webhook_deliveries` rows (status, attempt
-        count, response code, redacted failure reason) are all recorded correctly but are
-        only visible via direct database access, since no API endpoint exposes them yet;
-        the e2e script reads Postgres directly for this reason. And `outbox_events` still
-        has **no retention or pruning policy at all** - nothing anywhere deletes from it,
-        so it grows monotonically for the life of the deployment. Migration 0052's index
+  - [~] **2026-09-09: the API half of "no UI for webhook delivery history" is closed;
+        the UI half turned out to be a bigger gap than that line implied.**
+    - [x] `GET /api/v1/tenant/webhooks/{webhook_id}/deliveries` (new, `webhook.manage`,
+          `backend/tenant_api/app/api/webhooks.py`) - real, tenant-scoped, cursor-paginated
+          on `(scheduled_at, id)` the same keyset shape `incidents.py`'s own list endpoint
+          already uses (this table takes new rows continuously as retries land, so offset
+          paging would skip or repeat). Returns `status`, `attempt_number`,
+          `response_status`, `response_time_ms`, `next_attempt_at`, and the
+          already-redacted `failure_summary_redacted` exactly as the dispatch worker wrote
+          it - no redaction logic added here, by design. Filterable by status
+          (comma-separated, same convention `incidents.py`'s own `status` param uses). The
+          `webhook_id` is checked for ownership before anything else, same "missing vs. not
+          yours stays indistinguishable" discipline `update_webhook`/`delete_webhook`/
+          `rotate_webhook_secret`/`test_webhook` already apply in this file - a foreign
+          tenant's endpoint id gets the identical 404 a nonexistent one would.
+    - [x] Verified for real: `backend/tests/test_webhooks_api.py` (11 tests, new) against a
+          live migrated Postgres, same two-DSN discipline
+          `test_pipeline_assignments_api.py` established (`TEST_POSTGRES_DSN` sets up
+          fixture rows with `BYPASSRLS`; the ASGI app under test is mounted on
+          `TEST_POSTGRES_API_DSN`, the real `csense_api` role) - correct row shape,
+          newest-first ordering, single and comma-separated status filters, cursor
+          pagination with no gaps or repeats across pages, a malformed cursor refused
+          (400) rather than 500'd, another tenant's delivery rows never appearing (proven
+          against real RLS, not just the endpoint's own SQL filter), and a foreign-tenant
+          `webhook_id` getting the exact same 404 code as a missing one.
+    - [x] `scripts/e2e_webhook_dispatch.py` - previously read `webhook_deliveries` straight
+          out of Postgres via `psql` for its delivery assertions, exactly because nothing
+          exposed the table over the API; now calls the new endpoint instead (`psql`
+          stays only for seeding the incident, which has no public creation endpoint, and
+          for the `processed_events` idempotency check, which has no API surface). Re-run
+          against the live stack with `tenant-api` rebuilt to pick up the new route: full
+          PASS, including the idempotency and event-filter assertions now read through the
+          real endpoint rather than a raw table scan. `scripts/e2e_webhooks.py` re-run
+          unchanged: full PASS. `ruff check backend scripts` clean; full backend suite 783
+          passed, 19 skipped (plus the one known unrelated failure,
+          `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`).
+    - [ ] **No UI shows this, and the reason is bigger than "the delivery-history page is
+          missing"**: neither the Customer CRM (`frontend/customer-crm/src/pages/`) nor the
+          Developer Console (`frontend/developer-console/src/pages/`) has *any* page that
+          manages webhook endpoints themselves. Webhook endpoints are API- and
+          `scripts/e2e_webhooks.py`-only today - there is no create/list/rotate-secret/
+          delete UI to add a delivery-history view onto, which was this task's original
+          ask. Building that management page (mirroring `NotificationPoliciesPage.tsx`'s
+          density and `components/States.tsx`'s loading/empty/no-results/error discipline)
+          is a separate, larger feature than "add a view to an existing page" - named here
+          explicitly, not guessed at, so it gets scoped and picked up deliberately.
+  - [ ] `outbox_events` still has **no retention or pruning policy at all** - unrelated to
+        delivery history, unchanged by the above - nothing anywhere deletes from it, so it
+        grows monotonically for the life of the deployment. Migration 0052's index
         postpones that becoming a problem; it does not solve it. Whether outbox rows
         should be pruned after N days, archived to object storage, or kept forever as an
         event log is a real product/compliance decision nobody has made - named here so it

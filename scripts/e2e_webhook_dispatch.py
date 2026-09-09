@@ -17,9 +17,16 @@ triggered here by a real `POST /api/v1/tenant/incidents/{id}/acknowledge`.
 
 Incidents have no public creation endpoint (they only ever come from the detection
 pipeline) - seeded directly via `psql`, exactly as scripts/e2e_exports.py already does for
-the same reason. The delivery assertions themselves are read straight out of Postgres:
-`webhook_deliveries` is not exposed over any API, the same direct-DB check
-scripts/e2e_support_grant_authorization.py established for `audit_events.support_grant_id`.
+the same reason.
+
+The delivery assertions themselves now go through the real
+`GET /api/v1/tenant/webhooks/{id}/deliveries` endpoint (added to close the gap CHECKLIST.md
+named plainly: this script used to read `webhook_deliveries` straight out of Postgres
+because nothing exposed it over the API at all). Routing through the real endpoint instead
+of `psql` means a PASS here also proves the endpoint's own tenant-scoping and pagination
+hold against the live stack, not just that the worker wrote the rows - `psql` remains only
+for seeding the incident (no public creation endpoint exists) and for the `processed_events`
+idempotency bookkeeping check, which genuinely has no API surface of its own.
 
     python scripts/e2e_webhook_dispatch.py
 """
@@ -95,35 +102,38 @@ def check(condition, description, failures):
         failures.append(description)
 
 
-def delivery_row(endpoint_id: str) -> dict:
-    """The oldest delivery row for one endpoint, as a dict. '|' is psql -tA's own column
-    separator, so `failure_summary_redacted` - the one free-text column here, holding
-    whatever a transport error said - is selected last and given the split's remainder,
-    rather than being allowed to shift every field after it."""
-    raw = psql(
-        "SELECT status::text, coalesce(response_status::text, ''), attempt_number, "
-        "event_type, coalesce(failure_summary_redacted, '') "
-        f"FROM webhook_deliveries WHERE webhook_endpoint_id = '{endpoint_id}' "
-        "ORDER BY scheduled_at LIMIT 1"
-    )
-    if not raw:
+def delivery_count(token: str, endpoint_id: str) -> int:
+    """How many delivery rows the real endpoint reports for one webhook - used for the
+    idempotency and filtering assertions, which only care about the count."""
+    _, page = api(f"/api/v1/tenant/webhooks/{endpoint_id}/deliveries", token=token, method="GET", expect=(200,))
+    return len(page["items"])
+
+
+def delivery_row(token: str, endpoint_id: str) -> dict:
+    """The single delivery this run produces for one endpoint, read through the real
+    `GET /{id}/deliveries` endpoint rather than `psql` - see this script's own module
+    docstring for why. `items` is newest-first; a run that only ever causes one delivery
+    (the common case this polls for) makes "first" and "oldest" the same row."""
+    _, page = api(f"/api/v1/tenant/webhooks/{endpoint_id}/deliveries", token=token, method="GET", expect=(200,))
+    items = page["items"]
+    if not items:
         return {}
-    status, response_status, attempt, event_type, failure = raw.split("|", 4)
+    row = items[-1]  # oldest of whatever has landed so far
     return {
-        "status": status,
-        "response_status": int(response_status) if response_status else None,
-        "attempt_number": int(attempt),
-        "failure": failure,
-        "event_type": event_type,
+        "status": row["status"],
+        "response_status": row["response_status"],
+        "attempt_number": row["attempt_number"],
+        "failure": row["failure_summary_redacted"],
+        "event_type": row["event_type"],
     }
 
 
-def wait_for_delivery(endpoint_id: str) -> dict:
+def wait_for_delivery(token: str, endpoint_id: str) -> dict:
     """Polls until the worker's own delivery reaches a terminal state, or we give up."""
     deadline = time.monotonic() + DELIVERY_TIMEOUT_SECONDS
     last: dict = {}
     while time.monotonic() < deadline:
-        last = delivery_row(endpoint_id)
+        last = delivery_row(token, endpoint_id)
         if last.get("status") in ("succeeded", "abandoned"):
             return last
         time.sleep(POLL_INTERVAL_SECONDS)
@@ -198,7 +208,7 @@ def main() -> int:
 
     step(6, f"Wait for the deployed notification-worker to deliver it (up to {DELIVERY_TIMEOUT_SECONDS}s)")
     print("    nothing below is driven by this script - the container does the work")
-    delivered = wait_for_delivery(matching_id)
+    delivered = wait_for_delivery(token, matching_id)
     check(bool(delivered), "the worker created a delivery row for the matching endpoint", failures)
     check(
         delivered.get("status") == "succeeded",
@@ -222,21 +232,17 @@ def main() -> int:
 
     step(7, f"Sit through further worker passes ({IDEMPOTENCY_SETTLE_SECONDS}s) and re-count")
     time.sleep(IDEMPOTENCY_SETTLE_SECONDS)
-    matching_total = psql(
-        f"SELECT count(*) FROM webhook_deliveries WHERE webhook_endpoint_id = '{matching_id}'"
-    )
+    matching_total = delivery_count(token, matching_id)
     check(
-        matching_total == "1",
+        matching_total == 1,
         f"exactly one delivery row exists, not one per pass (got {matching_total}) - "
         "processed_events idempotency holds against the real running worker",
         failures,
     )
 
     step(8, "The non-matching endpoint received nothing at all")
-    other_total = psql(
-        f"SELECT count(*) FROM webhook_deliveries WHERE webhook_endpoint_id = '{other_id}'"
-    )
-    check(other_total == "0", f"zero deliveries for the filtered-out endpoint (got {other_total})", failures)
+    other_total = delivery_count(token, other_id)
+    check(other_total == 0, f"zero deliveries for the filtered-out endpoint (got {other_total})", failures)
 
     processed = psql(
         "SELECT count(*) FROM processed_events p "
