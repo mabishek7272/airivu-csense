@@ -2039,6 +2039,76 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
               still succeeded, and replaying the original (by-then two-rotations-stale)
               token correctly got a 401 - the real end-to-end version of the race, not
               just the isolated module test.
+            - **UPDATE (2026-09-09), real gap in the above found and closed**: an
+              independent security review reproduced, against real Redis with a real
+              `asyncio.gather` burst (10 callers on token-generation-0 racing 10 callers on
+              generation-1, no mocks), that the fix above **still destroyed the session in
+              4 of 8 trials**. Root cause: `_grace_key` held exactly **one overwritten
+              slot** - the immediately-previous generation's hash and its current raw
+              token. That's correct for exactly one rotation happening while stragglers of
+              it are still in flight, but wrong the moment a *second* legitimate rotation
+              (a third tab, a retry) lands before every straggler of the *first* one has
+              been served: the second rotation's `HSET` on `grace_key` unconditionally
+              clobbered the first rotation's still-live grace entry, so those
+              first-generation stragglers then matched neither current nor grace and hit
+              the unconditional-delete branch - killing the session for every caller,
+              including ones holding the brand-new, genuinely-current token. Exactly the
+              same "two rotations old" phrase in the verification note two bullets above
+              was, in hindsight, evidence this was already latent: the old test asserting
+              that exact case *rejected* was actually pinning the bug, not a real security
+              property (see below).
+              - **Fix, same file**: `grace_key` is now a Redis hash holding one field per
+                still-live superseded generation (`field = that generation's token hash`,
+                `value = that generation's own expiry timestamp`, stamped once and never
+                touched by a later rotation) plus one reserved `__current__` field mirroring
+                whatever the actual current raw token is right now. A later rotation only
+                *adds* a field; it never overwrites an earlier one. Bounded by
+                `MAX_GRACE_GENERATIONS = 5` (defense in depth against a caller rotating
+                faster than the 10s `GRACE_WINDOW_SECONDS`, on top of each entry's own TTL)
+                - oldest-expiring entries evicted first once exceeded. The whole
+                lazy-expire/cap-evict/compare-current/check-every-generation/rotate-or-reject
+                decision is still one atomic Lua `EVAL` - the already-verified atomicity
+                property is unchanged, only the data structure it operates on grew from a
+                single pair to a bounded set. Full design tradeoff (what this does and does
+                NOT widen for a real replay) is in the module's own docstring.
+              - **`backend/tests/test_sessions.py` updated**: the old
+                `test_a_token_already_rotated_away_is_rejected_on_reuse` asserted that a
+                token exactly two rotations stale is *always* rejected, with no elapsed
+                time involved - that assertion encoded the bug (a single overwritten slot
+                can only ever remember one generation back), not a real security property,
+                so it's been replaced with
+                `test_a_token_more_than_the_generation_cap_stale_is_rejected_on_reuse`
+                (monkeypatches the cap down and does enough real rotations to exceed it,
+                confirming eviction-past-the-bound still rejects and still destroys the
+                session). Two new tests pin the actual fix:
+                `test_generation_0_stragglers_survive_a_second_legitimate_rotation`
+                (deterministic, sequential - two real rotations complete, then a
+                generation-0 straggler is honoured and gets the true current token, not the
+                stale intermediate one) and
+                `test_generation_0_and_generation_2_stragglers_race_without_destroying_the_session`
+                (the review's own reproduction: 25 trials, each a 20-way real
+                `asyncio.gather` burst of generation-0 stragglers racing generation-2
+                callers after two real sequential rotations - every trial passed, 0/25
+                destroyed, 0/25 null results). All 12 tests in the file pass, run 5x in a
+                row for determinism, plus ad hoc stress beyond the permanent suite: 8 trials
+                each at 2/10, 3/15, and 5/10 generations/burst-size - 0 destroyed, 0 null
+                results across all 24 of those trials too. Full backend suite: 551 passed,
+                268 skipped (unrelated services not running in this shell), same one
+                pre-existing `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`
+                failure and nothing else. `ruff check backend scripts` clean on
+                `sessions.py`/`test_sessions.py`; same pre-existing unrelated
+                `e2e_webhooks_crm.py` `F541` findings, untouched.
+              - **Real remaining limitation, named rather than hidden**: this closes the
+                *specific* reproduction the review found (grace entries surviving
+                subsequent legitimate rotations) but the fundamental tradeoff the module
+                docstring already names is still true and still not eliminated by this
+                fix - an attacker racing a legitimate client to present a stolen token
+                *within* `GRACE_WINDOW_SECONDS` (10s) of any live generation still succeeds
+                instead of revoking the session, exactly as before. Multi-generation makes
+                this no *wider* (same 10s per generation, same 5-generation cap) but also
+                doesn't make it narrower - closing that would need binding rotation to some
+                caller-identity signal (IP/device fingerprint) this module doesn't have
+                today, which is a materially bigger change than this task's scope.
       - [ ] The Developer Console (`frontend/developer-console/src/pages/`) still has no
             webhook-management page - not addressed here, and arguably not a real gap:
             webhook endpoints are a tenant's own integration config, not something AIRIVU
