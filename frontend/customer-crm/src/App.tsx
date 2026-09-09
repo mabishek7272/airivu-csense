@@ -19,6 +19,7 @@ import { TeamPage } from "./pages/TeamPage";
 import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { WebhooksPage } from "./pages/WebhooksPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -157,6 +158,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <NotificationPoliciesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/webhooks"
+        element={
+          <RequireAuth>
+            <WebhooksPage />
           </RequireAuth>
         }
       />

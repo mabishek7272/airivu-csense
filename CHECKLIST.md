@@ -1902,8 +1902,11 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         Backend suite: 429 passed, 59 skipped (plus the one known unrelated failure,
         `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`);
         `ruff check backend scripts` clean.
-  - [~] **2026-09-09: the API half of "no UI for webhook delivery history" is closed;
-        the UI half turned out to be a bigger gap than that line implied.**
+  - [x] **2026-09-09: the API half of "no UI for webhook delivery history" is closed;
+        the UI half turned out to be a bigger gap than that line implied - now also
+        closed, for the Customer CRM (see below for the one pre-existing, unrelated bug
+        found while verifying it, and the one deliberately-unaddressed Developer Console
+        note).**
     - [x] `GET /api/v1/tenant/webhooks/{webhook_id}/deliveries` (new, `webhook.manage`,
           `backend/tenant_api/app/api/webhooks.py`) - real, tenant-scoped, cursor-paginated
           on `(scheduled_at, id)` the same keyset shape `incidents.py`'s own list endpoint
@@ -1938,16 +1941,81 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           unchanged: full PASS. `ruff check backend scripts` clean; full backend suite 783
           passed, 19 skipped (plus the one known unrelated failure,
           `test_site_timezones.py::test_unusable_values_are_refused[asia/kolkata]`).
-    - [ ] **No UI shows this, and the reason is bigger than "the delivery-history page is
-          missing"**: neither the Customer CRM (`frontend/customer-crm/src/pages/`) nor the
-          Developer Console (`frontend/developer-console/src/pages/`) has *any* page that
-          manages webhook endpoints themselves. Webhook endpoints are API- and
-          `scripts/e2e_webhooks.py`-only today - there is no create/list/rotate-secret/
-          delete UI to add a delivery-history view onto, which was this task's original
-          ask. Building that management page (mirroring `NotificationPoliciesPage.tsx`'s
-          density and `components/States.tsx`'s loading/empty/no-results/error discipline)
-          is a separate, larger feature than "add a view to an existing page" - named here
-          explicitly, not guessed at, so it gets scoped and picked up deliberately.
+    - [x] **2026-09-09: the Customer CRM management page now exists** -
+          `frontend/customer-crm/src/pages/WebhooksPage.tsx` (new), routed at `/webhooks`
+          and added to `Layout.tsx`'s nav next to Notifications. Full create/list/edit/
+          rotate-secret/test/delete cycle plus the delivery-history view this gap was
+          originally about, all against the real endpoints above - no mocked data, no
+          workaround for anything the API doesn't support.
+      - [x] `frontend/customer-crm/src/api/webhooks.ts` (new) mirrors `webhooks.py`
+            exactly, including what it refuses to type: `signing_secret` exists only on
+            `CreateWebhookResult`/`RotateSecretResult`, the two shapes that exist to show
+            it once - there is no field anywhere else in the client that could carry a
+            secret back out of a plain GET.
+      - [x] The signing secret is shown exactly once, in a dedicated `SecretRevealDialog`
+            (copy button with a clipboard-denied fallback, an explicit "this is shown
+            once" warning) shared by both create and rotate-secret - mirrors
+            `EdgePage.tsx`'s own `TokenDialog` for an enrolment token, the established
+            precedent in this app for a write-only value. Rotate goes through a
+            `ConfirmDialog` that says plainly that the old secret stops working
+            immediately, matching `CamerasPage.tsx`'s own directness about consequential
+            actions.
+      - [x] Event filters are a plain comma-separated text input, not a picker -
+            `CreateWebhookIn.event_filters` is freeform (`list[str]`, no server-side enum
+            validation), so a picker would have to enumerate values the backend does not
+            expose; over-building one wasn't worth it for a field the API itself treats as
+            opaque strings.
+      - [x] Delivery history is a dialog opened per-row (`DeliveryHistoryDialog`), not a
+            separate route - the closest existing precedent is
+            `NotificationPoliciesPage.tsx`'s own `EscalationDialog` (manage a per-row
+            sub-resource without leaving the list). Real cursor pagination via a real
+            "Load more" against the real `next_cursor`, the same convention
+            `AuditPage.tsx` already established - not client-side paging of one fetched
+            page. Delivery status badges (`DeliveryStatusBadge`, added to `Badges.tsx`)
+            reuse the same four severity/status colours every other badge in this app
+            already uses (pending→medium, succeeded→low, failed→critical,
+            abandoned→neutral) rather than inventing a fifth palette.
+      - [x] Verified for real: `npm run typecheck` / `lint` / `build` all clean in
+            `frontend/customer-crm`. `scripts/e2e_webhooks_crm.py` (new, Playwright)
+            against the live stack: registers a tenant, creates a webhook through the
+            real form, sees the real one-time secret, sees it listed, fires a real test
+            delivery and reads the real `TestDeliveryOut` result from a toast, opens the
+            delivery-history dialog and sees that same test delivery, causes a second,
+            *automatically*-dispatched delivery the same way `e2e_webhook_dispatch.py`
+            does (seed an incident, acknowledge it through the real API) and confirms the
+            dialog shows it after a genuine fresh page load, rotates the secret and
+            confirms the new one differs from the first, deletes the endpoint and
+            confirms it's gone. Full PASS.
+      - [~] **A pre-existing bug, unrelated to webhooks, found only because this script
+            does a real full page load**: `AuthProvider`'s silent-refresh effect
+            (`frontend/customer-crm/src/auth/AuthContext.tsx`) calls
+            `POST /api/v1/auth/refresh` on every mount, and `main.tsx` wraps the app in
+            `React.StrictMode`, which double-invokes that effect in dev builds - firing
+            two concurrent refresh calls presenting the *same* refresh-token cookie.
+            `rotate_session` (`backend/shared/csense_shared/security/sessions.py`) has no
+            tolerance for a token being presented twice: the first call rotates it, the
+            second sees a mismatch, treats it as replay, and deletes the whole session -
+            reproduced 3/3 times against the dev server (`npm run dev`, used here only
+            because the customer-crm Docker image couldn't be rebuilt in this sandbox -
+            no network path to pull `node:20-slim`/`nginx-unprivileged` base layers).
+            Production builds strip `StrictMode`'s double-invoke, so this exact trigger
+            likely doesn't fire in the deployed container - but the underlying
+            zero-tolerance rotation would equally break two browser tabs open on the same
+            account refreshing near-simultaneously, which is a real scenario independent
+            of dev mode. Not fixed here: it lives in shared session code and `main.tsx`,
+            neither owned by this task, and fixing it deserves its own look (a short reuse
+            grace window keyed on the *previous* token hash, the standard fix for this
+            exact class of race, is the likely direction). The e2e script works around it
+            by using a fresh login instead of a reload for its one page-load check
+            (`scripts/e2e_webhooks_crm.py`, step 7) rather than silently depending on the
+            fragile path. Named here explicitly rather than fixed silently, since another
+            review of this exact area was flagged as out of scope for this task.
+      - [ ] The Developer Console (`frontend/developer-console/src/pages/`) still has no
+            webhook-management page - not addressed here, and arguably not a real gap:
+            webhook endpoints are a tenant's own integration config, not something AIRIVU
+            staff manage on a tenant's behalf, so there is no obvious reason the internal
+            console would ever need this. Named rather than silently ignored, in case that
+            assumption turns out to be wrong.
   - [ ] `outbox_events` still has **no retention or pruning policy at all** - unrelated to
         delivery history, unchanged by the above - nothing anywhere deletes from it, so it
         grows monotonically for the life of the deployment. Migration 0052's index

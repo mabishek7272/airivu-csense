@@ -33,6 +33,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/edge">Edge</NavLink>
           <NavLink to="/recipient-groups">Recipients</NavLink>
           <NavLink to="/notification-policies">Notifications</NavLink>
+          <NavLink to="/webhooks">Webhooks</NavLink>
           <NavLink to="/team">Team</NavLink>
           <NavLink to="/audit">Audit</NavLink>
           <NavLink to="/settings">Settings</NavLink>
