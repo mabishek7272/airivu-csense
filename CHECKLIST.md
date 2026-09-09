@@ -2109,6 +2109,25 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
                 doesn't make it narrower - closing that would need binding rotation to some
                 caller-identity signal (IP/device fingerprint) this module doesn't have
                 today, which is a materially bigger change than this task's scope.
+              - **A second, independent security review of this exact fix** (not just the
+                first fix) ran adversarial stress beyond the shipped suite (3-generation and
+                5-generation-at-the-cap boundary bursts, 1500+ calls/run across multiple
+                runs) and found the multi-generation design **Approved** - genuinely closes
+                the reproduced gap, no new session-destruction or replay-widening path
+                found. Two low-severity, non-blocking follow-ups from that review:
+                (1) the docstring's "what this does NOT widen" section stated the *per-token*
+                window honestly but didn't say the *aggregate* count of simultaneously-
+                exploitable stale values grew from ≤1 to ≤5 (bounded, same order of
+                magnitude, unavoidable side effect of fixing the real bug) - fixed by adding
+                that sentence to the docstring directly, same commit family as this entry;
+                (2) eviction tie-breaking uses `redis.call('TIME')[1]` (second-granularity
+                only), so two rotations landing in the same wall-clock second get identical
+                expiry timestamps and rely on Lua's `table.sort` (not guaranteed-stable) to
+                order them - verified correct in every trial run (Redis hash field-insertion
+                order + small-hash listpack encoding happens to make it deterministic in
+                practice) but not guaranteed by construction. Not fixed - genuinely low
+                severity (worst case is evicting a tied peer with identical remaining
+                lifetime anyway) and left as a real, named follow-up rather than papered over.
       - [ ] The Developer Console (`frontend/developer-console/src/pages/`) still has no
             webhook-management page - not addressed here, and arguably not a real gap:
             webhook endpoints are a tenant's own integration config, not something AIRIVU

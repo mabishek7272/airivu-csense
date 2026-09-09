@@ -101,6 +101,17 @@ single-generation design already accepted (see below) — multi-generation does 
 that window, it just stops a later, *unrelated* legitimate rotation from artificially
 shortening it.
 
+One thing this framing doesn't say outright, worth stating precisely rather than leaving
+implicit (found in the second round of security review): the *aggregate* number of
+distinct stolen token values an attacker could successfully replay at once did grow, from
+at most 1 (the single prior slot) to at most `MAX_GRACE_GENERATIONS` (5) — each still only
+exploitable within its own unchanged 10-second window, and this is an unavoidable
+consequence of the fix itself, not a separate flaw: a legitimate straggler and a malicious
+replay are the same shape to the server, so protecting the former across more than one
+generation necessarily protects the latter across the same generations too. Bounded, short-
+lived, and accepted as the same order-of-magnitude tradeoff the single-generation design
+already made — but the honest count is "up to 5 live windows," not "the window."
+
 **Grace window: `GRACE_WINDOW_SECONDS = 10`** (unchanged). Chosen to comfortably absorb the
 real scenarios this targets (two tabs racing a silent refresh, a retried request on a slow
 network) while staying "a few seconds," not something that would meaningfully widen the
