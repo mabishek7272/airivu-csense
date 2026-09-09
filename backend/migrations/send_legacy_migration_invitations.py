@@ -36,12 +36,26 @@ an entirely unrelated real flow. The audit-event join is load-bearing here, not 
 - it is what keeps this script from ever re-inviting (or, worse, first-inviting under
 migration cover) someone a normal team-invite or reseller-provisioning flow already
 handled.
+
+**Idempotent, and re-runnable is genuinely safe.** A membership that already has a
+`user.legacy_invitation_sent` audit row (success or failed - either way, a real attempt
+already happened) is excluded from candidates on every later run. Found missing in code
+review, after the very first version of this script actually run against a database that
+already held real migrated customers: re-running it (as the test suite for this file did,
+by accident, on a database it didn't own) matched all of them again and would, with a
+real `--confirm-send`, have re-invited every one of them a second time. `_run()` also
+takes an optional `user_ids` parameter for exactly this reason - it lets a caller (this
+file's own tests) scope a run to specific memberships without needing the database to be
+otherwise empty of anything matching; the real CLI entrypoint always passes `None`
+(process every real pending candidate) and has no flag for it, deliberately - this is a
+testability seam, not a feature to expose.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import os
+import uuid
 
 import psycopg
 
@@ -71,6 +85,27 @@ _CANDIDATES_SQL = """
           AND ae.target_type = 'user'
           AND ae.target_id = m.user_id::text
       )
+      -- Idempotency: a membership that already has a real send recorded (success or
+      -- failed - either way, an attempt already happened) is never a candidate again.
+      -- Missing before code review caught it: without this, re-running the script for
+      -- real (e.g. after a transient failure on a prior attempt) would re-invite
+      -- everyone, including people who'd already gotten a real, working link - a second
+      -- ticket doesn't invalidate the first, so this isn't just noise, it's a real
+      -- confusing-email-count problem for a real person.
+      AND NOT EXISTS (
+        SELECT 1 FROM audit_events ae
+        WHERE ae.action = %(send_action)s
+          AND ae.actor_id = %(send_actor)s
+          AND ae.target_type = 'membership'
+          AND ae.target_id = m.id::text
+      )
+      -- Test-isolation seam, not a CLI feature: real operator runs always pass NULL here
+      -- (process every real pending candidate). Tests pass their own fixture's exact
+      -- user_ids so the query can never sweep in whatever else happens to already exist
+      -- in a shared database - found necessary in code review after this exact query,
+      -- run unscoped, matched 60 real already-migrated customers inside a test run and
+      -- wrote a false 'sent' audit row against every one of them.
+      AND (%(user_ids)s::uuid[] IS NULL OR m.user_id = ANY(%(user_ids)s::uuid[]))
     ORDER BY m.created_at
 """
 
@@ -112,13 +147,19 @@ async def _send_invitation_email(settings: Settings, *, email: str, link: str) -
     return result.accepted
 
 
-async def _run(confirm_send: bool) -> None:
+async def _run(confirm_send: bool, *, user_ids: list[uuid.UUID] | None = None) -> None:
     settings = get_settings()
 
     with psycopg.connect(_dsn()) as conn, conn.cursor() as cur:
         cur.execute(
             _CANDIDATES_SQL,
-            {"import_action": AUDIT_IMPORT_ACTION, "import_actor": AUDIT_IMPORT_ACTOR_ID},
+            {
+                "import_action": AUDIT_IMPORT_ACTION,
+                "import_actor": AUDIT_IMPORT_ACTOR_ID,
+                "send_action": AUDIT_SEND_ACTION,
+                "send_actor": AUDIT_SEND_ACTOR_ID,
+                "user_ids": user_ids,
+            },
         )
         candidates = cur.fetchall()
 

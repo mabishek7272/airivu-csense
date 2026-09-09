@@ -118,8 +118,16 @@ def migrated_users(pg_env, tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["import_legacy_users.py", "--source", str(db_path)])
     import_legacy_users.main()
 
+    with psycopg.connect(_raw_dsn(pg_env)) as pg_conn, pg_conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM users WHERE email_normalized IN (%s, %s)",
+            (email_1.lower(), email_2.lower()),
+        )
+        user_ids = [row[0] for row in cur.fetchall()]
+    assert len(user_ids) == 2, "fixture setup didn't create both users - test can't proceed safely"
+
     try:
-        yield pg_env, email_1, email_2
+        yield pg_env, email_1, email_2, user_ids
     finally:
         with psycopg.connect(_raw_dsn(pg_env)) as pg_conn, pg_conn.cursor() as cur:
             cur.execute("SELECT set_config('app.is_platform', 'true', false)")
@@ -195,13 +203,17 @@ async def _explode_create_ticket(*args, **kwargs):
 
 @pytest.mark.asyncio
 async def test_without_confirm_send_nothing_happens(migrated_users, monkeypatch, capsys):
-    pg_env, email_1, email_2 = migrated_users
+    pg_env, email_1, email_2, user_ids = migrated_users
 
     monkeypatch.setattr(send_invitations, "create_invitation_ticket", _explode_create_ticket)
     monkeypatch.setattr(send_invitations, "build_registry", lambda settings: _ExplodingRegistry())
     monkeypatch.setattr(send_invitations, "create_redis_client", lambda settings: _FakeRedisClient())
 
-    await send_invitations._run(confirm_send=False)
+    # Scoped to exactly this fixture's own two users - never touches whatever else this
+    # shared database happens to hold (a real gap found in code review: an unscoped call
+    # here previously swept in every already-migrated real customer and wrote a false
+    # 'sent' audit row against each one, every time this test ran).
+    await send_invitations._run(confirm_send=False, user_ids=user_ids)
 
     out = capsys.readouterr().out
     assert email_1 in out
@@ -213,15 +225,21 @@ async def test_without_confirm_send_nothing_happens(migrated_users, monkeypatch,
     assert "issued-only-with---confirm-send" in out
 
     with psycopg.connect(_raw_dsn(pg_env)) as conn, conn.cursor() as cur:
+        # Scoped to this fixture's own two memberships, not a bare global count - a
+        # global count depends on this being the only thing that's ever touched this
+        # table, which stopped being true the moment real data existed alongside tests.
         cur.execute(
-            "SELECT count(*) FROM audit_events WHERE action = 'user.legacy_invitation_sent'"
+            "SELECT count(*) FROM audit_events "
+            "WHERE action = 'user.legacy_invitation_sent' "
+            "AND target_id IN (SELECT id::text FROM memberships WHERE user_id = ANY(%s::uuid[]))",
+            (user_ids,),
         )
         assert cur.fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
 async def test_confirm_send_uses_real_call_shape_against_fakes(migrated_users, monkeypatch, capsys):
-    pg_env, email_1, email_2 = migrated_users
+    pg_env, email_1, email_2, user_ids = migrated_users
 
     calls: list[dict] = []
 
@@ -247,7 +265,12 @@ async def test_confirm_send_uses_real_call_shape_against_fakes(migrated_users, m
     monkeypatch.setattr(send_invitations, "build_registry", lambda settings: _FakeRegistry())
     monkeypatch.setattr(send_invitations, "create_redis_client", lambda settings: _FakeRedisClient())
 
-    await send_invitations._run(confirm_send=True)
+    # Scoped to exactly this fixture's own two users - see the same note in the sibling
+    # test above. Without this, a shared database already holding real migrated
+    # customers gets a real (if fake-provider) 'sent' audit row written against every
+    # one of them, every time this test runs - which is exactly what happened before
+    # this was found in code review.
+    await send_invitations._run(confirm_send=True, user_ids=user_ids)
 
     out = capsys.readouterr().out
     assert "SENT ->" in out
@@ -270,8 +293,12 @@ async def test_confirm_send_uses_real_call_shape_against_fakes(migrated_users, m
         assert message.subject == "You've been invited to AIRIVU CSense"
 
     with psycopg.connect(_raw_dsn(pg_env)) as conn, conn.cursor() as cur:
+        # Scoped the same way as the sibling test above, for the same reason.
         cur.execute(
-            "SELECT outcome FROM audit_events WHERE action = 'user.legacy_invitation_sent'"
+            "SELECT outcome FROM audit_events "
+            "WHERE action = 'user.legacy_invitation_sent' "
+            "AND target_id IN (SELECT id::text FROM memberships WHERE user_id = ANY(%s::uuid[]))",
+            (user_ids,),
         )
         rows = cur.fetchall()
         assert len(rows) == 2
