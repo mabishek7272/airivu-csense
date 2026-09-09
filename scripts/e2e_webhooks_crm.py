@@ -154,9 +154,9 @@ def _run_scenario(
     deliveries_dialog.locator(".dialog-footer").get_by_role("button", name="Close").click()
     page.wait_for_selector("div[role='dialog']", state="detached")
 
-    print(f"\n[7] Cause a real automatic delivery the same way e2e_webhook_dispatch.py "
-          f"does — seed an incident, acknowledge it through the real API — then confirm "
-          f"the delivery history dialog shows it for real after a genuine fresh page load")
+    print("\n[7] Cause a real automatic delivery the same way e2e_webhook_dispatch.py "
+          "does — seed an incident, acknowledge it through the real API — then confirm "
+          "the delivery history dialog shows it for real after a genuine fresh page load")
     site_status, site = api("/api/v1/tenant/sites", {
         "name": "CRM E2E Depot", "code": f"crm-webhook-site-{suffix}", "timezone": "UTC",
     }, token, expect=(201,))
