@@ -14,6 +14,7 @@ the tenant boundary.
 from __future__ import annotations
 
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 import cv2
@@ -24,7 +25,7 @@ from pydantic import BaseModel
 from app.engines import EngineUnavailableError, OutputContractUnknownError
 from app.loader import ArtifactVerificationError, ModelArtifactCache
 from app.pool import ModelPool
-from app.registry import get_deployable_by_name, get_state_by_name, list_deployable
+from app.registry import get_by_version_id, get_deployable_by_name, get_state_by_name, list_deployable
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory, platform_session
 from csense_shared.errors import ApiError, api_error_handler, unhandled_exception_handler
@@ -202,13 +203,7 @@ async def load_model(model_name: str) -> dict:
     }
 
 
-@app.post("/internal/v1/infer", response_model=InferenceResponse, tags=["runtime"])
-async def infer(
-    model_name: str = Form(...),
-    confidence: float = Form(0.25),
-    frame: UploadFile = File(...),
-) -> InferenceResponse:
-    payload = await frame.read()
+def _decode_frame(payload: bytes) -> np.ndarray:
     if not payload:
         raise ApiError(status_code=400, code="empty_frame", message="No frame data received.")
     if len(payload) > MAX_FRAME_BYTES:
@@ -217,7 +212,6 @@ async def infer(
             code="frame_too_large",
             message=f"Frame exceeds the {MAX_FRAME_BYTES // (1024 * 1024)} MB limit.",
         )
-
     image = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ApiError(
@@ -225,10 +219,11 @@ async def infer(
             code="undecodable_frame",
             message="Frame could not be decoded as an image.",
         )
+    return image
 
-    registered = await _resolve_or_raise(model_name)
+
+async def _run_inference(registered, image: np.ndarray, confidence: float) -> InferenceResponse:
     pool: ModelPool = app.state.pool
-
     was_resident = pool.is_resident(registered.artifact_sha256)
     loaded = await _load_in_threadpool(pool, registered)
 
@@ -240,7 +235,7 @@ async def infer(
             status_code=501,
             code="output_contract_unknown",
             message=str(exc),
-            details={"model": model_name, "runtime": registered.runtime},
+            details={"model": registered.model_name, "runtime": registered.runtime},
         ) from exc
     inference_ms = (time.monotonic() - started) * 1000
 
@@ -263,6 +258,48 @@ async def infer(
         model_load_ms=None if was_resident else round(loaded.load_seconds * 1000, 2),
         frame_size=[image.shape[1], image.shape[0]],
     )
+
+
+@app.post("/internal/v1/infer", response_model=InferenceResponse, tags=["runtime"])
+async def infer(
+    model_name: str = Form(...),
+    confidence: float = Form(0.25),
+    frame: UploadFile = File(...),
+) -> InferenceResponse:
+    image = _decode_frame(await frame.read())
+    registered = await _resolve_or_raise(model_name)
+    return await _run_inference(registered, image, confidence)
+
+
+@app.post("/internal/v1/validate-infer", response_model=InferenceResponse, tags=["runtime"])
+async def validate_infer(
+    version_id: uuid.UUID = Form(...),
+    confidence: float = Form(0.25),
+    frame: UploadFile = File(...),
+) -> InferenceResponse:
+    """Runs one frame through an exact model version, addressed by id - not by name, and
+    not restricted to DEPLOYABLE_STATES the way `/internal/v1/infer` is.
+
+    Exists for TRD gate 2-4 (load/shape compatibility, golden dataset functional tests):
+    that evidence has to be producible *before* a version is promoted, but the by-name
+    route above can only ever reach an already-deployable version - a real chicken-and-egg
+    problem for a genuinely new upload. This route is the deliberate, narrowly-scoped way
+    out of it: the caller must already know the exact version_id (from the Admin API's own
+    model-version listing, itself permission-gated), so it grants no broader access than
+    "if you can already see this version exists, you can also test-run it." See
+    VALIDATABLE_STATES in registry.py for exactly which states that still excludes
+    (revoked/deprecated, same as the by-name path never allowed).
+    """
+    image = _decode_frame(await frame.read())
+    async with _registry_session() as session:
+        registered = await get_by_version_id(session, version_id)
+    if registered is None:
+        raise ApiError(
+            status_code=404,
+            code="model_version_not_found",
+            message=f"No loadable version '{version_id}' (may be revoked/deprecated, or not exist).",
+        )
+    return await _run_inference(registered, image, confidence)
 
 
 # --- Helpers --------------------------------------------------------------------------

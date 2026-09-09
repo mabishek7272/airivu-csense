@@ -1,0 +1,48 @@
+{
+  "model_name": "intern-child-adult-detection",
+  "task": "presence, per class: does this frame show at least one Adult / at least one Child",
+  "classes": ["Adult", "Child"],
+  "note": "Ground truth is hand-verified by actually viewing each frame (Claude, 2026-09-09). 7 of 8 images are real frames pulled live from the real onboarded customer's NVR (autotek-dorani-nvr.dyndns.org, channels c1/c2/c3/c4/c5/c7/c8) - not synthetic, not from a public dataset. The 8th (stock_streetscene_3adults.jpg) is a stock photo that was already sitting in this platform's own MinIO evidence bucket, reused across multiple test incidents as a placeholder capture frame - discovered while looking for real evidence to build this set; it is a real photograph of real (consenting, publicly-photographed) adults, just not site-specific footage.\n\n**No real photograph of a real child was used anywhere in this set, or exists anywhere in this repository** - the only ones this project ever had (from an intern's personal test-project bundle) were deleted earlier this session on the owner's own explicit instruction. That means `Child: present=true` has zero real examples here: recall on the Child class cannot be measured from this set and is NOT claimed anywhere in the validation run this manifest feeds. What *can* be measured, and is the more safety-relevant number anyway for a class this sensitive: whether the model ever says 'Child' on a frame that provably has none - i.e. this model's real false-positive rate on the one class that matters most not to false-alarm (or worse, silently mislabel a real adult as a child) on.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "present": { "Adult": true, "Child": false },
+      "note": "3 real adults crossing a street next to a bus, Madrid. All three are unambiguously adults by build, dress, and posture - one (rightmost, in a dark jacket) is partially cropped by the frame edge. Child: false is a confident call, not a default - there is no child anywhere in this frame."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c1, night. Empty - a blank wall/floor with a partial decode artifact (a small grey glitch block, not a person). No one present."
+    },
+    {
+      "file": "autotek_c2_night_blank.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c2, night. Empty blank scene, no one present."
+    },
+    {
+      "file": "autotek_c3_night_blank.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c3, night. Empty blank scene, no one present."
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c4, night IR, interior storage/garage room full of boxes and equipment. No person visible anywhere in frame."
+    },
+    {
+      "file": "autotek_c5_parking_van.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c5, night, exterior parking area with a parked delivery van (GG's Gourmet Foods). No person visible."
+    },
+    {
+      "file": "autotek_c7_loading_dock.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c7, night, exterior loading dock/bin area. No person visible."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "present": { "Adult": false, "Child": false },
+      "note": "Real Autotek channel c8, night IR, interior garage with several cars (some with headlights on). No person visible in any part of the frame."
+    }
+  ]
+}

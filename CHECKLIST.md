@@ -1183,7 +1183,126 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       - so this remains the same accepted, recorded position CLARIFICATIONS.md #15
       already carries, not a new legal fact. `license_metadata` stays the visible record
       if the position is ever revisited.
-
+- [~] **18 models pulled in `uploaded` (2026-09-03/09-05: 15 `uniface-zoo` + 3 Airivu
+      intern-trained) - real validation against a real golden set, not a rubber stamp.**
+      Owner instruction was "validate and ship tha too quick"; this pass is the honest
+      version of that - real per-model evidence, real findings (two real problems found,
+      not promoted), not everything flipped to `production` on request.
+  - [x] **New TRD §15.2 gate 2-4 path added**: `/internal/v1/validate-infer` in
+        `backend/ai_runtime/app/main.py` + `get_by_version_id`/`VALIDATABLE_STATES` in
+        `registry.py`. The existing `run_model_validation.py` path
+        (`/internal/v1/infer`, by model name) only ever reaches `DEPLOYABLE_STATES`
+        (`validated`/`staging`/`production`) - which is exactly backwards for a genuinely
+        new upload: gate 2-4 evidence has to be producible *before* promotion, not only
+        reproducible after it. The new route is addressed by `version_id` (not name) and
+        allows `uploaded`/`validating` too, but still refuses `revoked`/`deprecated` - same
+        boundary the by-name path always enforced, just not artificially blocking a
+        version that has simply never been promoted yet.
+  - [x] **Real golden set built for the 3 intern models**: 8 hand-verified images,
+        `backend/tests/fixtures/golden/intern-{abuse-detection,child-adult-detection,
+        classroom-hazard-detection}/manifest.json` - 7 pulled live from the real onboarded
+        customer's own Autotek NVR (channels c1/c2/c3/c4/c5/c7/c8, 2026-09-09), 1 a stock
+        photo already sitting in this platform's own MinIO evidence bucket as a reused
+        placeholder capture frame (discovered while looking for real evidence - documented
+        rather than silently swapped for something else). **No real photograph of a real
+        child was used or exists anywhere in this repository** - the only ones this project
+        ever had were deleted earlier this session on the owner's own explicit instruction,
+        so `Child`/`Abuse`/hazard-positive recall is `null` (unmeasured) everywhere, never
+        guessed at. Committing real customer-site frames into tracked, pushed git history
+        was itself confirmed with the owner before doing it (2026-09-09).
+  - [x] **`run_intern_model_validation.py` - real runs recorded for all 3, real per-class
+        metrics, via the real Admin API + a real service account, report uploaded to
+        MinIO.** Threshold used: `max_false_positive_rate=0.0` on every class (stricter
+        than `run_model_validation.py`'s general 0.5 default - deliberate: there is zero
+        recall evidence for any of these 3 to weigh a looser tolerance against, and two are
+        alarm classes where a false trigger on provably-calm footage is itself the finding).
+    - [x] **`intern-classroom-hazard-detection`: PASSED** - 0.0 FPR on all 4 classes
+          (`hazardous_object`/`wet_floor`/`fire`/`smoke`) across every unambiguous frame.
+          Promoted `uploaded -> validating -> validated`. **Not pushed further to
+          `staging`/`production` here** - recall is still `null` (no real hazard event was
+          ever tested against it, only its false-positive behaviour on calm footage), and
+          this is a brand-new intern-trained model with undocumented training-data
+          provenance (`review_required: true` in `intern_model_manifest.py`). Going live
+          in a real customer site is a real decision, left for the owner rather than
+          pushed through on a thin, FPR-only pass.
+    - [x] **`intern-child-adult-detection`: FAILED - a real, safety-relevant finding.**
+          `Child` false-positive rate 0.25 (2/8): it tagged one real adult (a person
+          partially cropped at a frame edge in an otherwise-correct 3-adult street photo)
+          *and* an entirely empty room with zero people in it as containing a "Child".
+          `Adult` scored recall 1.0 / FPR 0.0 on what little was tested. Promoted only to
+          `validating` - the Admin API's own gate (`validating -> validated` requires a
+          passing run on record) correctly refuses to let this go further, and it should
+          not be forced past that. **Not promoted, not shipped** - a model this unreliable
+          on its safety-critical class is a real problem, not a formality to route around.
+    - [x] **`intern-abuse-detection`: FAILED - same story.** `Abuse` false-positive rate
+          0.375 (3/8): it fired on three frames with nothing happening at all (two empty
+          rooms, one blank scene). Promoted only to `validating`, not further. Recall was
+          never measurable either way (no real abuse footage exists in this project, and
+          none was staged to manufacture a positive example - see the manifest's own note
+          on why that would be its own bad practice).
+  - [~] **The 15 `uniface-zoo` ONNX models are a materially bigger job - gate 2 (load/
+        shape) done for real, gates 3-4 (accuracy) not yet.** Checked
+        `backend/ai_runtime/app/engines.py`: `OnnxEngine._decode` only understands the
+        end-to-end YOLO 6/7-column layout the plate detector uses. None of these 15 models
+        are YOLO-shaped - **zero decode logic exists anywhere in this codebase for any of
+        them.** A wrong guess at a decode fails silently - exactly the failure class this
+        project has already been bitten by twice (the plate detector's class/score column
+        swap; the child/adult label_map that was backwards in its first draft) - so nothing
+        below was decoded on a guess.
+    - [x] **Real gate-2 evidence for all 15**: loaded every actual artifact via
+          `onnxruntime.InferenceSession` inside the real `ai-runtime` container (fetched
+          from the real `csense-models` MinIO bucket, not a copy) and recorded its true
+          input/output tensor names, shapes and dtypes. All 15 load cleanly - no artifact
+          is corrupt or unopenable. Full recorded shapes in this session's own working
+          notes; the takeaway that matters going forward:
+          - **6 are low-risk to decode**: `adaface`/`edgeface`/`mobileface`/`sphereface`
+            (all a single `(batch, 512)` embedding, two even self-name their output
+            `embedding`) and `facemesh` (`(batch, 468, 3)` + a presence score - MediaPipe's
+            own public, stable 468-point spec) and `modnet` (`(batch, 1, H, W)`, a single
+            alpha matte matching MODNet's own documented single output). Straightforward,
+            well-documented, verifiable against a real face crop without guessing.
+          - **4 need a public-repo cross-check before decoding, not a blind guess**:
+            `fairface` (named `race_output`/`gender_output`/`age_output` - the *column
+            order within each* is the public FairFace repo's own documented convention,
+            not self-describing from the ONNX graph alone), `minifasnet` (3-class
+            real/spoof - order matches the public Silent-Face-Anti-Spoofing repo's own
+            convention), `mobilegaze` (`yaw`/`pitch` each `(1, 90)` - a 90-bin
+            classification-to-angle convention matching the public L2CS-Net/6DRepNet
+            approach, needs a softmax-weighted-expectation decode, not argmax), `pipnet`
+            (`cls_map`/`offset_x`/`offset_y`/`nb_x`/`nb_y` at `98` points × `980` (=98×10)
+            neighbours - the exact signature of the public PIPNet repo's own 98-point
+            scheme). Decodable with real confidence, but only by matching the original
+            public architecture's documented convention and then checking the result
+            against a real face crop - not from the ONNX graph in isolation.
+          - **3 are anchor-based detectors where the anchor-generation math itself must
+            exactly match training config**: `blazeface` (896 anchors × 16, the classic
+            BlazeFace regressor/score split), `centerface` (heatmap + scale + offset +
+            landmarks, CenterNet-style), `retinaface` (`loc`/`conf`/`landmarks`, the
+            classic 5-point-landmark RetinaFace head). Same family of risk already named
+            in this file for `license-plate-detector`'s NMS/anchor handling - a wrong
+            anchor grid produces plausible-looking but silently wrong boxes.
+          - **2 should not be decoded on a guess at all, and are not**: `bisenet-parsing`
+            exports 3 output tensors named `output`/`414`/`424` - the last two are raw
+            ONNX-export node IDs, not semantic names, and nothing in the delivered artifact
+            says which is the real per-pixel class map vs. an auxiliary training-only head.
+            `faceattribnet` exports one `(batch, 5)` `probability` tensor with **no
+            per-column label at all** - 5 of *what*, in *what order*, is not recoverable
+            from the graph. Exactly the `license-plate-ocr` situation already on record in
+            this file ("shipping a guessed mapping would be exactly the failure mode
+            `OutputContractUnknownError` exists to avoid") - needs the original training
+            config or a labelled reference to resolve, not guessed at here.
+    - [x] **New validation-only path added to support this**: `/internal/v1/validate-infer`
+          (`backend/ai_runtime/app/main.py`) + `get_by_version_id`/`VALIDATABLE_STATES`
+          (`registry.py`) - addressed by `version_id`, reaches `uploaded`/`validating`
+          versions the by-name `/internal/v1/infer` route (deployable-states only)
+          structurally cannot, so gate 2-4 evidence is producible *before* promotion. Built
+          and proven working against the 3 intern models above before this probing pass.
+    - [ ] Writing the actual decode logic (the 6 low-risk + 4 cross-check models, 10
+          total) and running real accuracy validation through it is real engineering work,
+          dispatched as background implementation - not yet reviewed or landed as of this
+          checklist entry. The 3 anchor-based detectors and the 2 no-guess models are not
+          included in that dispatch; they need either more careful anchor-math work or
+          information this repository does not currently have.
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
 

@@ -1,0 +1,48 @@
+{
+  "model_name": "intern-abuse-detection",
+  "task": "presence: does this frame show the single trained class, 'Abuse'",
+  "classes": ["Abuse"],
+  "note": "Ground truth is hand-verified by actually viewing each frame (Claude, 2026-09-09). Same 8-image set as intern-child-adult-detection's golden set (7 real Autotek NVR frames + 1 stock photo already reused as an evidence placeholder in this platform's own MinIO - see that manifest's note for full provenance). No real footage of an actual abuse/violence event exists anywhere in this project, and none was fabricated or staged for this - manufacturing a fake positive example for a model like this would be its own bad practice, not a shortcut worth taking for speed. Every image here is a genuine negative (calm street scene, empty rooms, parked vehicles). That means recall for this model is NOT measured or claimed by this manifest - only false-positive rate (does the model ever fire 'Abuse' on ordinary, uneventful footage) is. A recall number needs either a real incident clip or a licensed benchmark with actual violent/abusive content, neither of which exists here; tracked as a known gap in CHECKLIST.md rather than skipped silently.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "present": { "Abuse": false },
+      "note": "3 adults walking near a bus, ordinary street scene. No physical altercation, no abuse."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty scene, no people, nothing happening."
+    },
+    {
+      "file": "autotek_c2_night_blank.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty scene, no people, nothing happening."
+    },
+    {
+      "file": "autotek_c3_night_blank.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty scene, no people, nothing happening."
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty storage room, no people."
+    },
+    {
+      "file": "autotek_c5_parking_van.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty exterior lot with a parked van, no people."
+    },
+    {
+      "file": "autotek_c7_loading_dock.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty loading dock, no people."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "present": { "Abuse": false },
+      "note": "Empty garage interior with parked cars, no people."
+    }
+  ]
+}

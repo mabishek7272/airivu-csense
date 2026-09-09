@@ -19,6 +19,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Mirrors DEPLOYABLE_STATES in admin_api/app/api/models.py.
 DEPLOYABLE_STATES = ("validated", "staging", "production")
 
+# States a pre-promotion validation run is allowed to load. Excludes only `revoked` and
+# `deprecated` - the two states registry.py's own module docstring says must never become
+# loadable again. `uploaded`/`validating` are deliberately included even though they are
+# NOT in DEPLOYABLE_STATES: TRD gate 2-4 (load/shape compatibility, golden dataset
+# functional tests) exists specifically to produce real evidence *before* a version is
+# promoted, so a path that only worked on already-deployable versions could never validate
+# a genuinely new model - it could only re-validate one already in production. This is
+# used solely by get_by_version_id below (the validation-harness lookup, addressed by an
+# exact version_id an operator/script already obtained from the Admin API) - the by-name
+# lookups above stay deployable-only, unchanged, so ordinary inference traffic never gains
+# access to an unvalidated artifact.
+VALIDATABLE_STATES = ("uploaded", "validating", "validated", "staging", "production")
+
 
 @dataclass(frozen=True)
 class RegisteredModel:
@@ -94,6 +107,17 @@ async def get_deployable_by_name(session: AsyncSession, model_name: str) -> Regi
             "ORDER BY mv.created_at DESC LIMIT 1"
         ),
         {"name": model_name, "states": list(DEPLOYABLE_STATES)},
+    )
+    row = result.first()
+    return _row_to_model(row) if row else None
+
+
+async def get_by_version_id(session: AsyncSession, version_id: uuid.UUID) -> RegisteredModel | None:
+    """Exact version, for the validation harness - not filtered to DEPLOYABLE_STATES (see
+    VALIDATABLE_STATES above), but still refuses a revoked/deprecated artifact."""
+    result = await session.execute(
+        text(f"{_SELECT} WHERE mv.id = :version_id AND mv.state = ANY(:states)"),
+        {"version_id": version_id, "states": list(VALIDATABLE_STATES)},
     )
     row = result.first()
     return _row_to_model(row) if row else None

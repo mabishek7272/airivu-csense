@@ -1,0 +1,48 @@
+{
+  "model_name": "intern-classroom-hazard-detection",
+  "task": "presence, per class: hazardous_object / wet_floor / fire / smoke",
+  "classes": ["hazardous_object", "wet_floor", "fire", "smoke"],
+  "note": "Ground truth is hand-verified by actually viewing each frame (Claude, 2026-09-09). Same 8-image set as the other two intern models' golden sets (see intern-child-adult-detection/manifest.json for full provenance). None of these frames are an actual classroom, and none show a real fire/smoke/wet-floor/hazardous-object event - fire and smoke are confidently absent in every image (nothing on fire, no smoke haze anywhere), so those two classes are measured across the full set as false-positive-rate only (no positive examples exist for them either). hazardous_object and wet_floor are genuinely ambiguous on two of these frames, and rather than force a guess, this manifest marks the ground truth for that specific class on that specific image `null` (excluded from that class's metric, not counted as either a true or false result) - see the per-image notes below for exactly why. Recall is not measured or claimed for ANY of the 4 classes: there is no real positive example of a genuine classroom hazard in this project. That is a known, named gap (CHECKLIST.md), not something this manifest papers over.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Ordinary dry street scene, no fire/smoke/spill/hazardous object of any kind."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Empty blank scene, nothing present at all."
+    },
+    {
+      "file": "autotek_c2_night_blank.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Empty blank scene, nothing present at all."
+    },
+    {
+      "file": "autotek_c3_night_blank.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Empty blank scene, nothing present at all."
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "present": { "hazardous_object": null, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Cluttered interior storage/garage room - boxes, tools, plastic sheeting piled up. This model's real intended domain is a classroom, and whether general storage clutter counts as this model's trained notion of 'hazardous_object' is genuinely ambiguous from the image alone (excluded: null, not guessed as either true or false). Floor itself is dry (wet_floor: false is confident); nothing burning (fire/smoke: false, confident)."
+    },
+    {
+      "file": "autotek_c5_parking_van.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Dry exterior lot, parked van, no hazard of any kind."
+    },
+    {
+      "file": "autotek_c7_loading_dock.jpg",
+      "present": { "hazardous_object": false, "wet_floor": null, "fire": false, "smoke": false },
+      "note": "Exterior concrete loading area with dark stains/streaks on the ground - could be old grime, oil, or actual standing water; not confidently distinguishable at this resolution, and it is outdoor concrete rather than this model's real intended indoor 'wet floor' scenario either way (excluded: null). No hazardous object, fire, or smoke present."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "present": { "hazardous_object": false, "wet_floor": false, "fire": false, "smoke": false },
+      "note": "Interior garage, several cars, dry floor, nothing on fire, no hazardous object flagged - a repair-shop environment with cars up on a lift is its own kind of workplace risk context, but nothing in frame matches this model's 4 trained classes."
+    }
+  ]
+}
