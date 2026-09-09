@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiFetch, clearAccessToken, refreshAccessToken, setAccessToken } from "../api/client";
 
 interface AuthState {
@@ -24,7 +24,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [tenantId, setTenantId] = useState<string | null>(null);
 
+  // React.StrictMode (main.tsx) double-invokes effects in development to surface
+  // exactly this kind of non-idempotent effect: without this guard, mount fires the
+  // silent refresh twice with the same refresh-token cookie, and the second call reuses
+  // an already-rotated token. This guard is good hygiene independent of that dev-mode
+  // symptom too — it avoids a genuinely wasted duplicate network call on every real page
+  // load in production. It does NOT fix two separate real browser tabs racing the same
+  // refresh concurrently; that's a real backend concern, handled by a grace window in
+  // `rotate_session` (backend/shared/csense_shared/security/sessions.py).
+  const hasStartedSilentRefresh = useRef(false);
+
   useEffect(() => {
+    if (hasStartedSilentRefresh.current) return;
+    hasStartedSilentRefresh.current = true;
+
     // On load, attempt a silent refresh using the httpOnly cookie — this is what
     // survives a page reload, since the access token itself is memory-only.
     (async () => {

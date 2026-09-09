@@ -1986,30 +1986,59 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             dialog shows it after a genuine fresh page load, rotates the secret and
             confirms the new one differs from the first, deletes the endpoint and
             confirms it's gone. Full PASS.
-      - [~] **A pre-existing bug, unrelated to webhooks, found only because this script
-            does a real full page load**: `AuthProvider`'s silent-refresh effect
-            (`frontend/customer-crm/src/auth/AuthContext.tsx`) calls
-            `POST /api/v1/auth/refresh` on every mount, and `main.tsx` wraps the app in
-            `React.StrictMode`, which double-invokes that effect in dev builds - firing
-            two concurrent refresh calls presenting the *same* refresh-token cookie.
-            `rotate_session` (`backend/shared/csense_shared/security/sessions.py`) has no
-            tolerance for a token being presented twice: the first call rotates it, the
-            second sees a mismatch, treats it as replay, and deletes the whole session -
-            reproduced 3/3 times against the dev server (`npm run dev`, used here only
-            because the customer-crm Docker image couldn't be rebuilt in this sandbox -
-            no network path to pull `node:20-slim`/`nginx-unprivileged` base layers).
-            Production builds strip `StrictMode`'s double-invoke, so this exact trigger
-            likely doesn't fire in the deployed container - but the underlying
-            zero-tolerance rotation would equally break two browser tabs open on the same
-            account refreshing near-simultaneously, which is a real scenario independent
-            of dev mode. Not fixed here: it lives in shared session code and `main.tsx`,
-            neither owned by this task, and fixing it deserves its own look (a short reuse
-            grace window keyed on the *previous* token hash, the standard fix for this
-            exact class of race, is the likely direction). The e2e script works around it
-            by using a fresh login instead of a reload for its one page-load check
-            (`scripts/e2e_webhooks_crm.py`, step 7) rather than silently depending on the
-            fragile path. Named here explicitly rather than fixed silently, since another
-            review of this exact area was flagged as out of scope for this task.
+      - [x] **The pre-existing refresh-rotation-race bug named above is now fixed**,
+            addressed as its own follow-up task since the prior note explicitly flagged
+            this exact area as out of scope for the webhooks work. Two things changed:
+            - **Real fix, in `rotate_session`
+              (`backend/shared/csense_shared/security/sessions.py`)**: a short (10s) grace
+              window on the *immediately-previous* token hash, the standard
+              "refresh-token-reuse-detection-interval" shape (as Auth0 and other
+              real-world rotation systems describe it). When a presented token doesn't
+              match the current stored hash but does match the hash that was current
+              immediately before the last rotation, and that rotation happened within the
+              grace window, the caller gets back the SAME current token the winning
+              caller already established (via a Redis key with its own short, independent
+              TTL - `_grace_key`), rather than being treated as a replay - so two
+              concurrent legitimate callers (two tabs, a slow-network retry) converge on
+              one valid session instead of one of them nuking it for both. Anything
+              matching neither hash (forged, or a genuine replay once the grace window
+              has closed) still deletes the whole session exactly as before - this path
+              is deliberately unweakened. The compare/check-grace/rotate-or-reject
+              decision runs as one atomic Redis `EVAL` (Lua script), not separate
+              `HGETALL`/`HSET` round trips, because real concurrent callers (verified with
+              `asyncio.gather`, not just sequential calls that happen to race in
+              practice) can otherwise both observe the same pre-rotation state and both
+              believe themselves the legitimate rotator. Full tradeoff (why 10s, what it
+              does and doesn't weaken, TTL-renewal and logging decisions) documented in
+              the module's own docstring.
+            - **Frontend hygiene, in `AuthContext.tsx`**: the silent-refresh effect is now
+              guarded by a `useRef` boolean so React.StrictMode's dev-only double-invoke
+              can't fire it twice - the standard minimal fix for a non-idempotent effect,
+              and a genuine win in production too (one fewer wasted duplicate network
+              call on every real page load), not just a workaround for the dev symptom.
+              This does **not** address two real separate browser tabs racing a refresh -
+              that's a distinct, real backend concern, and the grace window above is what
+              actually covers it.
+            - **Verified for real**: `backend/tests/test_sessions.py` (new) against a real
+              Redis - a genuinely stale/forged token (including one two rotations old,
+              i.e. past its own grace window) still rejects and still destroys the
+              session; a real `asyncio.gather` of two (and, separately, five) concurrent
+              `rotate_session` calls presenting the same current token all succeed,
+              converge on one identical currently-valid token, and leave the session
+              intact; a real 1.5s wait (not a mocked clock) past a monkeypatched 1s grace
+              window still correctly rejects the replay. Full backend suite: 549 passed,
+              only the pre-existing unrelated `test_site_timezones.py` failure. `ruff
+              check backend scripts` clean on everything this task touched (pre-existing,
+              unrelated `F541` findings remain in `scripts/e2e_webhooks_crm.py`, out of
+              scope here). Frontend `typecheck`/`lint`/`build` all clean. Beyond the
+              Redis-backed unit tests, also rebuilt and restarted the real `tenant-api`/
+              `admin-api` containers against the live Docker stack and fired two truly
+              concurrent `curl` refresh calls at `POST /api/v1/auth/refresh` presenting
+              the same real cookie from a real registered tenant: both returned 200 with
+              the identical rotated refresh-token cookie, a follow-up refresh with it
+              still succeeded, and replaying the original (by-then two-rotations-stale)
+              token correctly got a 401 - the real end-to-end version of the race, not
+              just the isolated module test.
       - [ ] The Developer Console (`frontend/developer-console/src/pages/`) still has no
             webhook-management page - not addressed here, and arguably not a real gap:
             webhook endpoints are a tenant's own integration config, not something AIRIVU
