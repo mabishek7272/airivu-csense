@@ -1,0 +1,26 @@
+{
+  "model_name": "uniface-mobilegaze-estimation",
+  "task": "Per real detected face, MobileGaze's continuous yaw/pitch estimate (degrees), graded on plausibility - not exact accuracy, since no ground-truth gaze angle is recoverable from a static street photo without eye-tracking equipment. A prediction passes when it falls inside a generous, explicitly-stated physiological envelope (|yaw|<=60deg, |pitch|<=60deg - a face turned or tilted further than that would not read as a roughly-forward-facing photograph in the first place, which both of these are) rather than being pinned to a specific expected angle.",
+  "classes": ["plausible"],
+  "tolerance": {
+    "max_abs_yaw_deg": 60,
+    "max_abs_pitch_deg": 60,
+    "note": "Deliberately loose - this is a sanity bound against a physically-absurd output (e.g. the model returning a profile-view angle for a clearly frontal face), not a claim of measured accuracy."
+  },
+  "note": "Only one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg. Both subjects wear sunglasses (opaque, occluding the eyes) - gaze estimation models are typically trained on visible-eye imagery, so this is a harder case than clean input and is named here rather than hidden.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark jacket/red top, walking toward camera-left, head roughly level, gaze direction not independently verifiable beyond 'facing generally forward/down while walking'."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, tan coat, walking toward camera-left, head roughly level, gaze direction not independently verifiable beyond 'facing generally forward/down while walking'."
+        }
+      ]
+    }
+  ]
+}

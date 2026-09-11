@@ -967,6 +967,573 @@ class UnifaceMattingEngine:
         return cv2.resize(matte, (orig_w, orig_h), interpolation=cv2.INTER_AREA)
 
 
+
+# --- uniface-zoo: FairFace / MiniFASNet / MobileGaze / PIPNet ----------------------
+#
+# Four of the 15 uniface-zoo models whose output layout needed a public-repo cross-check
+# before decoding (CHECKLIST.md's own "4 need a public-repo cross-check" entry) - the
+# other 11 either fit an existing decode path, are anchor-based detectors needing separate
+# anchor-math work, or (bisenet-parsing/faceattribnet) are deliberately not decoded at all
+# because their output semantics are not recoverable from the ONNX graph. Every decode
+# below is grounded in this project's own real upstream source for the specific artifact
+# (`backend/migrations/uniface_model_manifest.py`'s own `legacy_paths`), cross-checked
+# against the original upstream repo that source itself re-implements, not guessed from
+# the ONNX graph alone - see CHECKLIST.md for the full citation trail and what could and
+# could not be empirically verified against a real face crop.
+#
+# All four need a real face crop as input. Rather than building a new face cropper, they
+# take a full frame plus a `Detection` produced by the paired, already-`production`
+# face_detection model (`insightface-buffalo-l-detect`, via `InsightFaceEngine` above) -
+# the same two-stage-pipeline shape `InsightFaceEngine.embed()` already established for
+# the plate detector/OCR and face detection/recognition pairs. Like `InsightFaceEngine`'s
+# `embed()`, these are decode-only: nothing here persists, matches, or exposes output
+# through any API on its own, and loading via these engines does not change deployability
+# - `get_deployable_by_name()`/`VALIDATABLE_STATES` in `registry.py` are the only gates
+# that matter for that.
+
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    """Numerically-stable softmax over the last axis - every decode below that turns raw
+    logits into class probabilities uses this, never a bare `exp(x) / sum(exp(x))`."""
+    shifted = x - np.max(x, axis=-1, keepdims=True)
+    exps = np.exp(shifted)
+    return exps / np.sum(exps, axis=-1, keepdims=True)
+
+
+def _crop_scrfd_aligned_chip(image: np.ndarray, detection: Detection, size: int) -> np.ndarray:
+    """A `size`x`size` face chip, aligned by 5-point landmarks via this platform's own
+    production ArcFace-style alignment (`insightface.utils.face_align.norm_crop`) - the
+    same primitive `InsightFaceEngine.embed()` already uses for the same purpose. `size`
+    must be a multiple of 112 or 128 (`norm_crop`'s own assertion) - 224 qualifies.
+
+    FairFace's own reference implementation (`dchen236/FairFace`'s `predict.py`) instead
+    uses `dlib.get_face_chips` - its own 5-point similarity-transform alignment against
+    dlib's own reference template, `padding=0.25`, a 300px chip resized to 224. dlib is
+    not part of this stack, and the two alignment templates are not identical, so this is
+    a good-faith approximation using the best alignment primitive already in production
+    here - not a pixel-exact reproduction of FairFace's own training-time preprocessing.
+    Flagged here rather than silently assumed equivalent.
+    """
+    if detection.keypoints is None:
+        raise OutputContractUnknownError(
+            "Face alignment needs a Detection with 5-point keypoints from a paired "
+            "face_detection model (e.g. insightface-buffalo-l-detect)."
+        )
+    from insightface.utils import face_align
+
+    height, width = image.shape[:2]
+    landmarks = np.array(
+        [(kx * width, ky * height) for kx, ky, _ in detection.keypoints], dtype=np.float32
+    )
+    return face_align.norm_crop(image, landmark=landmarks, image_size=size)
+
+
+def _crop_raw_bbox(image: np.ndarray, detection: Detection) -> np.ndarray:
+    """The raw detector bbox, pixel-cropped with no margin - MobileGaze's own real
+    upstream source (`yakhyo/gaze-estimation`'s `onnx_inference.py`) crops with
+    `frame[y_min:y_max, x_min:x_max]` directly, confirmed against its real source rather
+    than assumed."""
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = detection.bbox
+    px1, py1 = max(0, int(x1 * width)), max(0, int(y1 * height))
+    px2, py2 = min(width, int(x2 * width)), min(height, int(y2 * height))
+    if px2 <= px1 or py2 <= py1:
+        raise OutputContractUnknownError("Detection bbox collapses to an empty crop.")
+    return image[py1:py2, px1:px2]
+
+
+def _crop_scaled_bbox(image: np.ndarray, detection: Detection, scale: float) -> np.ndarray:
+    """A `scale`x expansion of the detector bbox around its own centre, clamped to the
+    frame - MiniFASNetV2's own real upstream source (`yakhyo/face-anti-spoofing`'s
+    `utils.crop_face`) geometry, replicated exactly: new_w/new_h = box_w/box_h * scale
+    (itself clamped so the crop never exceeds the frame), centred on the original box's
+    own centre. `scale=2.7` is that repo's own documented constant for the config named
+    "v2" specifically - matched against `uniface_model_manifest.py`'s own local_name for
+    this artifact (`minifasnet_v2_MiniFASNetV2.onnx`)."""
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = detection.bbox
+    px1, py1, px2, py2 = x1 * width, y1 * height, x2 * width, y2 * height
+    box_w, box_h = px2 - px1, py2 - py1
+    if box_w <= 0 or box_h <= 0:
+        raise OutputContractUnknownError("Detection bbox collapses to an empty crop.")
+    effective_scale = min((height - 1) / box_h, (width - 1) / box_w, scale)
+    new_w, new_h = box_w * effective_scale, box_h * effective_scale
+    center_x, center_y = px1 + box_w / 2, py1 + box_h / 2
+    cx1 = max(0, int(center_x - new_w / 2))
+    cy1 = max(0, int(center_y - new_h / 2))
+    cx2 = min(width - 1, int(center_x + new_w / 2))
+    cy2 = min(height - 1, int(center_y + new_h / 2))
+    if cx2 <= cx1 or cy2 <= cy1:
+        raise OutputContractUnknownError("Scaled crop collapses to an empty region.")
+    return image[cy1 : cy2 + 1, cx1 : cx2 + 1]
+
+
+def _crop_pipnet_box(image: np.ndarray, detection: Detection) -> tuple[np.ndarray, int, int]:
+    """The asymmetric 1.2x detector-box expansion PIPNet's own reference uses - both the
+    original `jhb86253817/PIPNet` (`lib/demo.py`, `det_box_scale=1.2`, "remove a part of
+    top area for alignment, see paper for details") and this project's real upstream
+    artifact source per `uniface_model_manifest.py` (`yakhyo/pipnet-onnx`, whose own numpy
+    port uses the identical `pad = 0.1` formula) apply: +/-10% on left/right/bottom, but
+    the *top* edge moves down (shrinks in) by 10% rather than up. Returns the crop plus
+    its own top-left pixel offset, so the caller can translate normalised landmark
+    coordinates back into full-frame coordinates."""
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = detection.bbox
+    px1, py1, px2, py2 = x1 * width, y1 * height, x2 * width, y2 * height
+    box_w, box_h = px2 - px1, py2 - py1
+    pad_w, pad_h = box_w * 0.1, box_h * 0.1
+    cx1 = max(0, int(px1 - pad_w))
+    cy1 = max(0, int(py1 + pad_h))
+    cx2 = min(width, int(px2 + pad_w))
+    cy2 = min(height, int(py2 + pad_h))
+    if cx2 <= cx1 or cy2 <= cy1:
+        raise OutputContractUnknownError("PIPNet crop collapses to an empty region.")
+    return image[cy1:cy2, cx1:cx2], cx1, cy1
+
+
+def _onnx_session(artifact_path: Path):
+    import onnxruntime as ort
+
+    providers = ["CPUExecutionProvider"]
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        providers.insert(0, "CUDAExecutionProvider")
+    session = ort.InferenceSession(str(artifact_path), providers=providers)
+    return session, providers
+
+
+# --- FairFace (race/gender/age attributes) -------------------------------------------
+
+FAIRFACE_RACE_LABELS = (
+    "White", "Black", "Latino_Hispanic", "East Asian", "Southeast Asian", "Indian",
+    "Middle Eastern",
+)
+FAIRFACE_GENDER_LABELS = ("Male", "Female")
+FAIRFACE_AGE_LABELS = (
+    "0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+",
+)
+
+
+@dataclass(frozen=True)
+class FaceAttributes:
+    race: str
+    race_confidence: float
+    race_scores: dict[str, float]
+    gender: str
+    gender_confidence: float
+    gender_scores: dict[str, float]
+    age_bucket: str
+    age_confidence: float
+    age_scores: dict[str, float]
+
+
+class FairFaceEngine:
+    """FairFace race/gender/age attribute model (`uniface-fairface-attributes`).
+
+    Output tensor NAMES (`race_output`/`gender_output`/`age_output`) are self-describing
+    from the ONNX graph; the per-column LABEL ORDER within each is not - it is the public
+    FairFace repo's own documented convention. Cross-checked against two independent real
+    sources before writing this decode: the original `github.com/dchen236/FairFace`
+    `predict.py` (`race_outputs = outputs[:7]`, `gender_outputs = outputs[7:9]`,
+    `age_outputs = outputs[9:18]`, each mapped through its own hardcoded label list in the
+    order above) and this project's own real upstream artifact source per
+    `uniface_model_manifest.py` (`github.com/yakhyo/fairface-onnx`), whose
+    `models/predictor.py` defines the identical three label lists in the identical order,
+    independently. FairFace is CC BY 4.0 - attribution required wherever this output is
+    surfaced to a user (`uniface_model_manifest.py`'s own `_CC_BY` metadata), not just in
+    source code; that obligation belongs to whatever UI ever renders this, not to this
+    decode-only engine.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            detail=f"providers={','.join(self._providers)} input={self._input.name}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "FairFace produces race/gender/age attribute scores, not detections - call "
+            "predict_attributes() with a Detection from a paired face_detection model "
+            "instead."
+        )
+
+    def predict_attributes(self, image: np.ndarray, detection: Detection) -> FaceAttributes:
+        import cv2
+
+        chip = _crop_scrfd_aligned_chip(image, detection, size=224)
+        rgb = cv2.cvtColor(chip, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        normalized = (rgb - mean) / std
+        tensor = np.expand_dims(normalized.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        race_out, gender_out, age_out = self._session.run(
+            ["race_output", "gender_output", "age_output"], {self._input.name: tensor}
+        )
+        race_probs = _softmax(race_out[0])
+        gender_probs = _softmax(gender_out[0])
+        age_probs = _softmax(age_out[0])
+
+        race_idx, gender_idx, age_idx = (
+            int(np.argmax(race_probs)), int(np.argmax(gender_probs)), int(np.argmax(age_probs)),
+        )
+        return FaceAttributes(
+            race=FAIRFACE_RACE_LABELS[race_idx],
+            race_confidence=float(race_probs[race_idx]),
+            race_scores=dict(zip(FAIRFACE_RACE_LABELS, (float(v) for v in race_probs), strict=True)),
+            gender=FAIRFACE_GENDER_LABELS[gender_idx],
+            gender_confidence=float(gender_probs[gender_idx]),
+            gender_scores=dict(
+                zip(FAIRFACE_GENDER_LABELS, (float(v) for v in gender_probs), strict=True)
+            ),
+            age_bucket=FAIRFACE_AGE_LABELS[age_idx],
+            age_confidence=float(age_probs[age_idx]),
+            age_scores=dict(zip(FAIRFACE_AGE_LABELS, (float(v) for v in age_probs), strict=True)),
+        )
+
+
+# --- MiniFASNet (anti-spoofing / liveness) --------------------------------------------
+
+@dataclass(frozen=True)
+class LivenessResult:
+    is_real: bool
+    label: str
+    confidence: float
+    scores: tuple[float, float, float]
+
+
+class MiniFasNetEngine:
+    """MiniFASNetV2 anti-spoofing/liveness model (`uniface-minifasnet-antispoofing`).
+
+    3-class output; index 1 = real/live, indices 0 and 2 = two different spoof-attack
+    types (print/replay) collapsed to "fake" here since this platform only needs the
+    real/spoof decision, not the attack type. Convention confirmed against two
+    independent real sources: the original `github.com/minivision-ai/
+    Silent-Face-Anti-Spoofing` `test.py` (`label = np.argmax(prediction)`, `if label == 1:
+    ... "is Real Face"`, else "is Fake Face") and this project's own real upstream
+    artifact source per `uniface_model_manifest.py` (`github.com/yakhyo/
+    face-anti-spoofing`), whose `main.py` has the identical `"Real" if label_idx == 1 else
+    "Fake"` convention, independently. Softmax applied here to match both sources' own
+    `predict()`/`main.py` (`F.softmax(result)` / `torch.softmax(output, dim=1)`) -
+    confirmed those apply it before argmax, not after.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            detail=f"providers={','.join(self._providers)} input={self._input.name}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "MiniFASNet produces a 3-class liveness score, not detections - call "
+            "predict_liveness() with a Detection from a paired face_detection model "
+            "instead."
+        )
+
+    def predict_liveness(self, image: np.ndarray, detection: Detection) -> LivenessResult:
+        import cv2
+
+        crop = _crop_scaled_bbox(image, detection, scale=2.7)
+        resized = cv2.resize(crop, (80, 80)).astype(np.float32) / 255.0
+        tensor = np.expand_dims(resized.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        raw = self._session.run(None, {self._input.name: tensor})[0][0]
+        probs = _softmax(raw)
+        label_idx = int(np.argmax(probs))
+        return LivenessResult(
+            is_real=label_idx == 1,
+            label="real" if label_idx == 1 else "fake",
+            confidence=float(probs[label_idx]),
+            scores=(float(probs[0]), float(probs[1]), float(probs[2])),
+        )
+
+
+# --- MobileGaze (yaw/pitch gaze estimation) -------------------------------------------
+
+_GAZE_BINS = 90
+_GAZE_BIN_WIDTH_DEG = 4.0
+_GAZE_ANGLE_OFFSET_DEG = 180.0
+
+
+@dataclass(frozen=True)
+class GazeEstimate:
+    yaw_deg: float
+    pitch_deg: float
+
+
+class MobileGazeEngine:
+    """MobileGaze (ResNet-18) gaze estimation model (`uniface-mobilegaze-estimation`).
+
+    90-bin classification-to-angle scheme (the L2CS-Net family): softmax over each of the
+    90 bins, then a weighted-expectation (NOT argmax) over bin index, scaled to degrees.
+    Formula and constants (90 bins, 4-degree bin width, -180 degree offset) confirmed
+    against this project's own real upstream artifact source per
+    `uniface_model_manifest.py` (`github.com/yakhyo/gaze-estimation`, built on L2CS-Net):
+    `yaw = np.sum(yaw_probs * idx_tensor, axis=1) * self._binwidth - self._angle_offset`
+    with `_bins=90`, `_binwidth=4`, `_angle_offset=180` - independently cross-checked
+    against the original `github.com/Ahmednull/L2CS-Net` `test.py`/`train.py`, which use
+    the identical `* 4 - 180` formula for their own 90-bin Gaze360 configuration.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        self._bin_index = np.arange(_GAZE_BINS, dtype=np.float32)
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            detail=f"providers={','.join(self._providers)} input={self._input.name}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "MobileGaze produces a continuous yaw/pitch estimate, not detections - call "
+            "estimate_gaze() with a Detection from a paired face_detection model instead."
+        )
+
+    def estimate_gaze(self, image: np.ndarray, detection: Detection) -> GazeEstimate:
+        import cv2
+
+        crop = _crop_raw_bbox(image, detection)
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, (448, 448)).astype(np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        normalized = (resized - mean) / std
+        tensor = np.expand_dims(normalized.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        yaw_raw, pitch_raw = self._session.run(["yaw", "pitch"], {self._input.name: tensor})
+        yaw_probs = _softmax(yaw_raw[0])
+        pitch_probs = _softmax(pitch_raw[0])
+        yaw_deg = float(
+            np.sum(yaw_probs * self._bin_index) * _GAZE_BIN_WIDTH_DEG - _GAZE_ANGLE_OFFSET_DEG
+        )
+        pitch_deg = float(
+            np.sum(pitch_probs * self._bin_index) * _GAZE_BIN_WIDTH_DEG - _GAZE_ANGLE_OFFSET_DEG
+        )
+        return GazeEstimate(yaw_deg=yaw_deg, pitch_deg=pitch_deg)
+
+
+# --- PIPNet (98-point facial landmarks) ------------------------------------------------
+
+# WFLW 98-point mean face (98 x,y pairs, normalised 0..1 within a face-only crop) - the
+# reference geometry the original PIPNet repo's own `get_meanface()` needs to build its
+# neighbour-voting table. Copied verbatim from `github.com/jhb86253817/PIPNet`'s own
+# `data/WFLW/meanface.txt`; this project's real PIPNet artifact source
+# (`github.com/yakhyo/pipnet-onnx`, per `uniface_model_manifest.py`) loads the identical
+# file (`get_meanface_info()`) rather than deriving its own.
+_WFLW98_MEANFACE = (
+    0.07960419395480703, 0.3921576875344978, 0.08315055593117261, 0.43509551571809146, 0.08675705281580391, 0.47810288286566444, 0.09141892980469117, 0.5210356946467262,
+    0.09839925903528965, 0.5637522280060038, 0.10871037524559955, 0.6060410614977951, 0.12314562992759207, 0.6475338700558225, 0.14242389255404694, 0.6877152027028081,
+    0.16706295456951875, 0.7259564546408682, 0.19693946055282413, 0.761730578566735, 0.23131827931527224, 0.7948205670466106, 0.2691730934906831, 0.825332081636482,
+    0.3099415030959131, 0.853325959406618, 0.3535202097901413, 0.8782538906229107, 0.40089023799272033, 0.8984102434399625, 0.4529251732310723, 0.9112191359814178,
+    0.5078640056794708, 0.9146712690731943, 0.5616519666079889, 0.9094327772020283, 0.6119216923689698, 0.8950540037623425, 0.6574617882337107, 0.8738084866764846,
+    0.6994820494908942, 0.8482660530943744, 0.7388135339780575, 0.8198750461527688, 0.775158750479601, 0.788989141243473, 0.8078785221990765, 0.7555462713420953,
+    0.8361052138935441, 0.7195542055115057, 0.8592123871172533, 0.6812759034843933, 0.8771159986952748, 0.6412243940605555, 0.8902481006481506, 0.5999743595282084,
+    0.8992952868651163, 0.5580032282594118, 0.9050110573289222, 0.5156548913779377, 0.908338439928252, 0.4731336721500472, 0.9104896075281127, 0.4305382486815422,
+    0.9124796341441906, 0.38798192678294363, 0.18465941635742913, 0.35063191749632183, 0.24110421889338157, 0.31190394310826886, 0.3003235400132397, 0.30828189837331976,
+    0.3603094923651325, 0.3135606490643205, 0.4171060234289877, 0.32433417646045615, 0.416842139562573, 0.3526729965541497, 0.36011177591813404, 0.3439660526998693,
+    0.3000863121140166, 0.33890077494044946, 0.24116055928407834, 0.34065620413845005, 0.5709736930161899, 0.321407825750195, 0.6305694459247149, 0.30972642336729495,
+    0.6895161625920927, 0.3036453838462943, 0.7488591859761683, 0.3069143844433495, 0.8030471337135181, 0.3435156012309415, 0.7485083446528741, 0.3348759588212388,
+    0.6893025057931884, 0.33403402013776456, 0.6304822892126991, 0.34038458762875695, 0.5710009285609654, 0.34988479902594455, 0.4954171902473609, 0.40202330022004634,
+    0.49604903449415433, 0.4592869389138444, 0.49644391662771625, 0.5162862508677217, 0.4981161256057368, 0.5703284628419502, 0.40749001573145566, 0.5983629921847019,
+    0.4537396729649631, 0.6057169923583451, 0.5007345777827058, 0.6116695615531077, 0.5448481727980428, 0.6044131443745976, 0.5882140504891681, 0.5961738788380111,
+    0.24303324896316683, 0.40721003719912746, 0.27771706732644313, 0.3907171413930685, 0.31847706697401107, 0.38417234007271117, 0.3621792860449715, 0.3900847721320633,
+    0.3965299162804086, 0.41071434661355205, 0.3586805562211872, 0.4203724421417311, 0.31847860588240934, 0.4237674602252073, 0.2789458001651631, 0.41942757306509065,
+    0.5938514626567266, 0.4090628827047304, 0.6303565516542536, 0.3864501652756091, 0.6774844732813035, 0.3809319896905685, 0.7150854850525555, 0.3875173254527522,
+    0.747519807465081, 0.4025187328459307, 0.7155172856447009, 0.4145958479293519, 0.680051949453018, 0.420041513473271, 0.6359056750107122, 0.41803782782566573,
+    0.33916483987223056, 0.6968581311227738, 0.40008790639758807, 0.6758101185779204, 0.47181947887764153, 0.6678850445191217, 0.5025394453374782, 0.6682917934792593,
+    0.5337748367911458, 0.6671949030019636, 0.6015915330083903, 0.6742535357237751, 0.6587068892667173, 0.6932163943648724, 0.6192795131720007, 0.7283129162844936,
+    0.5665923267827963, 0.7550248076404299, 0.5031303335863617, 0.7648348885181623, 0.4371030429958871, 0.7572539606688756, 0.3814909500115824, 0.7320595346122074,
+    0.35129809553480984, 0.6986839074746692, 0.4247987356100664, 0.69127609583798, 0.5027677238758598, 0.6911145821740593, 0.576997542122097, 0.6896269708051024,
+    0.6471352843446794, 0.6948977432227927, 0.5799932528781817, 0.7185288017567538, 0.5024914756021335, 0.7285408331555782, 0.4218115644247556, 0.7209126133193829,
+    0.3219750495122499, 0.40376441481225156, 0.6751136343101699, 0.40023415216110797,
+)
+
+_PIPNET_NUM_NB = 10
+_PIPNET_GRID = 8
+_PIPNET_INPUT_SIZE = 256
+_PIPNET_NUM_LANDMARKS = 98
+
+
+def _pipnet_reverse_index(num_nb: int = _PIPNET_NUM_NB) -> tuple[np.ndarray, np.ndarray, int]:
+    """Faithful reimplementation of the original PIPNet repo's own
+    `lib/functions.py::get_meanface` (also independently confirmed present, in numpy form,
+    in this project's real artifact source `yakhyo/pipnet-onnx`'s own `get_meanface_info`)
+    - for each of the 98 landmarks, which OTHER landmarks' neighbour-offset heads vote for
+    its position (a landmark predicts its own `num_nb` nearest neighbours in the mean
+    face; this inverts that mapping so each landmark knows who predicts *it*).
+
+    The original pads every landmark's vote list to a common `max_len` by cyclically
+    repeating its own real votes ("trick, make them have equal length" - a GPU-batching
+    convenience for a fixed-shape gather, not a semantic re-weighting) so every landmark's
+    final average is computed over the same number of terms. Replicated exactly here
+    (rather than simplified to a plain variable-length average) for fidelity to the
+    reference decode - mathematically identical to a plain average of the real votes
+    whenever `max_len` is a whole multiple of a landmark's own real vote count, and a
+    disclosed, bounded approximation of it otherwise (the same trade the original authors
+    made). Computed once per engine instance from the fixed mean-face geometry above, never
+    per inference.
+    """
+    meanface = np.array(_WFLW98_MEANFACE, dtype=np.float64).reshape(-1, 2)
+    n = meanface.shape[0]
+
+    own_neighbors = []
+    for i in range(n):
+        dists = np.sum((meanface[i] - meanface) ** 2, axis=1)
+        order = np.argsort(dists)
+        own_neighbors.append(order[1 : 1 + num_nb])
+
+    reversed_i: dict[int, list[int]] = {i: [] for i in range(n)}
+    reversed_j: dict[int, list[int]] = {i: [] for i in range(n)}
+    for i in range(n):
+        for j in range(num_nb):
+            target = int(own_neighbors[i][j])
+            reversed_i[target].append(i)
+            reversed_j[target].append(j)
+
+    max_len = max(len(reversed_i[i]) for i in range(n))
+
+    reverse_index1: list[int] = []
+    reverse_index2: list[int] = []
+    for i in range(n):
+        votes_i, votes_j = reversed_i[i], reversed_j[i]
+        if not votes_i:
+            # Empirically, no landmark in this exact WFLW-98 mean face lacks a real voter
+            # - guarded anyway rather than divide by zero on an unexpected geometry.
+            reverse_index1.extend([i] * max_len)
+            reverse_index2.extend([0] * max_len)
+            continue
+        repeats = max_len // len(votes_i) + 1
+        reverse_index1.extend((votes_i * repeats)[:max_len])
+        reverse_index2.extend((votes_j * repeats)[:max_len])
+
+    return (
+        np.array(reverse_index1, dtype=np.int64),
+        np.array(reverse_index2, dtype=np.int64),
+        max_len,
+    )
+
+
+@dataclass(frozen=True)
+class LandmarkResult:
+    # (x_norm, y_norm, confidence) x 98, normalised to the FULL FRAME - the same
+    # convention `Detection.bbox`/`keypoints` use elsewhere in this file.
+    points: tuple[tuple[float, float, float], ...]
+
+
+class PipNetEngine:
+    """PIPNet (ResNet-18, WFLW 98-point) facial landmark model (`uniface-pipnet-landmark`).
+
+    Decode - heatmap peak + sub-cell offset + neighbour-vote averaging - follows the
+    original `github.com/jhb86253817/PIPNet` reference (`lib/functions.py::forward_pip`
+    for the peak/offset step, `lib/demo.py`'s own merge step, `lib/data_utils.py::
+    get_meanface` for the neighbour-vote table), independently cross-checked against this
+    project's own real upstream artifact source per `uniface_model_manifest.py`
+    (`github.com/yakhyo/pipnet-onnx`), whose own numpy port implements the identical
+    argmax-peak / offset-gather / reverse-index-merge algorithm end to end.
+
+    One assumption not confirmed from either source: `cls_map` is treated as raw logits
+    and passed through a sigmoid purely to report a 0..1 confidence per point. Peak
+    *location* (argmax) is invariant to that choice either way, so this only affects the
+    reported confidence number, not landmark position - flagged rather than presented as
+    a confirmed fact.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        self._reverse_index1, self._reverse_index2, self._max_len = _pipnet_reverse_index()
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            detail=f"providers={','.join(self._providers)} input={self._input.name}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "PIPNet produces 98 landmark points, not detections - call "
+            "predict_landmarks() with a Detection from a paired face_detection model "
+            "instead."
+        )
+
+    def predict_landmarks(self, image: np.ndarray, detection: Detection) -> LandmarkResult:
+        import cv2
+
+        crop, offset_x, offset_y = _crop_pipnet_box(image, detection)
+        crop_h, crop_w = crop.shape[:2]
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, (_PIPNET_INPUT_SIZE, _PIPNET_INPUT_SIZE))
+        resized = resized.astype(np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        normalized = (resized - mean) / std
+        tensor = np.expand_dims(normalized.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        cls_map, off_x_map, off_y_map, nb_x_map, nb_y_map = self._session.run(
+            ["cls_map", "offset_x", "offset_y", "nb_x", "nb_y"], {self._input.name: tensor}
+        )
+        n, grid = _PIPNET_NUM_LANDMARKS, _PIPNET_GRID
+        cls_flat = cls_map[0].reshape(n, grid * grid)
+        off_x_flat = off_x_map[0].reshape(n, grid * grid)
+        off_y_flat = off_y_map[0].reshape(n, grid * grid)
+        nb_x_flat = nb_x_map[0].reshape(n, _PIPNET_NUM_NB, grid * grid)
+        nb_y_flat = nb_y_map[0].reshape(n, _PIPNET_NUM_NB, grid * grid)
+
+        lm_range = np.arange(n)
+        max_ids = np.argmax(cls_flat, axis=1)
+        peak_scores = 1.0 / (1.0 + np.exp(-cls_flat[lm_range, max_ids]))  # sigmoid, reporting only
+        cols = (max_ids % grid).astype(np.float64)
+        rows = (max_ids // grid).astype(np.float64)
+        own_off_x = off_x_flat[lm_range, max_ids]
+        own_off_y = off_y_flat[lm_range, max_ids]
+        direct_x = (cols + own_off_x) / grid
+        direct_y = (rows + own_off_y) / grid
+
+        nb_range = np.arange(_PIPNET_NUM_NB)
+        nb_own_x = nb_x_flat[lm_range[:, None], nb_range[None, :], max_ids[:, None]]
+        nb_own_y = nb_y_flat[lm_range[:, None], nb_range[None, :], max_ids[:, None]]
+        # (98, num_nb) - vote FROM landmark i for the position of its j-th nearest
+        # mean-face neighbour, at landmark i's own peak grid cell (the "regression
+        # module" idea: a landmark's own feature also predicts where nearby landmarks are).
+        nb_pred_x = (cols[:, None] + nb_own_x) / grid
+        nb_pred_y = (rows[:, None] + nb_own_y) / grid
+
+        gather = self._reverse_index1 * _PIPNET_NUM_NB + self._reverse_index2
+        votes_x = nb_pred_x.reshape(-1)[gather].reshape(n, self._max_len)
+        votes_y = nb_pred_y.reshape(-1)[gather].reshape(n, self._max_len)
+
+        merged_x = np.mean(np.concatenate([direct_x[:, None], votes_x], axis=1), axis=1)
+        merged_y = np.mean(np.concatenate([direct_y[:, None], votes_y], axis=1), axis=1)
+
+        full_h, full_w = image.shape[:2]
+        points = tuple(
+            (
+                float(np.clip((offset_x + merged_x[i] * crop_w) / full_w, 0.0, 1.0)),
+                float(np.clip((offset_y + merged_y[i] * crop_h) / full_h, 0.0, 1.0)),
+                float(peak_scores[i]),
+            )
+            for i in range(n)
+        )
+        return LandmarkResult(points=points)
+
+
+
 # --- TFLite (.tflite) ---------------------------------------------------------------
 
 class TfliteEngine:
@@ -1068,6 +1635,20 @@ ENGINES_BY_RUNTIME: dict[str, type] = {
 # revocable-independently rows in the registry - ever reach this class.
 _INSIGHTFACE_MODEL_NAMES = ("insightface-buffalo-l-detect", "insightface-buffalo-l-recognition")
 
+# The 4 uniface-zoo models that needed a public-repo cross-check before decoding
+# (fairface/minifasnet/mobilegaze/pipnet - see CHECKLIST.md's "4 need a public-repo
+# cross-check" entry). Dispatched by model_name for the same reason as everything else in
+# this function: task_code alone is ambiguous or shared for at least some of these
+# (`face_attribute` is shared with `uniface-faceattribnet-attributes`, deliberately not
+# decoded; `face_landmark` is shared with `uniface-facemesh-landmark`, a different model
+# with a different output shape, decoded separately above).
+_UNIFACE_ENGINES_BY_MODEL_NAME: dict[str, type] = {
+    "uniface-fairface-attributes": FairFaceEngine,
+    "uniface-minifasnet-antispoofing": MiniFasNetEngine,
+    "uniface-mobilegaze-estimation": MobileGazeEngine,
+    "uniface-pipnet-landmark": PipNetEngine,
+}
+
 
 def build_engine(
     runtime: str,
@@ -1084,6 +1665,9 @@ def build_engine(
         return UnifaceFaceMeshEngine(artifact_path, label_map)
     if model_name == "uniface-modnet-matting":
         return UnifaceMattingEngine(artifact_path, label_map)
+    uniface_engine_cls = _UNIFACE_ENGINES_BY_MODEL_NAME.get(model_name)
+    if uniface_engine_cls is not None:
+        return uniface_engine_cls(artifact_path, label_map)
     engine_cls = ENGINES_BY_RUNTIME.get(runtime)
     if engine_cls is None:
         raise EngineUnavailableError(f"No engine registered for runtime '{runtime}'")

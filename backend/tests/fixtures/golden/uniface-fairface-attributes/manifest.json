@@ -1,0 +1,25 @@
+{
+  "model_name": "uniface-fairface-attributes",
+  "task": "Per real detected face (via the paired production face_detection model, insightface-buffalo-l-detect / SCRFD), FairFace's own predicted gender and age_bucket, graded against what a human can confidently assert from direct visual inspection alone: gender and 'this is not a child' - not exact age or ethnicity.",
+  "classes": ["gender_correct", "age_not_child"],
+  "note": "Only one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg (already used by the intern-child-adult-detection manifest). Every other frame under backend/tests/fixtures/golden/ (the 7 real Autotek NVR night/interior frames, the 9 license-plate-detector vehicle photos) was checked directly and has no face at a resolution a face detector could use - checked by running the real SCRFD face_detection model against each, not assumed. This is a genuinely thin evidence base (2 faces, 1 photo) - reported honestly rather than padded with synthetic or unrelated faces.\n\nEthnicity/race is NOT graded here and never will be from this evidence: nobody photographed in a public street scene has a knowable, ground-truth self-identified race from visual inspection alone, and asserting one would be exactly the kind of invented precision this project's own intern-child-adult-detection manifest already declined to do for age/ethnicity. FairFace's race_output is recorded in full in every validation run (for visibility, and because FairFace is CC BY 4.0 - its output must carry attribution wherever shown) but never scored pass/fail. Age is graded only at the coarse 'not a child' level (age_bucket not in {0-2, 3-9, 10-19}), the same defensible-only-at-that-granularity judgement call as intern-child-adult-detection.\n\nFaces are matched to ground truth by nearest detected face-centre to each entry's own expected_center_px, computed once against the real SCRFD detector at confidence 0.4 (det_thresh) - not by assuming a fixed model output order.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "gender": "Male",
+          "age_not_child": true,
+          "note": "Younger man, dark jacket over a red top, dark square sunglasses fully occluding the eyes, short dark hair. Unambiguously adult male by build, dress, posture and (visible) facial hair shadow."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "gender": "Male",
+          "age_not_child": true,
+          "note": "Bearded man, tan/cream shearling-style coat, round amber-tinted sunglasses. Unambiguously adult male by build, full beard, dress and posture."
+        }
+      ]
+    }
+  ]
+}

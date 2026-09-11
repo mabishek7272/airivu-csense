@@ -41,7 +41,7 @@ sanity), honestly short of gate 4 (real accuracy against labelled positives) for
 face-shaped models - the same `recall: null` discipline `run_intern_model_validation.py`
 already established for a genuine ground-truth gap, not a new invention.
 
-    python scripts/run_uniface_model_validation.py
+    python scripts/run_uniface_model_validation_lowrisk.py
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOLDEN_ROOT = os.path.join(REPO, "backend", "tests", "fixtures", "golden")
 
 SUITE_VERSION = "uniface-local-decode-v1"
-RUNNER_VERSION = "run_uniface_model_validation.py/1"
+RUNNER_VERSION = "run_uniface_model_validation_lowrisk.py/1"
 
 ADMIN_API = "http://localhost:8080"
 SERVICE_EMAIL = "validation-runner@platform.internal"
@@ -259,7 +259,7 @@ def record_and_promote(model_name: str, version_id: str, status: str, metrics: d
                     "/internal/v1/validate-infer-uniface exists in code but needs a "
                     "container rebuild/restart to actually be reachable, which was "
                     "off-limits during a live client demo on this stack. See "
-                    "run_uniface_model_validation.py's own module docstring."
+                    "run_uniface_model_validation_lowrisk.py's own module docstring."
                 ),
             },
             "thresholds": {"gate": "2-3: load/shape/qualitative-sanity, not gate-4 accuracy"},

@@ -1241,7 +1241,12 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           none was staged to manufacture a positive example - see the manifest's own note
           on why that would be its own bad practice).
   - [~] **The 15 `uniface-zoo` ONNX models are a materially bigger job - gate 2 (load/
-        shape) done for real, gates 3-4 (accuracy) not yet.** Checked
+        shape) done for real for all 15; gates 3-4 (accuracy) now done for real for 10 of
+        them, 2026-09-11: the 6 low-risk models (all passed real testing) and the 4
+        cross-check models (3 passed - 1 promoted to `validated`, 2 blocked at
+        `validating` by the biometric-acknowledgement gate; 1 failed and correctly not
+        promoted further). The 3 anchor-based detectors and 2 no-guess models remain
+        untouched below.** Checked
         `backend/ai_runtime/app/engines.py`: `OnnxEngine._decode` only understands the
         end-to-end YOLO 6/7-column layout the plate detector uses. None of these 15 models
         are YOLO-shaped - **zero decode logic exists anywhere in this codebase for any of
@@ -1359,7 +1364,7 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             `/app/app/engines.py`) and imported it directly against real MinIO-fetched
             artifacts and a real image, using the container's own already-installed
             onnxruntime/insightface/opencv - `scripts/_uniface_validate_in_container.py`
-            is what runs inside the container; `scripts/run_uniface_model_validation.py`
+            is what runs inside the container; `scripts/run_uniface_model_validation_lowrisk.py`
             drives it and records the result. This is real, gate-2/3 evidence (real
             artifacts, real ported preprocessing code, real image) - honestly short of
             being the actual deployed HTTP path, which remains a named next step once the
@@ -1405,7 +1410,7 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             street scene, honestly *not* MODNet's own tuned portrait use case, and not
             scored against a pixel-level ground truth none exists for).
       - [x] **Real `model_validation_runs` rows recorded via the real Admin API** for all
-            6 (`scripts/run_uniface_model_validation.py`, same service account/Admin API
+            6 (`scripts/run_uniface_model_validation_lowrisk.py`, same service account/Admin API
             flow as `run_intern_model_validation.py`) - all 6 status=`passed` on the honest
             gate-2/3 basis above, `metrics.method_note` on every row stating plainly that
             this ran via the docker-cp/local-import fallback, not the (not-yet-deployed)
@@ -1436,6 +1441,181 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             discipline as the existing `test_ai_runtime_decoder.py`. Full existing suite
             (`test_insightface_engine.py`, `test_ai_runtime_decoder.py`) still green
             alongside them (44 passed total); `ruff check` clean on every touched file.
+    - [~] **The 4 cross-check models (`fairface`/`minifasnet`/`mobilegaze`/`pipnet`)
+          decoded and validated for real, 2026-09-11, in an isolated worktree** (the 6
+          low-risk models were dispatched to a separate worktree/agent and are not this
+          entry's scope). Every decode is grounded in this project's own real upstream
+          artifact source per `backend/migrations/uniface_model_manifest.py`'s own
+          `legacy_paths` (not the ONNX graph alone, and not the generic public repo
+          guessed at random) - each cross-checked against **two independent real
+          sources** (the artifact's actual upstream repo, plus the original repo that
+          upstream itself re-implements) before any code was written:
+        - **`uniface-fairface-attributes`**: column order for `race_output`(7)/
+          `gender_output`(2)/`age_output`(9) confirmed against `github.com/dchen236/
+          FairFace`'s own `predict.py` (`race_outputs = outputs[:7]` etc, its own
+          hardcoded label lists) *and* this artifact's real source, `github.com/yakhyo/
+          fairface-onnx` (`legacy_paths` in the manifest), whose `models/predictor.py`
+          defines the identical three label lists in the identical order independently.
+          Preprocessing (224x224, RGB, ImageNet mean/std) confirmed from the same
+          `predict.py`. Face crop: aligned via this platform's own already-production
+          ArcFace-style 5-point alignment (`insightface.utils.face_align.norm_crop`, the
+          same primitive `InsightFaceEngine.embed()` already uses) rather than FairFace's
+          own `dlib.get_face_chips` (dlib is not part of this stack) - a disclosed,
+          good-faith approximation, not a claimed pixel-exact match, documented in
+          `_crop_scrfd_aligned_chip`'s own docstring.
+        - **`uniface-minifasnet-antispoofing`**: index 1 = real/live confirmed against
+          `github.com/minivision-ai/Silent-Face-Anti-Spoofing`'s own `test.py`
+          (`label = np.argmax(prediction); if label == 1: ... "Real Face"`) *and* this
+          artifact's real source, `github.com/yakhyo/face-anti-spoofing` (`minifasnet_v2_
+          MiniFASNetV2.onnx` per the manifest), whose `main.py` has the identical
+          `"Real" if label_idx == 1 else "Fake"`. Crop geometry (scale=2.7, symmetric
+          box-centred expansion) replicated exactly from that same repo's own
+          `utils.crop_face` - `2.7` is its own documented constant for the "v2" variant,
+          matched against the artifact's own `local_name`.
+        - **`uniface-mobilegaze-estimation`**: 90-bin softmax-weighted-expectation
+          (`yaw = sum(softmax(logits) * bin_index) * 4 - 180`) confirmed against this
+          artifact's real source, `github.com/yakhyo/gaze-estimation` (built on L2CS-Net,
+          `resnet18_gaze.onnx` per the manifest) *and* independently against the original
+          `github.com/Ahmednull/L2CS-Net`'s own `test.py`/`train.py`, which use the
+          identical `* 4 - 180` formula for their own 90-bin Gaze360 config. Crop: raw
+          detector bbox, no margin - confirmed from the same `yakhyo/gaze-estimation`
+          source (`frame[y_min:y_max, x_min:x_max]` directly, no padding).
+        - **`uniface-pipnet-landmark`**: heatmap-peak + offset + neighbour-vote-average
+          decode replicated from the original `github.com/jhb86253817/PIPNet`
+          (`lib/functions.py::forward_pip`, `lib/demo.py`'s merge step, `lib/
+          data_utils.py::get_meanface` for the reverse-index neighbour table - the WFLW
+          98-point `meanface.txt` copied verbatim into `engines.py` as `_WFLW98_MEANFACE`)
+          *and* independently confirmed against this artifact's real source, `github.com/
+          yakhyo/pipnet-onnx` (`pipnet_r18_wflw_98.onnx` per the manifest), whose own
+          numpy port implements the identical argmax-peak/offset-gather/reverse-index-
+          merge algorithm and the identical asymmetric 1.2x crop (`pad=0.1`,
+          shrink-top/expand-others - "remove a part of top area for alignment" per the
+          original paper). One disclosed, non-source-confirmed assumption: `cls_map` is
+          passed through a sigmoid purely to report a 0..1 confidence per point: peak
+          *location* (argmax) is invariant to that choice, so only the reported
+          confidence number - never landmark position - depends on it.
+        - **Correctness fix beyond just adding a decode**: `build_engine()` now dispatches
+          these 4 by exact `model_name` (a new, small `pool.py` change threads
+          `registered.model_name` through), not by `task_code` - `task_code` alone is
+          ambiguous (`face_attribute` is shared with the deliberately-not-decoded
+          `faceattribnet`; `face_landmark` is shared with the separately-decoded
+          `facemesh`). **Confirmed live and empirically, not assumed**: calling the real,
+          still-running `/internal/v1/validate-infer` against `uniface-fairface-
+          attributes` *before* this fix returns `detection_count: 0` with **no error at
+          all** - the old `OnnxEngine._decode` misreads `race_output`'s `(1, 7)` shape as
+          a 7-column end2end YOLO box row purely by coincidence (7 classes = 7 columns)
+          and silently produces zero boxes instead of erroring. A live example of exactly
+          the silent-wrong-decode failure class this project has already been bitten by
+          twice (the plate detector's class/score swap; the backwards child/adult label
+          map) - closed by routing these 4 away from `OnnxEngine` entirely; each new
+          engine's own `infer()` now raises `OutputContractUnknownError` loudly instead,
+          pointing at its real dedicated method (`predict_attributes`/`predict_liveness`/
+          `estimate_gaze`/`predict_landmarks`), the same "dedicated method, not shoehorned
+          into `Detection`" shape `InsightFaceEngine.embed()` already established. Three
+          of the four need a real face crop: rather than a new cropper, they take a full
+          frame plus a `Detection` from the paired, already-`production` face_detection
+          model (`insightface-buffalo-l-detect`/SCRFD), the same two-stage-pipeline shape
+          the plate detector/OCR and face detection/recognition pairs already use.
+        - **Could not be validated through the live running API - and correctly stopped
+          short of the container restart that would fix that, per this session's own
+          explicit constraint** (a real client demo was running on this exact `ai-
+          runtime` container). The new decode code lives only in the worktree, not the
+          running image. Instead, validated by importing `engines.py` directly (by file
+          path - the module is self-contained, stdlib + numpy only at import time) into a
+          separate local Python 3.12 venv (this dev machine's own system Python was 3.9.6
+          via Xcode's toolchain and too old for current `onnxruntime`/`insightface`
+          wheels), with `onnxruntime`/`opencv-python-headless`/`insightface`/`minio`
+          installed fresh from PyPI - genuinely exercising the real, final decode code
+          against the real artifact bytes (fetched from the real `csense-models` MinIO
+          bucket over its published `localhost:9000` port, sha256-verified against the
+          registry's own `artifact_sha256` before use) and a real face crop from the
+          real, already-`production` SCRFD detector - not a reimplementation, not a
+          separate test double. `scripts/run_uniface_model_validation_crosscheck.py` documents this
+          in full, including exactly how it differs from `run_intern_model_validation.py`
+          (which calls the live HTTP API by design) and how to re-run it end-to-end
+          through the real service once `ai-runtime` is next rebuilt.
+        - **Real golden evidence, and its honest limit**: exactly one real, usable source
+          image exists anywhere in this repo's committed fixtures with clearly visible
+          human faces - `stock_streetscene_3adults.jpg` (already used by
+          `intern-child-adult-detection`), 2 real adult male faces (a third person is
+          cropped at the frame edge and wasn't detected by SCRFD). Checked directly, not
+          assumed: every other committed golden frame (7 Autotek NVR night/interior
+          frames, 9 license-plate-detector vehicle photos) has no face at a resolution a
+          face detector could use. New manifests at `backend/tests/fixtures/golden/
+          uniface-{fairface-attributes,minifasnet-antispoofing,mobilegaze-estimation,
+          pipnet-landmark}/manifest.json` match faces to ground truth by nearest detected
+          face-centre (not assumed output order), and are honest about what is and is not
+          gradable from 2 faces in 1 photo:
+          - **`uniface-fairface-attributes`: PASSED, 4/4** - gender correct on both faces
+            (Male/Male, confidence 0.73/1.00) and age_bucket both landed in the adult
+            range (`30-39`, not a child bucket). Race is recorded in every result
+            (`Middle Eastern` top-1 on both, `White` a distant second on both) but
+            **never scored** - nobody photographed in a public street scene has a
+            knowable ground-truth self-identified race from visual inspection, and
+            grading it would be exactly the invented-precision `intern-child-adult-
+            detection`'s own manifest already declined to do for age/ethnicity. FairFace
+            is CC BY 4.0 - attribution is required wherever its output is ever surfaced
+            to a user (recorded in `uniface_model_manifest.py`'s own `_CC_BY` metadata);
+            that obligation belongs to whatever UI eventually renders this, not to this
+            decode-only engine. Promoted `uploaded -> validating`; blocked at
+            `validating -> validated` by the real `biometric_promotion_requires_
+            acknowledgement` gate (422, confirmed live) - correctly not overridden,
+            `acknowledge_biometric` is the owner's call per this task's own instruction.
+          - **`uniface-minifasnet-antispoofing`: FAILED, 0/2 - a real finding, not a bug
+            in the harness.** Both real photographed faces were classified `fake` at
+            99.3-99.4% confidence. Verified this is not a crop-geometry bug before
+            reporting it as a model finding: re-ran both faces at `scale` values from 1.0
+            (tight box) to 4.0 and with the raw unscaled detector bbox - **identical
+            "fake" result to 3 decimal places at every scale**, so the decode logic
+            itself is not the variable. The most likely real cause, named rather than
+            hidden: both subjects wear opaque sunglasses (a materially harder case for a
+            model that leans on eye-region texture/reflections) and both faces are small
+            in the source photo (native ~35-40px wide, upscaled to the model's 80x80
+            input, losing exactly the fine texture detail anti-spoofing relies on).
+            **Spoof-class recall remains entirely unmeasured** - this project has no real
+            print/replay-attack photograph and none was staged to manufacture one (same
+            reasoning `intern-abuse-detection`'s manifest already recorded for not
+            staging a fake positive); what this run actually measures is real-class
+            recall, and on the 2 real faces available it is 0/2. Promoted only to
+            `validating`, same as the two FAILED intern models - **not promoted further,
+            not shipped**, this is `access_classification=standard` (see note below) so
+            the biometric gate would not have blocked it, but a 0/2 real-class recall
+            earns exactly the same "not promoted" outcome the FPR-driven intern failures
+            got, on its own real merits.
+          - **`uniface-mobilegaze-estimation`: PASSED, 2/2** on a deliberately coarse
+            plausibility check (`|yaw|<=60deg`, `|pitch|<=60deg` - a bound against a
+            physically-absurd angle, not a claim of measured accuracy; no ground-truth
+            gaze angle is recoverable from a static photo without eye-tracking
+            equipment). Measured: yaw 3.9deg/-15.4deg, pitch -28.1deg/-9.7deg - well
+            inside the envelope and directionally sane for two pedestrians walking
+            forward. Promoted all the way to `validated` (`access_classification=
+            standard` per the real manifest/DB - see note below - so no biometric gate
+            applied).
+          - **`uniface-pipnet-landmark`: PASSED, 2/2** on plausibility (all 98 points'
+            bounding box falls within the paired detector's own bbox, expanded by a
+            stated 20% tolerance - not point-by-point, since no hand-labelled 98-point
+            reference exists in this repo and fabricating one would be its own guess
+            dressed up as ground truth). Measured agreement was tight even without the
+            tolerance: face 0's landmark bbox `[270.8,436.7,306.8,471.6]` px against the
+            detector's own `[271.0,420.0,307.2,472.0]` px - the top edge sits inset by
+            ~16px, matching PIPNet's own deliberate forehead-exclusion crop convention
+            almost exactly, not a loose miss. A meaningful test of the neighbour-vote
+            decode specifically, not just peak-finding: both subjects' eyes are covered
+            by sunglasses, so the eye-region points had to come from neighbour votes, not
+            a directly visible feature. Promoted `uploaded -> validating`; blocked at
+            `validating -> validated` by the same real biometric gate as fairface.
+        - **Correction to this task's own stated premise, caught by checking the live DB
+          rather than taking it on faith**: only `fairface` and `pipnet` are actually
+          `access_classification=biometric` in this registry - `minifasnet` and
+          `mobilegaze` are `standard` (confirmed both in `model_versions` directly and in
+          `uniface_model_manifest.py`'s own `LegacyModel(...)` calls, which simply omit
+          `access_classification` for those two, unlike every other entry in the file).
+          `mobilegaze` reaching `validated` above is that real classification working as
+          designed, not an oversight.
+        - Not touched here: the 6 low-risk models (dispatched separately) and the 3
+          anchor-based detectors / 2 no-guess models (still correctly excluded, per the
+          reasoning already on record above).
+
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
 

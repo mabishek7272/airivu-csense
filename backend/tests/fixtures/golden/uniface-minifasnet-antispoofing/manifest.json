@@ -1,0 +1,23 @@
+{
+  "model_name": "uniface-minifasnet-antispoofing",
+  "task": "Per real detected face, MiniFASNetV2's real/fake liveness decision, graded against the one ground truth this evidence base can actually assert: every face here is a real photograph of a real, live, physically-present human being (not a printed photo, not a screen replay, not a mask) - so is_real=true for every face in this set. This is a real-class recall check, not a spoof-class check.",
+  "classes": ["is_real_correct"],
+  "note": "**Spoof-class recall is unmeasured and cannot be honestly claimed here.** This project has no real print-attack or replay-attack photograph, and per the same instruction that shaped intern-abuse-detection's own manifest (don't stage a fake positive to manufacture ground truth that doesn't exist), none was fabricated by, say, photographing a screen or a printout - that would itself be a fake 'real' spoof example, not a real one, and would silently misrepresent what was actually tested. So this manifest tests exactly one thing: does the model correctly recognise a real photographed human as real. It does not and cannot test whether it correctly flags an actual spoof.\n\nOnly one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg, same one used by uniface-fairface-attributes and the intern-child-adult-detection manifests. Both faces in it are small (native ~35-40px wide before any crop/resize) and both subjects are wearing opaque sunglasses that fully occlude the eyes - a materially harder case for an anti-spoofing model than a clean, high-resolution, unoccluded frontal face, and worth naming as a possible real driver of whatever this run measures, not just 'the model is broken'.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "is_real": true,
+          "note": "Younger man, dark jacket/red top, dark square sunglasses - a real photograph of a real person."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "is_real": true,
+          "note": "Bearded man, tan coat, round amber sunglasses - a real photograph of a real person."
+        }
+      ]
+    }
+  ]
+}

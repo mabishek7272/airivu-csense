@@ -1,0 +1,25 @@
+{
+  "model_name": "uniface-pipnet-landmark",
+  "task": "Per real detected face, PIPNet's 98 landmark points, graded on plausibility: the bounding box of all 98 predicted points must fall within the paired face_detection model's own detection box, expanded by a stated tolerance margin - not checked point-by-point against hand-labelled ground truth, since this repo has no hand-labelled 98-point annotation tool or reference and fabricating one would itself be a guess dressed up as ground truth.",
+  "classes": ["landmark_bbox_plausible"],
+  "tolerance": {
+    "margin_fraction": 0.2,
+    "note": "Landmark bbox must lie within [detector_bbox expanded by 20% on every side]. PIPNet's own reference crop (see engines.py's _crop_pipnet_box) deliberately shrinks the top edge in by 10% to exclude forehead per the original paper, so the landmark y-range is expected to sit slightly inside the detector's own bbox at the top, not to match it exactly - the 20% margin covers that and normal jaw/cheek variance."
+  },
+  "note": "Only one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg. Both subjects wear sunglasses, which covers the eye-region landmarks (points 60-97 in the WFLW 98-point scheme) - the model still has to predict a plausible position for them (via the neighbour-vote mechanism, not the direct offset head alone, since the eyes themselves aren't visible under the lenses), which is itself a meaningful real-world test of the neighbour-averaging decode, not just the peak-finding step.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark jacket/red top, dark square sunglasses."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, tan coat, round amber sunglasses."
+        }
+      ]
+    }
+  ]
+}
