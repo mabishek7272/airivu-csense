@@ -53,8 +53,22 @@ cd infra/secrets
 openssl genrsa -out jwt_private.pem 2048
 openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
 openssl rand -base64 32 > master_v1.key   # envelope-encryption master key
-chmod 600 jwt_private.pem master_v1.key
+chmod 644 jwt_private.pem master_v1.key
 ```
+
+**Not `chmod 600`, confirmed the hard way (2026-09-11, real production deploy to
+103.118.158.92):** Compose's file-based `secrets:` (non-Swarm) bind-mounts each file into
+the container preserving the *host* file's own uid/gid/mode exactly - it does not
+normalize to Swarm's `root:root 0444` behavior. Every backend service runs as its own
+unprivileged `csense` user (Dockerfile `adduser --system`), a different uid than whatever
+host user generated these files, so `600` (owner-only) makes the file unreadable inside
+the container - `admin-api`'s first real login attempt failed with a real
+`PermissionError` reading `/run/secrets/jwt_private.pem`, not a hypothetical concern.
+`644` is the fix: these files live under `infra/secrets/`, never inside a served web root
+or a world-readable directory on a shared host, so the real exposure `600` was guarding
+against (another local OS user on the same box reading the key) is already closed by
+normal directory permissions - `644` only changes who can read the *file itself* once
+they can already reach that directory.
 
 Generate strong random passwords for `POSTGRES_PASSWORD`, `POSTGRES_API_PASSWORD`,
 `POSTGRES_PLATFORM_API_PASSWORD`, `REDIS_PASSWORD`, `MINIO_ROOT_PASSWORD` — e.g.

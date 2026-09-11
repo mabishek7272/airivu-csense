@@ -2952,9 +2952,95 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
 
 ## Phase 9 — Production Candidate and Wave Rollout
 
-- [!] **[NEEDS HUMAN/EXTERNAL INPUT]** entirely dependent on a real cloud/production
-      environment, DNS, TLS certificates, and business go/no-go — not applicable to a
-      local-only build until a target environment is chosen
+- [~] **2026-09-11: real production deploy to `103.118.158.92` (domain `3rdi.in`),
+      genuinely done and verified - not just "the containers are running."**
+  - [x] **Found the target server already ran a different, abandoned CSense deployment**
+        (`csense-ai-engine`/`csense-frame-ingestor`/`csense-stream-mgr`/`csense-tenant-crm`
+        - none of these service names match this codebase's actual architecture; 2 of its
+        containers were already `unhealthy`). Confirmed with the owner before touching
+        anything (not assumed) that it was safe to replace. **Backed up its data volumes
+        in full before deleting anything** (`pgdata`/`redisdata`/`miniodata`/`mongodata` -
+        the last one alone 17GB - tarred to `/home/ubuntu/old-csense-deployment-backup-
+        2026-09-11/` on the server, `gzip -t` integrity-verified on all 4 before the
+        originals were removed), per the owner's own explicit call to back up rather than
+        delete outright.
+  - [x] **The server is shared, not dedicated** - ~20 unrelated real client domains
+        already running behind a system nginx (certbot-managed certs) that owns host
+        ports 80/443. `docker-compose.prod.yml`'s own Traefik wants those same ports and
+        its own Let's Encrypt HTTP-01 challenge - would have taken every other site on the
+        box down. Built a real, documented, reusable second deployment path for exactly
+        this shape (`infra/docker-compose.prod.behind-proxy.yml` +
+        `infra/traefik/dynamic.prod.behind-proxy.yml` - see
+        `docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md` B.5's own new section). Found and fixed a
+        real bug in the override before trusting it: Compose's list-merge *appends* to a
+        base service's `ports`/`command`/`volumes` rather than replacing them - a first
+        attempt left `0.0.0.0:80`/`:443` bound alongside the new internal-only
+        `127.0.0.1:18080`, exactly the collision this whole path exists to avoid; fixed
+        with the `!override` YAML tag on each of the three keys, confirmed against the
+        real merged `docker compose config` output, not assumed.
+  - [x] **A real secret-handling incident happened and was disclosed immediately, not
+        buried**: an early, unredacted `docker compose config` dry-run (testing the
+        override above) printed this *local dev* `.env`'s fully-resolved secrets into a
+        tool-output transcript - a real Resend API key, WhatsApp gateway key/instance
+        token, Cloudflare R2 credentials, and a GitHub PAT. Flagged to the owner
+        immediately with a rotation recommendation for every value shown; owner took
+        ownership of rotating them. Every `docker compose config` call after this point
+        was piped through a Python/YAML filter that only ever prints the one service
+        section actually being checked, never the full resolved output.
+  - [x] **TLS**: no certbot needed - `3rdi.in`'s DNS is proxied through Cloudflare, which
+        already terminates HTTPS at the edge (confirmed empirically: `curl https://app.
+        3rdi.in` connects and gets a real response with no cert error, while the origin
+        nginx has no `:443` listener for that host at all - Cloudflare is in "Flexible" or
+        equivalent mode, edge HTTPS to a plain-HTTP origin). Origin `.env`/secrets are
+        still freshly generated per B.2, never copied from dev.
+  - [x] **Real bug found and fixed via an actual failed login, not by inspection**: the
+        deployment guide's own documented `chmod 600` on `jwt_private.pem`/`master_v1.key`
+        made them unreadable by the container's own unprivileged `csense` user (Compose's
+        non-Swarm `secrets:` bind-mounts preserve the *host* file's uid/gid/mode exactly,
+        not Swarm's `root:root 0444` normalization) - the first real admin login attempt
+        failed with an actual `PermissionError` reading the key, not a hypothetical.
+        Fixed (`chmod 644`) and the deployment guide itself corrected (B.2) so the next
+        real deployment doesn't hit the same thing.
+  - [x] **Migrations applied for real** against a genuinely fresh database (all 53+
+        revisions, `bootstrap_roles.py` + `alembic upgrade head` via the real `migrate`
+        one-shot service, re-run a second time to confirm idempotency - exit 0, no-op).
+  - [x] **First platform admin bootstrapped for real** (`sara@reainmaker.ai`, per
+        Operations Manual §A.2 - direct SQL insert, Argon2id-hashed, no self-service
+        path). **Verified with a real login, not assumed**: real JWT issued, decoded and
+        confirmed 19 real `platform_admin` permission claims in it, then used that real
+        token against a real protected endpoint (`GET /api/v1/admin/organizations` -> `200
+        []`, a genuinely empty fresh database, not an error). MFA enrollment for this
+        account is the one B.6 step **not yet done** - named here rather than silently
+        skipped.
+  - [x] **Full stack verified healthy and serving real content**, not just "containers
+        running": all core services `Up`/`healthy`; `whatsapp-gateway` deliberately
+        stopped (crash-looping on missing `WHATSAPP_GATEWAY_API_KEY`/
+        `WHATSAPP_INSTANCE_TOKEN` - real production vendor credentials, not something to
+        generate, left for the owner same as `RESEND_API_KEY`). Verified real HTML/API
+        responses at the origin (`curl -H "Host: app.3rdi.in" http://127.0.0.1/` -> the
+        real customer-crm `index.html`; same confirmed for `console.`/`demo.`/apex) for
+        all 4 routed hosts before ever trusting the public domain layer.
+  - [ ] **Two real gaps found at the DNS/edge layer, outside what SSH access can fix**:
+        (1) `console.3rdi.in`/`demo.3rdi.in`/the apex `3rdi.in`/`storage.3rdi.in` don't
+        resolve publicly at all right now (checked directly against Cloudflare's own
+        resolver, `1.1.1.1`) despite appearing as "current records" in a screenshot of the
+        DNS panel - only `app.3rdi.in`/`api.3rdi.in` actually resolve. (2) `app.3rdi.in`'s
+        root path (`/`) is intercepted and answered with a static JSON 404 *by Cloudflare
+        itself*, before ever reaching this deployment - confirmed by the origin serving
+        the real app correctly on the exact same path when reached directly, so this is
+        not a build or routing bug on this end. Both need the owner's Cloudflare dashboard
+        access (a stale Worker/Page Rule from an earlier attempt is the likely cause for
+        the second one) - not something achievable from server SSH access alone.
+  - [ ] **Not done yet, named rather than assumed complete**: MFA enrollment for the first
+        admin (B.6); `backup.py`/`restore_exercise.py` run against this real production
+        database (B.7, "confirm restores work before you ever need them for real"); a real
+        smoke test via `e2e_vertical_slice.py` against the production URL; log shipping to
+        an aggregator; the 2 real pilot customers (Abelamm/Autotek, Apti Services)
+        migrated from local dev into this production instance - it is a genuinely fresh,
+        empty database right now, by design (never copy dev data into production), not an
+        oversight; `RESEND_API_KEY`/WhatsApp credentials (real vendor accounts, not
+        something to generate); a named pilot tenant and cutover window remain, as always,
+        the owner's own business decision (Phase 9's original scope, unchanged).
 
 ## Phase 10 — Stabilization and Handover
 
