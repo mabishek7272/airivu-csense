@@ -146,13 +146,68 @@ class MatteSummary(BaseModel):
     shape: list[int]  # [height, width]
 
 
+class FaceAttributesOut(BaseModel):
+    """One face's race/gender/age scores from `uniface-fairface-attributes`
+    (`engines.py`'s `FaceAttributes`). `*_scores` carry the full per-class distribution,
+    not just the top-1 label, so a caller can judge how confident the pick really was -
+    the same reasoning `stock_streetscene_3adults.jpg`'s own golden manifest already
+    applies when it records race as "never scored", not just "correct"."""
+
+    detector_confidence: float
+    bbox: list[float]
+    race: str
+    race_confidence: float
+    race_scores: dict[str, float]
+    gender: str
+    gender_confidence: float
+    gender_scores: dict[str, float]
+    age_bucket: str
+    age_confidence: float
+    age_scores: dict[str, float]
+
+
+class LivenessOut(BaseModel):
+    """One face's real/spoof result from `uniface-minifasnet-antispoofing`
+    (`engines.py`'s `LivenessResult`). `scores` is the raw 3-class softmax
+    (index 1 = real, matching `MiniFasNetEngine`'s own documented convention) -
+    kept in full rather than collapsed, since `is_real`/`label` already give the
+    collapsed real/fake decision."""
+
+    detector_confidence: float
+    bbox: list[float]
+    is_real: bool
+    label: str
+    confidence: float
+    scores: list[float]
+
+
+class GazeOut(BaseModel):
+    """One face's gaze direction from `uniface-mobilegaze-estimation`
+    (`engines.py`'s `GazeEstimate`)."""
+
+    detector_confidence: float
+    bbox: list[float]
+    yaw_deg: float
+    pitch_deg: float
+
+
+class Landmark98Out(BaseModel):
+    """One face's 98 WFLW landmark points from `uniface-pipnet-landmark`
+    (`engines.py`'s `LandmarkResult`) - a separate shape from `FaceLandmarkOut`
+    (facemesh's 468 3D points) since the two models' outputs are not interchangeable."""
+
+    detector_confidence: float
+    bbox: list[float]
+    points: list[list[float]]  # 98 x (x_norm, y_norm, confidence)
+
+
 class UnifaceValidationResponse(BaseModel):
     """Response for `/internal/v1/validate-infer-uniface` - a separate response shape
-    from `InferenceResponse` because none of these 6 models' outputs are a `Detection`
-    list (see `engines.py`'s own `UnifaceEmbeddingEngine`/`UnifaceFaceMeshEngine`/
-    `UnifaceMattingEngine` docstrings for why `infer()` deliberately raises for all
-    three). Exactly one of `embeddings`/`landmarks`/`matte` is populated, matching which
-    of the 6 models `version_id` names."""
+    from `InferenceResponse` because none of these 10 models' outputs are a `Detection`
+    list (see `engines.py`'s own engine docstrings for why `infer()` deliberately raises
+    for all of them). Exactly one of `embeddings`/`landmarks`/`matte`/`attributes`/
+    `liveness`/`gaze`/`landmarks98` is populated, matching which of the 10 models
+    `version_id` names."""
 
     model_name: str
     version_id: str
@@ -163,6 +218,10 @@ class UnifaceValidationResponse(BaseModel):
     embeddings: list[FaceEmbeddingOut] | None = None
     landmarks: list[FaceLandmarkOut] | None = None
     matte: MatteSummary | None = None
+    attributes: list[FaceAttributesOut] | None = None
+    liveness: list[LivenessOut] | None = None
+    gaze: list[GazeOut] | None = None
+    landmarks98: list[Landmark98Out] | None = None
 
 
 # --- Endpoints -----------------------------------------------------------------------
@@ -357,12 +416,17 @@ async def validate_infer(
     return await _run_inference(registered, image, confidence)
 
 
-# The 6 uniface-zoo models `/internal/v1/validate-infer-uniface` below knows how to run -
-# exactly the 6 low-risk models `engines.py`'s `UnifaceEmbeddingEngine`/
-# `UnifaceFaceMeshEngine`/`UnifaceMattingEngine` decode (see that module's own dispatch
-# tables). Kept here rather than imported from `engines.py`'s private dicts so this
+# The 10 uniface-zoo models `/internal/v1/validate-infer-uniface` below knows how to run:
+# the 6 low-risk models (`UnifaceEmbeddingEngine`/`UnifaceFaceMeshEngine`/
+# `UnifaceMattingEngine`) plus the 4 cross-check models (`FairFaceEngine`/
+# `MiniFasNetEngine`/`MobileGazeEngine`/`PipNetEngine`) - see engines.py's own dispatch
+# tables. Kept here rather than imported from engines.py's private dicts so this
 # endpoint's supported-model list is visible and grep-able in one place, independent of
-# engines.py's internal dispatch structure.
+# engines.py's internal dispatch structure. The 4 cross-check models had no live HTTP path
+# at all until this addition - they were validated by importing engines.py directly into a
+# local venv (CHECKLIST.md's own "known gap, not a bug" note), because the container
+# holding this endpoint hadn't been rebuilt yet when they were first decoded; closing that
+# gap now that a rebuild has actually happened.
 _UNIFACE_VALIDATION_MODELS: dict[str, str] = {
     "uniface-adaface-recognition": "embedding",
     "uniface-edgeface-recognition": "embedding",
@@ -370,6 +434,10 @@ _UNIFACE_VALIDATION_MODELS: dict[str, str] = {
     "uniface-sphereface-recognition": "embedding",
     "uniface-facemesh-landmark": "landmarks",
     "uniface-modnet-matting": "matte",
+    "uniface-fairface-attributes": "attributes",
+    "uniface-minifasnet-antispoofing": "liveness",
+    "uniface-mobilegaze-estimation": "gaze",
+    "uniface-pipnet-landmark": "landmarks98",
 }
 # The platform's own already-verified face detector (production state, confirmed live
 # this session) - reused rather than building a second face cropper, per this session's
@@ -388,16 +456,16 @@ async def validate_infer_uniface(
     confidence: float = Form(0.25),
     frame: UploadFile = File(...),
 ) -> UnifaceValidationResponse:
-    """Gate 2-4 validation harness for the 6 low-risk uniface-zoo models
-    (`_UNIFACE_VALIDATION_MODELS` above) - the sibling of `/internal/v1/validate-infer`
-    for models whose output is not a `Detection` list at all (a face embedding, a dense
-    landmark mesh, a portrait alpha matte) and therefore cannot go through
+    """Gate 2-4 validation harness for the 10 uniface-zoo models with a non-`Detection`
+    output (`_UNIFACE_VALIDATION_MODELS` above) - the sibling of `/internal/v1/
+    validate-infer` for models whose output is a face embedding, a dense landmark mesh, a
+    portrait alpha matte, an attribute/liveness score, or a gaze angle, none of which fit
     `InferenceResponse`/`_run_inference`. Same version_id-addressed, VALIDATABLE_STATES
     scoping as `/internal/v1/validate-infer` - see that endpoint's own docstring for why.
 
-    For the 4 embedding models and the facemesh model, this first runs the platform's own
+    Every kind except `matte` needs a detected face first: this runs the platform's own
     production face detector (`_FACE_DETECTOR_MODEL_NAME`) over the frame and then decodes
-    the target model once per detected face; `uniface-modnet-matting` needs no detector
+    the target model once per detected face. `uniface-modnet-matting` needs no detector
     and runs directly on the full frame.
     """
     image = _decode_frame(await frame.read())
@@ -416,7 +484,7 @@ async def validate_infer_uniface(
             status_code=422,
             code="not_a_uniface_validation_model",
             message=(
-                f"'{registered.model_name}' is not one of the 6 models this endpoint "
+                f"'{registered.model_name}' is not one of the 10 models this endpoint "
                 f"validates: {sorted(_UNIFACE_VALIDATION_MODELS)}. Use /internal/v1/"
                 "validate-infer for a model whose output is a Detection list."
             ),
@@ -426,7 +494,7 @@ async def validate_infer_uniface(
     loaded = await _load_in_threadpool(pool, registered)
 
     detector_loaded = None
-    if kind in ("embedding", "landmarks"):
+    if kind != "matte":
         async with _registry_session() as session:
             detector_registered = await get_deployable_by_name(session, _FACE_DETECTOR_MODEL_NAME)
         if detector_registered is None:
@@ -520,8 +588,8 @@ async def _infer_in_threadpool(loaded, image, confidence: float):
 
 async def _run_uniface_inference(loaded, detector_loaded, kind: str, image, confidence: float) -> dict:
     """Off the event loop, same reasoning as `_infer_in_threadpool`: ONNX Runtime calls
-    (and, for `kind in ("embedding", "landmarks")`, the SCRFD detector's own `.detect()`)
-    are blocking CPU work.
+    (and, for every `kind` except `matte`, the SCRFD detector's own `.detect()`) are
+    blocking CPU work.
     """
     import anyio
 
@@ -569,6 +637,66 @@ async def _run_uniface_inference(loaded, detector_loaded, kind: str, image, conf
                     )
                 )
             return {"face_count": len(detections), "landmarks": faces}
+
+        if kind == "attributes":
+            attrs = []
+            for d in detections:
+                a = loaded.engine.predict_attributes(image, d)
+                attrs.append(
+                    FaceAttributesOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        race=a.race, race_confidence=round(a.race_confidence, 4),
+                        race_scores={k: round(v, 4) for k, v in a.race_scores.items()},
+                        gender=a.gender, gender_confidence=round(a.gender_confidence, 4),
+                        gender_scores={k: round(v, 4) for k, v in a.gender_scores.items()},
+                        age_bucket=a.age_bucket, age_confidence=round(a.age_confidence, 4),
+                        age_scores={k: round(v, 4) for k, v in a.age_scores.items()},
+                    )
+                )
+            return {"face_count": len(detections), "attributes": attrs}
+
+        if kind == "liveness":
+            results = []
+            for d in detections:
+                r = loaded.engine.predict_liveness(image, d)
+                results.append(
+                    LivenessOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        is_real=r.is_real, label=r.label,
+                        confidence=round(r.confidence, 4),
+                        scores=[round(float(s), 4) for s in r.scores],
+                    )
+                )
+            return {"face_count": len(detections), "liveness": results}
+
+        if kind == "gaze":
+            results = []
+            for d in detections:
+                g = loaded.engine.estimate_gaze(image, d)
+                results.append(
+                    GazeOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        yaw_deg=round(g.yaw_deg, 2),
+                        pitch_deg=round(g.pitch_deg, 2),
+                    )
+                )
+            return {"face_count": len(detections), "gaze": results}
+
+        if kind == "landmarks98":
+            results = []
+            for d in detections:
+                r = loaded.engine.predict_landmarks(image, d)
+                results.append(
+                    Landmark98Out(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        points=[[round(float(c), 5) for c in pt] for pt in r.points],
+                    )
+                )
+            return {"face_count": len(detections), "landmarks98": results}
 
         raise OutputContractUnknownError(f"No uniface validation path for kind '{kind}'.")
 

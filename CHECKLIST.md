@@ -1633,15 +1633,19 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           `POST /internal/v1/validate-infer-uniface` against a real image (matte
           coverage_fraction 0.063, 3 real embeddings/landmark sets with real detector
           confidences).
-      - [ ] **Known gap, not a bug**: the 4 cross-check models (fairface/minifasnet/
-            mobilegaze/pipnet) have no equivalent live HTTP endpoint - agent 2 validated
-            them by importing `engines.py` directly into a local venv, the only option
-            available at the time (no restart allowed, demo running). `build_engine()`
-            now dispatches them correctly given a real running container, but nothing
-            calls it for these 4 over HTTP yet; `/internal/v1/validate-infer-uniface`
-            explicitly refuses them (`422 not_a_uniface_validation_model`), confirmed live.
-            A small addition to that endpoint (or a second one) would close this - not
-            done here, not demo-relevant, tracked rather than silently left unstated.
+      - [x] **Closed, 2026-09-11**: `/internal/v1/validate-infer-uniface` now handles all
+            10 models (extended `_UNIFACE_VALIDATION_MODELS` + 4 new response shapes -
+            `FaceAttributesOut`/`LivenessOut`/`GazeOut`/`Landmark98Out` - and 4 new
+            branches in `_run_uniface_inference`, same "one dedicated shape per real
+            output type" pattern the first 6 already established, not forced into
+            `Detection`). Rebuilt `ai-runtime` and confirmed all 4 live against a real
+            image, not just re-imported: `uniface-fairface-attributes` (`race="Middle
+            Eastern"`), `uniface-minifasnet-antispoofing` (`is_real=false,
+            confidence=0.9937` - matches the 99.3-99.4% the offline validation run
+            measured, same real finding, not a different number from a different path),
+            `uniface-mobilegaze-estimation` (`yaw_deg=3.91` - matches the offline run's
+            `3.9deg`), `uniface-pipnet-landmark` (98 real points returned). Full targeted
+            test suite (46 tests) and `ruff` still clean after this change.
 
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
