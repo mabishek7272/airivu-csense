@@ -1,0 +1,26 @@
+{
+  "model_name": "uniface-adaface-recognition",
+  "task": "512-d face embedding (AdaFace, IR-18/WebFace4M). Not a detection/classification model - there is no class/presence ground truth to score against, unlike the intern-* manifests. Ground truth here is about the *embedding itself*: is it the right shape/dtype, is it numerically sane, and does it actually discriminate between two different real people.",
+  "note": "Real gate-2 shape independently re-confirmed this session (onnxruntime.InferenceSession against the real artifact fetched from the real csense-models MinIO bucket, inside the real ai-runtime container): input 'input' (batch,3,112,112) float32, output 'output' (batch,512) float32 - matches CHECKLIST.md's prior write-up exactly.\n\n**Only fixture in this repo with real, usable faces.** backend/tests/fixtures/golden/intern-child-adult-detection/stock_streetscene_3adults.jpg (a real stock photo of 3 real adults crossing a Madrid street, already in this repo) is the only image anywhere under backend/tests/fixtures/golden/*/ with a clearly visible human face - every Autotek NVR frame pulled for the 3 intern models is a night/blank/vehicle/empty-room shot with no face in it. The license-plate-detector fixtures are vehicle/plate-focused. Per this task's own instruction, no fresh live camera frames were pulled to fill this gap (the live client demo and not contending with a second agent for the same camera resource).\n\n**Face detection used the platform's own already-verified, production face detector** (insightface-buffalo-l-detect, state=production, confirmed live against the real registry this session), not a new cropper. It found 2 of the 3 visible faces at its default threshold - the two men in sunglasses facing the camera fairly directly (confidence 0.8737, 0.8677); the third, partially-cropped figure at the frame's left edge was not detected at this threshold, which is expected (a heavily occluded/edge-cropped face is a harder detection case, not a bug in this validation).\n\n**Honest scope of what this manifest can and cannot prove.** There is no same-identity pair anywhere in this repository's fixtures (no two images of the same real person) - the manifest's own 'expected' fields therefore stop at what a single-image, two-different-real-people test can honestly support: correct shape/dtype, all-finite, non-degenerate (not NaN, not all-zero, not identical between the two different faces), and a low cosine similarity between the two different real identities. That last point is a real but WEAK signal, stated honestly rather than oversold: two random 512-d unit vectors also produce a cosine similarity near 0 by simple concentration-of-measure, so 'low similarity between two different people' is consistent with a working discriminative embedding but does not, by itself, prove discriminative power the way 'high similarity between two images of the SAME person' would. That stronger test needs a real same-identity pair this project does not currently have; recall on 'same person recognized across two frames' is therefore null/unmeasured here, the same discipline the 3 intern manifests already established for a missing ground-truth case rather than guessed at or faked.\n\n**AdaFace-specific empirical finding**: this exact export's raw ONNX output happens to already be L2-normalised (measured full-precision norm exactly 1.0 on both real faces) - not because this decode divides by the norm (it deliberately doesn't; see UnifaceEmbeddingEngine's own docstring on why it mirrors InsightFaceEngine's raw convention), but because this checkpoint's own final layer already produces a unit-norm feature. EdgeFace/MobileFace/SphereFace's raw outputs, measured on the same two faces, are NOT unit-norm (3.48/3.70, 1.77/1.95, 0.29/0.38 respectively) - a real, checkpoint-specific fact discovered empirically, not assumed to generalise across the family.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "face_count_at_default_threshold": 2,
+        "embedding_dim": 512,
+        "embedding_dtype": "float32",
+        "all_finite": true,
+        "non_degenerate": "the two faces' embeddings must not be identical or all-zero",
+        "different_identity_cosine_similarity_low": "expected roughly near 0 (weak signal only, see note above) for these two different real people"
+      },
+      "measured": {
+        "face_count": 2,
+        "embedding_dim": 512,
+        "l2_norms": [1.0, 1.0],
+        "all_finite": true,
+        "different_identity_pairwise_cosine_similarity": -0.0321
+      },
+      "note": "2 of 3 real adults detected by the production SCRFD detector; embeddings computed on real ArcFace-template-aligned crops (insightface.utils.face_align.norm_crop, the same template uniface's own alignment uses - confirmed byte-identical this session)."
+    }
+  ]
+}

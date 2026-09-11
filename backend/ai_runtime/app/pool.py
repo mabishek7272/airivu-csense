@@ -83,7 +83,9 @@ class ModelPool:
                 # label_map arrives from JSONB with string keys.
                 label_map = {int(k): v for k, v in registered.label_map.items()}
 
-            engine = build_engine(registered.runtime, path, label_map, registered.task_code)
+            engine = build_engine(
+                registered.runtime, path, label_map, registered.task_code, registered.model_name
+            )
             loaded = LoadedModel(
                 model_name=registered.model_name,
                 version_id=str(registered.version_id),

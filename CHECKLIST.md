@@ -1297,12 +1297,145 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           versions the by-name `/internal/v1/infer` route (deployable-states only)
           structurally cannot, so gate 2-4 evidence is producible *before* promotion. Built
           and proven working against the 3 intern models above before this probing pass.
-    - [ ] Writing the actual decode logic (the 6 low-risk + 4 cross-check models, 10
-          total) and running real accuracy validation through it is real engineering work,
-          dispatched as background implementation - not yet reviewed or landed as of this
-          checklist entry. The 3 anchor-based detectors and the 2 no-guess models are not
-          included in that dispatch; they need either more careful anchor-math work or
-          information this repository does not currently have.
+    - [x] **Decode logic written and validated for the 6 low-risk models** (`adaface`/
+          `edgeface`/`mobileface`/`sphereface`-recognition, `facemesh`-landmark, `modnet`-
+          matting) - `UnifaceEmbeddingEngine`/`UnifaceFaceMeshEngine`/`UnifaceMattingEngine`
+          in `engines.py`, following `InsightFaceEngine`'s own established pattern (a
+          dedicated method per non-box output shape - `embed()`/`landmarks()`/`matte()` -
+          rather than forcing a `Detection`/`infer()` fit; `infer()` raises
+          `OutputContractUnknownError` for all three, same as `InsightFaceEngine`'s ArcFace
+          path). The 4 cross-check models (fairface/minifasnet/mobilegaze/pipnet) were a
+          separate agent's own concurrent worktree, not touched here; the 3 anchor-based
+          detectors and the 2 no-guess models remain untouched, per the original risk
+          tiering above.
+      - [x] **All 6 real gate-2 shapes independently re-probed this session** (not trusted
+            from the write-up above), matched exactly:
+            `adaface`/`mobileface`/`sphereface` output `output` `(batch/1,512)`,
+            `edgeface` output `embedding` `(batch,512)`, `facemesh` `landmarks`
+            `(batch,468,3)` + `score` `(batch,1)`, `modnet` `output` `(batch,1,H,W)`.
+      - [x] **Preprocessing/alignment/postprocessing ported from the real public
+            reference implementation these weights ship with**
+            (`github.com/yakhyo/uniface`, MIT - the real clone sitting at `uniface-main/`
+            in this repo's working tree, cross-checked line-for-line against the same
+            files fetched fresh from GitHub this session), not reimplemented from papers
+            or guessed from the ONNX graph - the same discipline this file already applies
+            everywhere else a wrong guess would produce a plausible-but-silently-wrong
+            output. One specific claim was independently verified against the real
+            installed package, not just read from source: `uniface.face_utils.
+            reference_alignment` (the 5-point 112x112 ArcFace template uniface's own
+            alignment uses) is byte-for-byte identical to `insightface.utils.face_align.
+            arcface_dst`, confirmed live via `docker exec` against the real `ai-runtime`
+            image - so the 4 recognition engines reuse `InsightFaceEngine`'s already-
+            production `norm_crop` alignment path rather than re-deriving uniface's own
+            `estimate_norm`/`face_alignment`, and this is not an assumed equivalence.
+      - [x] **A real dispatch collision was found and fixed, not just theorised**: 4 of
+            the 6 models (`mobileface`/`sphereface`/`adaface`/`edgeface`-recognition) are
+            registered with `task_code="face_recognition"` - the exact task_code
+            `InsightFaceEngine` already owned for `insightface-buffalo-l-recognition`
+            (confirmed against the real manifests). The engine dispatch in `build_engine`
+            (`engines.py`) and `ModelPool.get` (`pool.py`) was changed from task_code-
+            keyed to exact-`model_name`-keyed for both `InsightFaceEngine` and these 3 new
+            engines, closing the collision - a regression test
+            (`test_build_engine_face_recognition_task_code_does_not_reach_insightface` in
+            the new `backend/tests/test_uniface_engines.py`) pins this so it can't silently
+            regress.
+      - [x] **New `/internal/v1/validate-infer-uniface` endpoint** (`main.py`) - the
+            sibling of `/internal/v1/validate-infer` for outputs that aren't a `Detection`
+            list at all (embedding/landmarks/matte), same `version_id`/`VALIDATABLE_STATES`
+            scoping. For the 5 face-shaped models it first runs the platform's own already-
+            verified, `production`-state SCRFD detector (`insightface-buffalo-l-detect`,
+            confirmed live) over the frame, then decodes the target model per detected
+            face - reusing the real production face cropper rather than building a new one,
+            per this session's own instructions.
+      - [~] **This new endpoint could not be validated through the live HTTP API - written
+            to code, not yet deployed, honestly reported rather than silently skipped.**
+            The real `csense-ai-runtime-1` container on this stack was started from an
+            image built before this work and does not have this code; rebuilding/
+            restarting it was explicitly off-limits this session (a real client demo was
+            running on this exact Docker stack). Real fallback validation was performed
+            instead, the way the task's own instructions named: `docker cp`'d the
+            candidate `engines.py` into a **throwaway path** inside the real running
+            container (`/tmp/uniface_validate/`, never the container's actual
+            `/app/app/engines.py`) and imported it directly against real MinIO-fetched
+            artifacts and a real image, using the container's own already-installed
+            onnxruntime/insightface/opencv - `scripts/_uniface_validate_in_container.py`
+            is what runs inside the container; `scripts/run_uniface_model_validation.py`
+            drives it and records the result. This is real, gate-2/3 evidence (real
+            artifacts, real ported preprocessing code, real image) - honestly short of
+            being the actual deployed HTTP path, which remains a named next step once the
+            owner restarts `ai-runtime`.
+      - [x] **Real golden manifests built for all 6**
+            (`backend/tests/fixtures/golden/uniface-{adaface,edgeface,mobileface,
+            sphereface}-recognition/`, `uniface-facemesh-landmark/`, `uniface-modnet-
+            matting/manifest.json`) - shaped differently from the intern-* manifests
+            (there is no class/presence label to score for an embedding/landmark/matte
+            model) but same honesty discipline. **Only one image anywhere under
+            `backend/tests/fixtures/golden/*/` has real, usable human faces**
+            (`stock_streetscene_3adults.jpg`, already in the repo) - every Autotek NVR
+            frame pulled for the 3 intern models is night/blank/vehicle/empty-room with no
+            face in it, and no fresh live camera frames were pulled this session (the live
+            demo, and a second agent already using the platform's one real NVR, per this
+            session's own instructions). The platform's own production SCRFD detector
+            found 2 of the 3 visible real faces at its default threshold. **No same-
+            identity pair exists anywhere in this project's fixtures**, so true recognition
+            recall (same person, two frames, embeddings actually match) is `null` -
+            unmeasured, stated plainly in every manifest's own note, not padded over with a
+            staged/fabricated positive pair (the task's own explicit instruction, and the
+            same discipline `run_intern_model_validation.py` already established for the
+            missing-child-photo gap).
+      - [x] **Real per-model measured results, all genuinely passed gate 2-3** (shape/
+            dtype/finiteness/non-degeneracy, and for facemesh, geometric correctness -
+            landmarks land within the detector's own bbox for both real faces): all 4
+            embedding models produced finite 512-d vectors, not identical between the two
+            different real people (adaface/edgeface/mobileface/sphereface pairwise cosine
+            similarity -0.03/0.01/0.08/0.04 - reported as a weak signal only, since high-
+            dimensional random vectors also produce near-zero cosine similarity by
+            concentration of measure; this is NOT claimed as proof of discriminative
+            power). One real, checkpoint-specific finding recorded rather than smoothed
+            over: `adaface`'s raw ONNX output is already exactly L2-normalised (measured
+            full-precision norm = 1.0 on both real faces) while `edgeface`/`mobileface`/
+            `sphereface`'s raw outputs are not (3.48-3.70 / 1.77-1.95 / 0.29-0.38) - the
+            decode deliberately returns the raw value in all 4 cases (matching
+            `InsightFaceEngine.embed()`'s own raw convention), so this is a fact about the
+            AdaFace checkpoint's own final layer, not something the decode code did.
+            `facemesh` produced 468x3 finite landmarks per face landing within (or a few
+            px beyond, at jaw/forehead - expected) each face's own detector bbox for both
+            real faces. `modnet` produced a finite, correctly-shaped, bounded [0,1] matte
+            (mean alpha 0.063, ~6% coverage - a plausible, non-degenerate result for a wide
+            street scene, honestly *not* MODNet's own tuned portrait use case, and not
+            scored against a pixel-level ground truth none exists for).
+      - [x] **Real `model_validation_runs` rows recorded via the real Admin API** for all
+            6 (`scripts/run_uniface_model_validation.py`, same service account/Admin API
+            flow as `run_intern_model_validation.py`) - all 6 status=`passed` on the honest
+            gate-2/3 basis above, `metrics.method_note` on every row stating plainly that
+            this ran via the docker-cp/local-import fallback, not the (not-yet-deployed)
+            HTTP endpoint.
+      - [x] **Promotion, and a real, load-bearing discovery about it.** All 6 promoted
+            `uploaded -> validating` for real. **5 of the 6 (all but `modnet`) could NOT be
+            promoted further to `validated`, and this is not a bug or an oversight**: all 5
+            face-recognition/landmark models are `access_classification=biometric`, and
+            `validated` is itself one of `DEPLOYABLE_STATES` in `admin_api/app/api/
+            models.py` - so the *existing* biometric-acknowledgement gate (unrelated to
+            this session's work, already in the codebase) refuses `validating -> validated`
+            for a biometric model without `acknowledge_biometric=true`, the same as it
+            would refuse `validated -> staging`. This was verified for real, not reasoned
+            about in the abstract: the actual Admin API returned a real `422
+            biometric_promotion_requires_acknowledgement` for all 5. Per this session's own
+            explicit instructions, `acknowledge_biometric=true` was never passed - that
+            acknowledgement is the project owner's call. **`uniface-modnet-matting` is
+            `access_classification=standard`, not biometric** (a portrait alpha matte is
+            not an identity template - confirmed against the real registry row before
+            assuming otherwise), so it has no such gate in its way and is now genuinely
+            `validated`. Net real state: 5 models sit at `validating` (as far as they can
+            go without the owner's biometric sign-off), 1 (`modnet`) at `validated`. No
+            model was pushed to `staging`/`production`.
+      - [x] **13 new unit tests** (`backend/tests/test_uniface_engines.py`) pin the dispatch
+            table (including a regression test for the exact collision found above), the
+            AdaFace-vs-everyone-else BGR/RGB preprocessing split, and the FaceMesh ROI/
+            inverse-affine geometry, with synthetic inputs and known-correct answers - same
+            discipline as the existing `test_ai_runtime_decoder.py`. Full existing suite
+            (`test_insightface_engine.py`, `test_ai_runtime_decoder.py`) still green
+            alongside them (44 passed total); `ruff check` clean on every touched file.
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
 

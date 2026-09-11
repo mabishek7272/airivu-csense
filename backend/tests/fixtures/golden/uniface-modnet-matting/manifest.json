@@ -1,0 +1,29 @@
+{
+  "model_name": "uniface-modnet-matting",
+  "task": "Single-channel portrait alpha matte in [0,1], full frame in, full frame out. Not a detection/classification model, and unlike the other 5 uniface-zoo models covered this session, standard access_classification (not biometric, confirmed against the real registry row) - a soft foreground/background alpha map is not an identity template. No face detector pairing needed: MODNet segments directly on the whole frame.",
+  "note": "Real gate-2 shape independently re-confirmed this session: input 'input' (batch,3,H,W) float32 dynamic, output 'output' (batch,1,H,W) float32 - matches CHECKLIST.md's prior write-up and MODNet's own documented single-output spec exactly.\n\n**Fixture honesty note, different from the 5 face models above**: stock_streetscene_3adults.jpg is the only real image with people anywhere in this repo's fixtures, but it is a wide street scene (3 people, roughly 6% of frame pixels are person-ish), not a portrait photo MODNet's own PHOTOGRAPHIC weights are tuned for (a person filling most of the frame, uncluttered background). This is used anyway, honestly labelled as a weaker test than a real portrait would be: it validates shape/dtype/range/finiteness and that the matte roughly tracks a plausible small-foreground-in-large-background scene, not per-pixel matte accuracy against a hand-labelled trimap (which this project has no ground truth for and did not fabricate).\n\nPreprocessing/postprocessing ported from uniface.matting.modnet.MODNet.preprocess/postprocess (github.com/yakhyo/uniface, cross-checked line-for-line against the real clone in this repo's uniface-main/ this session): RGB conversion, resize so the shorter side matches input_size=512 (aspect preserved) only when needed, floor to a multiple of 32 (STRIDE), normalise to [-1,1] (not the [0,1]/mean-std convention the rest of this file's models use - confirmed against the literal source, not assumed to match).",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "matte_shape_matches_input_hw": true,
+        "matte_dtype": "float32",
+        "value_range": "[0, 1]",
+        "all_finite": true,
+        "not_degenerate": "matte should not be uniformly 0 or uniformly 1 across the whole frame"
+      },
+      "measured": {
+        "matte_shape": [1080, 810],
+        "input_shape": [1080, 810],
+        "shape_matches_input": true,
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 1.0,
+        "mean": 0.0627,
+        "coverage_fraction_gt_0.5": 0.0626,
+        "all_finite": true
+      },
+      "note": "Matte covers ~6% of the frame at alpha>0.5, plausible for 2-3 people against a large bus/building background in this specific wide shot - not scored against a pixel-level ground truth (none exists for this image), but bounded, finite, and non-degenerate, which is what this manifest actually claims."
+    }
+  ]
+}

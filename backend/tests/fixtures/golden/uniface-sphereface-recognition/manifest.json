@@ -1,0 +1,26 @@
+{
+  "model_name": "uniface-sphereface-recognition",
+  "task": "512-d face embedding (SphereFace, SPHERE20). Not a detection/classification model - see uniface-adaface-recognition/manifest.json for the full explanation of why this manifest's shape differs from the intern-* manifests and what an embedding manifest can honestly claim.",
+  "note": "Real gate-2 shape independently re-confirmed this session: input 'input' FIXED (1,3,112,112) float32, output 'output' (1,512) float32 - matches CHECKLIST.md's prior write-up exactly.\n\nSame fixture, same detector, same honesty caveats as uniface-adaface-recognition/manifest.json: only stock_streetscene_3adults.jpg has usable real faces anywhere in this repo's fixtures, the production SCRFD detector found 2 of the 3 visible faces, and there is no same-identity pair anywhere in this project's fixtures to test true recognition recall against.\n\nSphereFace does not override BaseRecognizer.preprocess (confirmed against the real uniface/recognition/sphereface.py source) - RGB-converting, (pixel-127.5)/127.5 path, same as EdgeFace/MobileFace. Raw output on these two real faces is NOT unit-norm and is the smallest-magnitude of the four families measured (0.29 / 0.38) - a real, checkpoint-specific fact, not assumed uniform across the embedding family.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "face_count_at_default_threshold": 2,
+        "embedding_dim": 512,
+        "embedding_dtype": "float32",
+        "all_finite": true,
+        "non_degenerate": "the two faces' embeddings must not be identical or all-zero",
+        "different_identity_cosine_similarity_low": "expected roughly near 0 (weak signal only, see uniface-adaface-recognition/manifest.json) for these two different real people"
+      },
+      "measured": {
+        "face_count": 2,
+        "embedding_dim": 512,
+        "l2_norms": [0.2875, 0.3838],
+        "all_finite": true,
+        "different_identity_pairwise_cosine_similarity": 0.0358
+      },
+      "note": "Same 2 real faces, same alignment, same detector as uniface-adaface-recognition."
+    }
+  ]
+}

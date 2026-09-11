@@ -1,0 +1,26 @@
+{
+  "model_name": "uniface-edgeface-recognition",
+  "task": "512-d face embedding (EdgeFace, EdgeNeXt XXS backbone). Not a detection/classification model - see uniface-adaface-recognition/manifest.json for the full explanation of why this manifest's shape differs from the intern-* manifests and what an embedding manifest can honestly claim.",
+  "note": "Real gate-2 shape independently re-confirmed this session: input 'input' (batch,3,112,112) float32, output NAMED 'embedding' (batch,512) float32 - note the output tensor's own name differs from adaface/mobileface/sphereface's 'output' (all confirmed live via onnxruntime.InferenceSession against the real artifacts, not assumed uniform across the family). The decode reads the output by position (session.run(None, ...)[0]) rather than by this specific name, since all four embedding models have exactly one output tensor regardless of its name - matched against the real artifact's actual output count, not a name-based shortcut.\n\nSame fixture, same detector, same honesty caveats as uniface-adaface-recognition/manifest.json: only stock_streetscene_3adults.jpg has usable real faces anywhere in this repo's fixtures, the production SCRFD detector found 2 of the 3 visible faces, and there is no same-identity pair anywhere in this project's fixtures to test true recognition recall against - that gap is stated here, not padded over.\n\nEdgeFace's own preprocessing does not override BaseRecognizer.preprocess (confirmed against the real uniface/recognition/edgeface.py source, which defines no preprocess() override) - so, unlike AdaFace, it takes the base class's RGB-converting, (pixel-127.5)/127.5 path. Its raw output on these two real faces is NOT unit-norm (3.48 / 3.70) - genuinely different from AdaFace's exactly-1.0 raw norm on the same two faces, a real per-checkpoint fact, not assumed uniform across the embedding family.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "face_count_at_default_threshold": 2,
+        "embedding_dim": 512,
+        "embedding_dtype": "float32",
+        "all_finite": true,
+        "non_degenerate": "the two faces' embeddings must not be identical or all-zero",
+        "different_identity_cosine_similarity_low": "expected roughly near 0 (weak signal only, see uniface-adaface-recognition/manifest.json) for these two different real people"
+      },
+      "measured": {
+        "face_count": 2,
+        "embedding_dim": 512,
+        "l2_norms": [3.4829, 3.7013],
+        "all_finite": true,
+        "different_identity_pairwise_cosine_similarity": 0.0076
+      },
+      "note": "Same 2 real faces, same alignment, same detector as uniface-adaface-recognition."
+    }
+  ]
+}

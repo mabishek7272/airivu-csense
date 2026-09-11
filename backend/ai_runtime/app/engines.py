@@ -564,6 +564,409 @@ class InsightFaceEngine:
         return self._model.get_feat(aligned).flatten()
 
 
+# --- uniface-zoo ONNX (embedding / dense landmark / matting) ------------------------
+#
+# These three engines cover the 6 lowest-risk of the 15 `uniface-zoo` models pulled in
+# 2026-09-03 (see CHECKLIST.md's "18 models pulled in `uploaded`" entry and
+# backend/migrations/uniface_model_manifest.py for the full import). All 6 real gate-2
+# shapes below were re-probed this session against the live artifacts (onnxruntime.
+# InferenceSession inside the real `ai-runtime` container, fetched from the real
+# `csense-models` MinIO bucket) - not trusted from any prior write-up - and matched
+# exactly:
+#   uniface-adaface-recognition:    input (batch,3,112,112) f32 -> output "output" (batch,512)
+#   uniface-edgeface-recognition:   input (batch,3,112,112) f32 -> output "embedding" (batch,512)
+#   uniface-mobileface-recognition: input (1,3,112,112) f32     -> output "output" (1,512)
+#   uniface-sphereface-recognition: input (1,3,112,112) f32     -> output "output" (1,512)
+#   uniface-facemesh-landmark:      input (batch,3,192,192) f32 -> "landmarks" (batch,468,3) + "score" (batch,1)
+#   uniface-modnet-matting:         input (batch,3,H,W) f32 dynamic -> "output" (batch,1,H,W)
+#
+# The *preprocessing/alignment/postprocessing* math below is ported from the real public
+# reference implementation these exact weights ship with - github.com/yakhyo/uniface
+# (MIT), the real clone already sitting at `uniface-main/` in this repo's working tree,
+# cross-checked line-for-line against the same files fetched fresh from GitHub this
+# session - not reimplemented from architecture papers or guessed at from the ONNX graph
+# alone. That matters here the same way it mattered for the plate detector's class/score
+# column order and the child/adult label_map: a face recognition/landmark model that
+# "runs" but has a subtly wrong preprocessing constant produces a plausible-looking
+# embedding or landmark set that is silently wrong, with no error to catch it. One fact
+# below was independently verified against the real installed packages in this container,
+# not just read from uniface's own source: `uniface.face_utils.reference_alignment` (the
+# 5-point 112x112 ArcFace template uniface's own alignment uses) is byte-for-byte
+# identical to `insightface.utils.face_align.arcface_dst` (confirmed via `docker exec`
+# against the real `ai-runtime` image) - so reusing InsightFaceEngine's already-production
+# alignment path below is not an assumption of equivalence, it is the same template.
+#
+# task_code alone cannot pick the right decode here, unlike everywhere else in this file:
+# `uniface-mobileface-recognition`, `uniface-sphereface-recognition`, `uniface-adaface-
+# recognition`, and `uniface-edgeface-recognition` are all registered with task_code=
+# "face_recognition" - the exact task_code InsightFaceEngine already owns for
+# `insightface-buffalo-l-recognition` (confirmed against the real manifests, not assumed:
+# `backend/migrations/uniface_model_manifest.py` and `legacy_model_manifest.py`). Keying
+# dispatch on task_code alone, as this file did before these 15 models existed, would
+# route those 4 uniface artifacts into `insightface.model_zoo.get_model()` - a decoder
+# built for a completely different architecture family, which is exactly the silent-wrong-
+# decode failure mode this file exists to avoid. Dispatch is therefore by the registry's
+# exact model_name for both InsightFaceEngine and these three uniface engines - see
+# build_engine's dispatch tables below.
+
+# uniface.recognition.base.BaseRecognizer.preprocess resizes to 112x112, then either
+# stays BGR (AdaFace only - AdaFace.preprocess overrides the base to skip the RGB swap,
+# "AdaFace uses BGR color space (no RGB conversion) during preprocessing" per its own
+# docstring and source) or converts to RGB (EdgeFace/MobileFace/SphereFace - none override
+# preprocess, so the base class's own `swapRB=True` default applies), then in both cases
+# does `(pixel - 127.5) / 127.5` per channel and transposes to NCHW. Getting the BGR/RGB
+# split backwards for any one of the four would silently swap that model's red/blue
+# channels - confirmed per-family against the literal upstream source (`uniface/
+# recognition/{base,adaface}.py`), not assumed from symmetry with the other three.
+_UNIFACE_EMBEDDING_FAMILIES: dict[str, str] = {
+    "uniface-adaface-recognition": "adaface",
+    "uniface-edgeface-recognition": "edgeface",
+    "uniface-mobileface-recognition": "mobileface",
+    "uniface-sphereface-recognition": "sphereface",
+}
+_UNIFACE_BGR_FAMILIES = {"adaface"}  # every other family swaps to RGB
+
+
+def _uniface_recognition_blob(aligned_face_bgr: np.ndarray, family: str) -> np.ndarray:
+    """Ported from `uniface.recognition.base.BaseRecognizer.preprocess` /
+    `uniface.recognition.adaface.AdaFace.preprocess` (github.com/yakhyo/uniface).
+    `aligned_face_bgr` must already be an aligned face crop - alignment itself is not part
+    of this function, see `UnifaceEmbeddingEngine.embed`.
+    """
+    import cv2
+
+    resized = cv2.resize(aligned_face_bgr, (112, 112))
+    if family not in _UNIFACE_BGR_FAMILIES:
+        resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    normalized = (resized.astype(np.float32) - 127.5) / 127.5
+    chw = normalized.transpose(2, 0, 1)
+    return np.expand_dims(chw, axis=0)
+
+
+class UnifaceEmbeddingEngine:
+    """AdaFace / EdgeFace / MobileFace / SphereFace - 4 of the 6 low-risk uniface-zoo
+    models, all a single (batch, 512) face embedding.
+
+    Does not implement `infer()` into the `Detection` shape, deliberately, same as
+    InsightFaceEngine's ArcFace path above and for the same reason: a 512-d embedding is
+    not a bounding box. Use `embed()` with a `Detection` from the platform's own already-
+    verified face detector (the legacy InsightFace SCRFD model, `insightface-buffalo-l-
+    detect`, `production` state, already wired through InsightFaceEngine) instead of
+    building a new face cropper for this.
+
+    Alignment reuses `insightface.utils.face_align.norm_crop` - already the production
+    path for the legacy ArcFace model above - rather than re-deriving the 5-point
+    similarity transform uniface's own `face_utils.estimate_norm`/`face_alignment`
+    implements. This is not an assumed equivalence: both templates were read and directly
+    compared (`insightface.utils.face_align.arcface_dst`, checked live inside this image,
+    vs. uniface's own `reference_alignment` constant) and are byte-identical
+    ([[38.2946,51.6963],[73.5318,51.5014],[56.0252,71.7366],[41.5493,92.3655],
+    [70.7299,92.2041]]) - the same public ArcFace 112x112 template, not a coincidence of
+    two similar-looking numbers.
+
+    Returns the **raw** embedding, not L2-normalised - same convention as
+    InsightFaceEngine.embed() above (uniface's own `get_embedding()`, which this mirrors,
+    is likewise raw; only its separate `get_normalized_embedding()`/`__call__` divide by
+    the norm, and this engine intentionally follows the raw path so both embedding
+    families behave identically for any caller that compares them). This is a biometric
+    template; the runtime does not persist, match, or expose it through any API.
+    """
+
+    def __init__(
+        self, artifact_path: Path, label_map: dict[int, str] | None, model_name: str
+    ) -> None:
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:  # pragma: no cover
+            raise EngineUnavailableError(
+                "onnxruntime is not installed in this image; cannot load a .onnx artifact"
+            ) from exc
+
+        providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.insert(0, "CUDAExecutionProvider")
+
+        self._session = ort.InferenceSession(str(artifact_path), providers=providers)
+        self._input = self._session.get_inputs()[0]
+        self._family = _UNIFACE_EMBEDDING_FAMILIES[model_name]
+        self._labels = label_map or {}
+        self._providers = providers
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx",
+            runtime="onnxruntime",
+            available=True,
+            input_shape=shape,
+            labels=self._labels,
+            detail=f"uniface_family={self._family} providers={','.join(self._providers)}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            f"uniface {self._family} produces a 512-d embedding, not detections - call "
+            "embed() with a Detection from the paired face_detection model instead."
+        )
+
+    def embed(self, image: np.ndarray, detection: Detection) -> np.ndarray:
+        """Raw 512-d embedding for one already-detected face.
+
+        `detection` must carry the 5-point keypoints the platform's SCRFD face detector
+        produces (left eye, right eye, nose, left mouth corner, right mouth corner) - the
+        same order both insightface's and uniface's own alignment templates expect.
+        """
+        if detection.keypoints is None or len(detection.keypoints) != 5:
+            raise OutputContractUnknownError(
+                "embed() needs a Detection carrying 5-point keypoints from the paired "
+                "face_detection model (e.g. the platform's SCRFD detector)."
+            )
+
+        from insightface.utils import face_align
+
+        height, width = image.shape[:2]
+        landmarks = np.array(
+            [(kx * width, ky * height) for kx, ky, _ in detection.keypoints],
+            dtype=np.float32,
+        )
+        aligned = face_align.norm_crop(image, landmark=landmarks, image_size=112)
+        blob = _uniface_recognition_blob(aligned, self._family)
+        output = self._session.run(None, {self._input.name: blob})[0]
+        return output.reshape(-1).astype(np.float32)
+
+
+# uniface's own MediaPipe FaceMesh ROI recipe (`uniface.landmark.facemesh.roi_from_box`/
+# `warp_roi`, github.com/yakhyo/uniface): a square crop 1.5x the detector box (margin=0.25
+# per side reproduces that 1.5x, matching MediaPipe's own `detection_to_roi`), rotated so
+# the eye line is horizontal. Ported directly, not re-derived - this is exactly the class
+# of geometry ("a wrong anchor grid produces plausible-looking but silently wrong boxes")
+# this file already treats as too easy to get subtly wrong to guess at.
+_FACEMESH_MARGIN = 0.25
+
+
+def _facemesh_roi_from_box(
+    bbox_px: tuple[float, float, float, float], eye_points_px: list[tuple[float, float]]
+) -> tuple[float, float, float, float]:
+    """Returns (center_x, center_y, side, angle_degrees) in full-image pixels. Mirrors
+    `uniface.landmark.facemesh.roi_from_box`."""
+    x1, y1, x2, y2 = bbox_px
+    side = (1.0 + 2.0 * _FACEMESH_MARGIN) * max(x2 - x1, y2 - y1)
+    dx = eye_points_px[1][0] - eye_points_px[0][0]
+    dy = eye_points_px[1][1] - eye_points_px[0][1]
+    angle = float(np.degrees(np.arctan2(dy, dx)))
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0, side, angle
+
+
+def _facemesh_warp_roi(
+    image_bgr: np.ndarray, roi: tuple[float, float, float, float], size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Single bilinear resample straight to the model's input resolution - mirrors
+    MediaPipe's own ImageToTensorCalculator (`uniface.landmark.facemesh.warp_roi`);
+    warp-then-resize would interpolate twice."""
+    import cv2
+
+    center_x, center_y, side, angle = roi
+    matrix = cv2.getRotationMatrix2D((center_x, center_y), angle, size / side)
+    matrix[0, 2] += size / 2.0 - center_x
+    matrix[1, 2] += size / 2.0 - center_y
+    crop = cv2.warpAffine(image_bgr, matrix, (size, size))
+    return crop, cv2.invertAffineTransform(matrix)
+
+
+class UnifaceFaceMeshEngine:
+    """MediaPipe Face Mesh V1 (`uniface-facemesh-landmark`): 468 dense 3D landmarks + a
+    presence score, from a 192x192 crop. MediaPipe's own public, stable 468-point spec -
+    real gate-2 shape re-confirmed this session: `landmarks` (batch,468,3), `score`
+    (batch,1).
+
+    Does not implement `infer()` into the `Detection` shape - 468 3D points plus a
+    presence score does not fit a bounding box either. Use `landmarks()` with a
+    `Detection` from the platform's SCRFD face detector.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None) -> None:
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:  # pragma: no cover
+            raise EngineUnavailableError(
+                "onnxruntime is not installed in this image; cannot load a .onnx artifact"
+            ) from exc
+
+        providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.insert(0, "CUDAExecutionProvider")
+
+        self._session = ort.InferenceSession(str(artifact_path), providers=providers)
+        self._input = self._session.get_inputs()[0]
+        self._input_size = (
+            int(self._input.shape[2]) if isinstance(self._input.shape[2], int) else 192
+        )
+        outputs = self._session.get_outputs()
+        # Read by name, not position - both are self-describing in the real artifact
+        # ("landmarks", "score"), confirmed live this session, but matched explicitly
+        # rather than assumed positional, unlike the fragile column-order guess this file
+        # has already been bitten by once (the plate detector's class/score swap).
+        names = [o.name for o in outputs]
+        if "landmarks" not in names or "score" not in names:
+            raise OutputContractUnknownError(
+                f"Expected output names 'landmarks' and 'score', got {names}. Record an "
+                "output_schema on this model version before the runtime can interpret it."
+            )
+        self._output_names = names
+        self._landmarks_index = names.index("landmarks")
+        self._score_index = names.index("score")
+        self._labels = label_map or {}
+        self._providers = providers
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx",
+            runtime="onnxruntime",
+            available=True,
+            input_shape=shape,
+            labels=self._labels,
+            detail=f"providers={','.join(self._providers)}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "uniface-facemesh-landmark produces 468 3D landmarks plus a presence score, "
+            "not detections - call landmarks() with a Detection from the paired "
+            "face_detection model instead."
+        )
+
+    def landmarks(self, image: np.ndarray, detection: Detection) -> tuple[np.ndarray, float]:
+        """Returns ((468, 3) landmarks in full-image pixel coordinates, presence score in
+        [0, 1]).
+
+        `detection` must carry at least the first two keypoints (the eyes, in the
+        platform's SCRFD order) so the crop can be rolled level the way MediaPipe's own
+        `detection_to_roi` does; without leveling, the mesh degrades on a tilted head.
+        """
+        if detection.keypoints is None or len(detection.keypoints) < 2:
+            raise OutputContractUnknownError(
+                "landmarks() needs a Detection carrying at least 2 keypoints (the eyes) "
+                "from the paired face_detection model."
+            )
+
+        height, width = image.shape[:2]
+        bbox_px = (
+            detection.bbox[0] * width,
+            detection.bbox[1] * height,
+            detection.bbox[2] * width,
+            detection.bbox[3] * height,
+        )
+        eyes_px = [(kx * width, ky * height) for kx, ky, _ in detection.keypoints[:2]]
+        roi = _facemesh_roi_from_box(bbox_px, eyes_px)
+        crop, inverse = _facemesh_warp_roi(image, roi, self._input_size)
+
+        rgb = crop[:, :, ::-1].astype(np.float32) / 255.0
+        chw = rgb.transpose(2, 0, 1)
+        blob = np.expand_dims(chw, axis=0)
+
+        outputs = self._session.run(self._output_names, {self._input.name: blob})
+        raw_landmarks = outputs[self._landmarks_index][0]  # (468, 3), crop pixels
+        raw_logit = outputs[self._score_index][0]  # (1,), a logit, not a probability
+
+        points = raw_landmarks.astype(np.float64)
+        points[:, :2] = points[:, :2] @ inverse[:, :2].T + inverse[:, 2]
+        # Put z on the same pixel scale as x/y - matches uniface's own postprocess.
+        points[:, 2] *= roi[2] / self._input_size
+        score = float(1.0 / (1.0 + np.exp(-float(raw_logit[0]))))
+        return points.astype(np.float32), score
+
+
+class UnifaceMattingEngine:
+    """MODNet photographic (`uniface-modnet-matting`): a single alpha matte, matching
+    MODNet's own documented single output. Real gate-2 shape re-confirmed this session:
+    input (batch,3,H,W) dynamic, output "output" (batch,1,H,W).
+
+    Standard access_classification, not biometric (confirmed against the real registry
+    row) - a portrait matte is a foreground/background alpha map, not an identity
+    template. No face-detector pairing is needed: MODNet segments a portrait from its
+    background directly on the full frame. A matte is a per-pixel alpha map for the whole
+    frame, not a bounding box, so like the other two uniface engines above, this does not
+    implement `infer()`.
+    """
+
+    _STRIDE = 32  # uniface.matting.modnet.MODNet's own STRIDE constant.
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None) -> None:
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:  # pragma: no cover
+            raise EngineUnavailableError(
+                "onnxruntime is not installed in this image; cannot load a .onnx artifact"
+            ) from exc
+
+        providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.insert(0, "CUDAExecutionProvider")
+
+        self._session = ort.InferenceSession(str(artifact_path), providers=providers)
+        self._input = self._session.get_inputs()[0]
+        self._labels = label_map or {}
+        self._providers = providers
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx",
+            runtime="onnxruntime",
+            available=True,
+            input_shape=shape,
+            labels=self._labels,
+            detail=f"providers={','.join(self._providers)}",
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "uniface-modnet-matting produces a per-pixel alpha matte, not detections - "
+            "call matte() instead."
+        )
+
+    def matte(self, image: np.ndarray, *, input_size: int = 512) -> np.ndarray:
+        """Returns an (H, W) float32 alpha matte in [0, 1], resized back to the input
+        image's own resolution.
+
+        Ported from `uniface.matting.modnet.MODNet.preprocess`/`postprocess`: the image is
+        converted to RGB, resized so its shorter side matches `input_size` (aspect ratio
+        preserved, only when the image's long side is currently below `input_size` or its
+        short side above it) then floored to a multiple of 32 on each side (`_STRIDE`), and
+        normalised to [-1, 1] rather than the [0, 1]/mean-std conventions the other models
+        in this file use - confirmed against the literal upstream source, not assumed to
+        match the rest of this estate.
+        """
+        import cv2
+
+        orig_h, orig_w = image.shape[:2]
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        if max(orig_h, orig_w) < input_size or min(orig_h, orig_w) > input_size:
+            if orig_w >= orig_h:
+                new_h = input_size
+                new_w = int(orig_w / orig_h * input_size)
+            else:
+                new_w = input_size
+                new_h = int(orig_h / orig_w * input_size)
+        else:
+            new_h, new_w = orig_h, orig_w
+
+        new_h -= new_h % self._STRIDE
+        new_w -= new_w % self._STRIDE
+        rgb = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        x = rgb.astype(np.float32) / 255.0
+        x = (x - 0.5) / 0.5
+        chw = x.transpose(2, 0, 1)
+        tensor = np.expand_dims(chw, axis=0)
+
+        outputs = self._session.run(None, {self._input.name: tensor})
+        matte = outputs[0][0, 0]
+        return cv2.resize(matte, (orig_w, orig_h), interpolation=cv2.INTER_AREA)
+
+
 # --- TFLite (.tflite) ---------------------------------------------------------------
 
 class TfliteEngine:
@@ -652,10 +1055,18 @@ ENGINES_BY_RUNTIME: dict[str, type] = {
     "tflite": TfliteEngine,
 }
 
-# The two InsightFace artifacts this runtime can decode carry runtime="onnxruntime", same
-# as the plate detector/OCR pair - dispatched by task_code instead of a new runtime value,
-# so every other onnxruntime model is untouched by this.
-_INSIGHTFACE_TASK_CODES = ("face_detection", "face_recognition")
+# The two legacy InsightFace artifacts this runtime can decode carry runtime="onnxruntime",
+# same as the plate detector/OCR pair and the uniface-zoo models above - dispatched by
+# exact model_name, not by task_code. task_code alone used to be a safe dispatch key when
+# these were the *only* two face_detection/face_recognition artifacts in the registry, but
+# the 15 uniface-zoo models (2026-09-03) added more of both task_codes on entirely
+# different architectures (confirmed against the real manifests: `uniface-mobileface-
+# recognition`/`uniface-sphereface-recognition`/`uniface-adaface-recognition`/`uniface-
+# edgeface-recognition` are all task_code="face_recognition" too) that InsightFaceEngine's
+# `insightface.model_zoo.get_model()` was never built to decode. Keying off model_name
+# instead means only these exact two legacy artifacts - both real, currently-`production`/
+# revocable-independently rows in the registry - ever reach this class.
+_INSIGHTFACE_MODEL_NAMES = ("insightface-buffalo-l-detect", "insightface-buffalo-l-recognition")
 
 
 def build_engine(
@@ -663,9 +1074,16 @@ def build_engine(
     artifact_path: Path,
     label_map: dict[int, str] | None = None,
     task_code: str | None = None,
+    model_name: str | None = None,
 ):
-    if task_code in _INSIGHTFACE_TASK_CODES:
+    if model_name in _INSIGHTFACE_MODEL_NAMES:
         return InsightFaceEngine(artifact_path, label_map, task_code)
+    if model_name in _UNIFACE_EMBEDDING_FAMILIES:
+        return UnifaceEmbeddingEngine(artifact_path, label_map, model_name)
+    if model_name == "uniface-facemesh-landmark":
+        return UnifaceFaceMeshEngine(artifact_path, label_map)
+    if model_name == "uniface-modnet-matting":
+        return UnifaceMattingEngine(artifact_path, label_map)
     engine_cls = ENGINES_BY_RUNTIME.get(runtime)
     if engine_cls is None:
         raise EngineUnavailableError(f"No engine registered for runtime '{runtime}'")

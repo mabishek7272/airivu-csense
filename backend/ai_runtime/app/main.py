@@ -110,6 +110,61 @@ class InferenceResponse(BaseModel):
     frame_size: list[int]
 
 
+class FaceEmbeddingOut(BaseModel):
+    """One face's embedding from a uniface-zoo recognition model
+    (`_UNIFACE_VALIDATION_MODELS[*] == "embedding"`). Carries the full 512-d vector, not
+    just a summary - the validation script needs the real numbers to compute cosine
+    similarity across different golden images, the same way a real caller eventually
+    would. This is a biometric template; like every other biometric output in this
+    runtime, it is returned to the caller and never persisted, matched, or exposed
+    through any tenant-facing API."""
+
+    detector_confidence: float
+    bbox: list[float]
+    embedding_dim: int
+    embedding_l2_norm: float
+    embedding: list[float]
+
+
+class FaceLandmarkOut(BaseModel):
+    """One face's dense mesh from `uniface-facemesh-landmark`."""
+
+    detector_confidence: float
+    bbox: list[float]
+    landmark_score: float
+    landmarks: list[list[float]]
+
+
+class MatteSummary(BaseModel):
+    """Summary statistics for one `uniface-modnet-matting` alpha matte - the full (H, W)
+    float array is not serialised into JSON; `mean_alpha`/`coverage_fraction` are enough
+    to sanity-check the matte is neither all-zero nor all-one and roughly tracks a
+    portrait-sized foreground region."""
+
+    mean_alpha: float
+    coverage_fraction: float  # fraction of pixels with alpha > 0.5
+    shape: list[int]  # [height, width]
+
+
+class UnifaceValidationResponse(BaseModel):
+    """Response for `/internal/v1/validate-infer-uniface` - a separate response shape
+    from `InferenceResponse` because none of these 6 models' outputs are a `Detection`
+    list (see `engines.py`'s own `UnifaceEmbeddingEngine`/`UnifaceFaceMeshEngine`/
+    `UnifaceMattingEngine` docstrings for why `infer()` deliberately raises for all
+    three). Exactly one of `embeddings`/`landmarks`/`matte` is populated, matching which
+    of the 6 models `version_id` names."""
+
+    model_name: str
+    version_id: str
+    task_code: str
+    frame_size: list[int]
+    inference_ms: float
+    face_count: int | None = None
+    embeddings: list[FaceEmbeddingOut] | None = None
+    landmarks: list[FaceLandmarkOut] | None = None
+    matte: MatteSummary | None = None
+
+
 # --- Endpoints -----------------------------------------------------------------------
 
 @app.get("/healthz", tags=["health"])
@@ -302,6 +357,111 @@ async def validate_infer(
     return await _run_inference(registered, image, confidence)
 
 
+# The 6 uniface-zoo models `/internal/v1/validate-infer-uniface` below knows how to run -
+# exactly the 6 low-risk models `engines.py`'s `UnifaceEmbeddingEngine`/
+# `UnifaceFaceMeshEngine`/`UnifaceMattingEngine` decode (see that module's own dispatch
+# tables). Kept here rather than imported from `engines.py`'s private dicts so this
+# endpoint's supported-model list is visible and grep-able in one place, independent of
+# engines.py's internal dispatch structure.
+_UNIFACE_VALIDATION_MODELS: dict[str, str] = {
+    "uniface-adaface-recognition": "embedding",
+    "uniface-edgeface-recognition": "embedding",
+    "uniface-mobileface-recognition": "embedding",
+    "uniface-sphereface-recognition": "embedding",
+    "uniface-facemesh-landmark": "landmarks",
+    "uniface-modnet-matting": "matte",
+}
+# The platform's own already-verified face detector (production state, confirmed live
+# this session) - reused rather than building a second face cropper, per this session's
+# own instructions and CLAUDE.md's existing discipline of not re-deriving alignment maths
+# that already have a working production implementation.
+_FACE_DETECTOR_MODEL_NAME = "insightface-buffalo-l-detect"
+
+
+@app.post(
+    "/internal/v1/validate-infer-uniface",
+    response_model=UnifaceValidationResponse,
+    tags=["runtime"],
+)
+async def validate_infer_uniface(
+    version_id: uuid.UUID = Form(...),
+    confidence: float = Form(0.25),
+    frame: UploadFile = File(...),
+) -> UnifaceValidationResponse:
+    """Gate 2-4 validation harness for the 6 low-risk uniface-zoo models
+    (`_UNIFACE_VALIDATION_MODELS` above) - the sibling of `/internal/v1/validate-infer`
+    for models whose output is not a `Detection` list at all (a face embedding, a dense
+    landmark mesh, a portrait alpha matte) and therefore cannot go through
+    `InferenceResponse`/`_run_inference`. Same version_id-addressed, VALIDATABLE_STATES
+    scoping as `/internal/v1/validate-infer` - see that endpoint's own docstring for why.
+
+    For the 4 embedding models and the facemesh model, this first runs the platform's own
+    production face detector (`_FACE_DETECTOR_MODEL_NAME`) over the frame and then decodes
+    the target model once per detected face; `uniface-modnet-matting` needs no detector
+    and runs directly on the full frame.
+    """
+    image = _decode_frame(await frame.read())
+    async with _registry_session() as session:
+        registered = await get_by_version_id(session, version_id)
+    if registered is None:
+        raise ApiError(
+            status_code=404,
+            code="model_version_not_found",
+            message=f"No loadable version '{version_id}' (may be revoked/deprecated, or not exist).",
+        )
+
+    kind = _UNIFACE_VALIDATION_MODELS.get(registered.model_name)
+    if kind is None:
+        raise ApiError(
+            status_code=422,
+            code="not_a_uniface_validation_model",
+            message=(
+                f"'{registered.model_name}' is not one of the 6 models this endpoint "
+                f"validates: {sorted(_UNIFACE_VALIDATION_MODELS)}. Use /internal/v1/"
+                "validate-infer for a model whose output is a Detection list."
+            ),
+        )
+
+    pool: ModelPool = app.state.pool
+    loaded = await _load_in_threadpool(pool, registered)
+
+    detector_loaded = None
+    if kind in ("embedding", "landmarks"):
+        async with _registry_session() as session:
+            detector_registered = await get_deployable_by_name(session, _FACE_DETECTOR_MODEL_NAME)
+        if detector_registered is None:
+            raise ApiError(
+                status_code=503,
+                code="face_detector_unavailable",
+                message=(
+                    f"'{_FACE_DETECTOR_MODEL_NAME}' has no deployable version right now - "
+                    f"'{registered.model_name}' needs a detected face to run against."
+                ),
+            )
+        detector_loaded = await _load_in_threadpool(pool, detector_registered)
+
+    started = time.monotonic()
+    try:
+        result = await _run_uniface_inference(loaded, detector_loaded, kind, image, confidence)
+    except OutputContractUnknownError as exc:
+        raise ApiError(
+            status_code=501,
+            code="output_contract_unknown",
+            message=str(exc),
+            details={"model": registered.model_name, "runtime": registered.runtime},
+        ) from exc
+    inference_ms = (time.monotonic() - started) * 1000
+
+    return UnifaceValidationResponse(
+        model_name=loaded.model_name,
+        version_id=loaded.version_id,
+        task_code=registered.task_code,
+        frame_size=[image.shape[1], image.shape[0]],
+        inference_ms=round(inference_ms, 2),
+        **result,
+    )
+
+
 # --- Helpers --------------------------------------------------------------------------
 
 async def _resolve_or_raise(model_name: str):
@@ -354,5 +514,62 @@ async def _infer_in_threadpool(loaded, image, confidence: float):
     def _run():
         loaded.inference_count += 1
         return loaded.engine.infer(image, confidence=confidence)
+
+    return await anyio.to_thread.run_sync(_run)
+
+
+async def _run_uniface_inference(loaded, detector_loaded, kind: str, image, confidence: float) -> dict:
+    """Off the event loop, same reasoning as `_infer_in_threadpool`: ONNX Runtime calls
+    (and, for `kind in ("embedding", "landmarks")`, the SCRFD detector's own `.detect()`)
+    are blocking CPU work.
+    """
+    import anyio
+
+    def _run():
+        loaded.inference_count += 1
+
+        if kind == "matte":
+            matte = loaded.engine.matte(image)
+            return {
+                "matte": MatteSummary(
+                    mean_alpha=round(float(matte.mean()), 6),
+                    coverage_fraction=round(float((matte > 0.5).mean()), 6),
+                    shape=[int(matte.shape[0]), int(matte.shape[1])],
+                )
+            }
+
+        detector_loaded.inference_count += 1
+        detections = detector_loaded.engine.infer(image, confidence=confidence)
+
+        if kind == "embedding":
+            embeddings = []
+            for d in detections:
+                vector = loaded.engine.embed(image, d)
+                embeddings.append(
+                    FaceEmbeddingOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        embedding_dim=int(vector.shape[0]),
+                        embedding_l2_norm=round(float(np.linalg.norm(vector)), 6),
+                        embedding=[round(float(v), 6) for v in vector],
+                    )
+                )
+            return {"face_count": len(detections), "embeddings": embeddings}
+
+        if kind == "landmarks":
+            faces = []
+            for d in detections:
+                points, score = loaded.engine.landmarks(image, d)
+                faces.append(
+                    FaceLandmarkOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        landmark_score=round(score, 4),
+                        landmarks=[[round(float(c), 3) for c in pt] for pt in points.tolist()],
+                    )
+                )
+            return {"face_count": len(detections), "landmarks": faces}
+
+        raise OutputContractUnknownError(f"No uniface validation path for kind '{kind}'.")
 
     return await anyio.to_thread.run_sync(_run)

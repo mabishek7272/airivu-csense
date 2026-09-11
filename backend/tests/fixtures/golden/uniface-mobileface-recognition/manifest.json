@@ -1,0 +1,26 @@
+{
+  "model_name": "uniface-mobileface-recognition",
+  "task": "512-d face embedding (MobileFaceNet, MNET_V2). Not a detection/classification model - see uniface-adaface-recognition/manifest.json for the full explanation of why this manifest's shape differs from the intern-* manifests and what an embedding manifest can honestly claim.",
+  "note": "Real gate-2 shape independently re-confirmed this session: input 'input' FIXED (1,3,112,112) float32 (not a dynamic batch dimension like adaface/edgeface - confirmed live, matches CHECKLIST.md's prior write-up), output 'output' (1,512) float32. The fixed batch=1 means this engine (like sphereface below) only ever runs one aligned face crop per session.run call - already how UnifaceEmbeddingEngine.embed() calls it (one crop in, one embedding out), so no code change was needed for the fixed-batch case, but it is worth recording that the two fixed-batch models were not blindly assumed to behave like the two dynamic-batch ones.\n\nSame fixture, same detector, same honesty caveats as uniface-adaface-recognition/manifest.json: only stock_streetscene_3adults.jpg has usable real faces anywhere in this repo's fixtures, the production SCRFD detector found 2 of the 3 visible faces, and there is no same-identity pair anywhere in this project's fixtures to test true recognition recall against.\n\nMobileFace does not override BaseRecognizer.preprocess (confirmed against the real uniface/recognition/mobileface.py source) - RGB-converting, (pixel-127.5)/127.5 path, same as EdgeFace/SphereFace. Raw output on these two real faces is NOT unit-norm (1.77 / 1.95).",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "face_count_at_default_threshold": 2,
+        "embedding_dim": 512,
+        "embedding_dtype": "float32",
+        "all_finite": true,
+        "non_degenerate": "the two faces' embeddings must not be identical or all-zero",
+        "different_identity_cosine_similarity_low": "expected roughly near 0 (weak signal only, see uniface-adaface-recognition/manifest.json) for these two different real people"
+      },
+      "measured": {
+        "face_count": 2,
+        "embedding_dim": 512,
+        "l2_norms": [1.7667, 1.9462],
+        "all_finite": true,
+        "different_identity_pairwise_cosine_similarity": 0.0841
+      },
+      "note": "Same 2 real faces, same alignment, same detector as uniface-adaface-recognition."
+    }
+  ]
+}

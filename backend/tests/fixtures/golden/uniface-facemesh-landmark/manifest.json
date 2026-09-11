@@ -1,0 +1,40 @@
+{
+  "model_name": "uniface-facemesh-landmark",
+  "task": "468 dense 3D face landmarks + a presence score (MediaPipe Face Mesh V1). Not a detection/classification model - ground truth here is geometric (do the landmarks land on the actual detected face region) and structural (right shape/dtype/finiteness), not a class label.",
+  "note": "Real gate-2 shape independently re-confirmed this session: input 'input' (batch,3,192,192) float32, outputs 'landmarks' (batch,468,3) float32 and 'score' (batch,1) float32 - matches CHECKLIST.md's prior write-up and MediaPipe's own public, stable 468-point spec exactly.\n\nOnly fixture in this repo with usable real faces (see uniface-adaface-recognition/manifest.json for the full explanation). The production SCRFD face detector found 2 of the 3 visible real faces; this model runs once per detected face, cropped via uniface's own MediaPipe-matching ROI recipe (a square region 1.5x the detector box, rolled level using the detector's own eye keypoints - ported from uniface.landmark.facemesh.roi_from_box/warp_roi, github.com/yakhyo/uniface, cross-checked line-for-line against the real clone in this repo's uniface-main/ this session).\n\n**What 'ground truth' means for a dense landmark model without a labelled 468-point reference for this specific image**: rather than fabricate per-point coordinates (which would be a guess dressed up as ground truth - exactly what this project's own discipline forbids), this manifest checks the property that IS independently verifiable from the detector's own already-verified output: do the returned 2D landmark coordinates fall within (or very close to) the SAME face region the production SCRFD detector itself reported for that face. A facemesh whose coordinate transform is wrong (e.g. a sign error in the inverse-affine mapping, or a stale ROI) would produce landmarks nowhere near the detector's own box - that failure mode IS caught by this check, even without a full 468-point reference.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected": {
+        "face_count_at_default_threshold": 2,
+        "landmark_shape_per_face": [468, 3],
+        "landmark_dtype": "float32",
+        "presence_score_range": "[0, 1]",
+        "all_finite": true,
+        "landmarks_fall_within_detector_bbox_region": "x/y ranges should sit inside (or very close to) each face's own SCRFD bbox, not somewhere else in the frame or wildly out of the 0..width/0..height range"
+      },
+      "measured": {
+        "face_count": 2,
+        "faces": [
+          {
+            "landmark_shape": [468, 3],
+            "presence_score": 1.0,
+            "x_range_px": [268.7, 307.7],
+            "y_range_px": [426.2, 473.1],
+            "detector_bbox_px": {"x_range": [270.9, 307.2], "y_range": [420.0, 472.1], "note": "SCRFD bbox for this face, normalised [0.3346,0.3889,0.3793,0.4371] * (810,1080)"},
+            "all_finite": true
+          },
+          {
+            "landmark_shape": [468, 3],
+            "presence_score": 1.0,
+            "x_range_px": [113.6, 154.8],
+            "y_range_px": [422.3, 469.5],
+            "detector_bbox_px": {"x_range": [115.3, 155.0], "y_range": [419.6, 469.6], "note": "SCRFD bbox for this face, normalised [0.1423,0.3885,0.1914,0.4348] * (810,1080)"},
+            "all_finite": true
+          }
+        ]
+      },
+      "note": "Both faces' landmark x/y ranges sit almost exactly inside their own detector bbox (mesh naturally extends a few px beyond the box at jaw/forehead, expected for a face mesh vs. a tighter detector box) - confirms the ROI/warp/inverse-affine geometry is correct, not just that the model ran without error."
+    }
+  ]
+}
