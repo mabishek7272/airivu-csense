@@ -1615,6 +1615,33 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         - Not touched here: the 6 low-risk models (dispatched separately) and the 3
           anchor-based detectors / 2 no-guess models (still correctly excluded, per the
           reasoning already on record above).
+    - [x] **Both worktrees merged into `phase-1-foundation`, by hand, and `ai-runtime`
+          rebuilt/restarted for real (2026-09-11)** - the two agents independently
+          inserted their new engine classes at the same point in `engines.py` and
+          extended `build_engine()`'s dispatch, so this was resolved manually rather than
+          trusting an automatic 3-way merge: both class blocks kept in full, dispatch
+          combined into one table, the two agents' same-named validation scripts renamed
+          (`run_uniface_model_validation_lowrisk.py` / `_crosscheck.py`), CHECKLIST.md's
+          same bullet combined rather than one write-up silently winning. Re-verified
+          independently after merging, not just after each agent's own report: full
+          targeted test suite green (46 tests), `ruff` clean, and the load-bearing factual
+          claims (the ArcFace alignment template match, MiniFASNet's real/spoof index)
+          re-confirmed directly against the real installed packages a second time. Once
+          rebuilt, confirmed live through the real running API - not just re-imported
+          locally: `uniface-modnet-matting`, `uniface-adaface-recognition`, and
+          `uniface-facemesh-landmark` all return real, correct-shaped results from
+          `POST /internal/v1/validate-infer-uniface` against a real image (matte
+          coverage_fraction 0.063, 3 real embeddings/landmark sets with real detector
+          confidences).
+      - [ ] **Known gap, not a bug**: the 4 cross-check models (fairface/minifasnet/
+            mobilegaze/pipnet) have no equivalent live HTTP endpoint - agent 2 validated
+            them by importing `engines.py` directly into a local venv, the only option
+            available at the time (no restart allowed, demo running). `build_engine()`
+            now dispatches them correctly given a real running container, but nothing
+            calls it for these 4 over HTTP yet; `/internal/v1/validate-infer-uniface`
+            explicitly refuses them (`422 not_a_uniface_validation_model`), confirmed live.
+            A small addition to that endpoint (or a second one) would close this - not
+            done here, not demo-relevant, tracked rather than silently left unstated.
 
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
