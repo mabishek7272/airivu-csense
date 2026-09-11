@@ -1,0 +1,47 @@
+# Override layer for docker-compose.prod.yml on a host where port 80/443 already belong
+# to a reverse proxy this platform does not own (see dynamic.prod.behind-proxy.yml's own
+# header for the real case this exists for - 103.118.158.92, a shared box already running
+# nginx for ~20 unrelated client domains via certbot).
+#
+# Deliberately a narrow override (`docker compose -f docker-compose.prod.yml -f
+# docker-compose.prod.behind-proxy.yml ...`), not a second standalone file duplicating all
+# ~440 lines of docker-compose.prod.yml: this changes exactly one service (traefik) and
+# nothing else - postgres/redis/minio/every backend service/resource limits/logging caps
+# all stay exactly as docker-compose.prod.yml already defines them. Compose's list-merge
+# footgun that docker-compose.prod.yml's own header warns about (silently appending to a
+# list instead of replacing it) is why `ports:`/`command:`/`volumes:` are given in full
+# below, not partially - each one *replaces* the base file's list for this service,
+# verified against the real `docker compose config` merged output before this was used,
+# not assumed from Compose's docs alone.
+#
+# What changes and why:
+#   - `ports`: binds only to 127.0.0.1 on an unprivileged port (18080) instead of
+#     `0.0.0.0:80`/`0.0.0.0:443` - nginx reverse-proxies to this from the host's own
+#     loopback; nothing external can reach Traefik directly.
+#   - `command`: drops the `--entrypoints.websecure.address=:443` entrypoint, the
+#     HTTP->HTTPS redirect (nginx already forces HTTPS before a request ever reaches this
+#     container), and the entire Let's Encrypt ACME block (`--certificatesresolvers.*`) -
+#     TLS terminates at nginx using its own certbot-managed certificates, the same
+#     mechanism already serving every other domain on this host, not a second competing
+#     ACME account/challenge path for the same hostnames.
+#   - `volumes`: mounts `dynamic.prod.behind-proxy.yml` instead of `dynamic.prod.yml`
+#     (`web`-only entrypoints, no `tls:` block per router - see that file), and drops the
+#     `letsencrypt:` volume entirely since Traefik no longer manages any certificates.
+services:
+  traefik:
+    command: !override
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+      - --accesslog=true
+    # !override, not a plain list: Compose's default list-merge APPENDS to the base
+    # file's ports (confirmed for real - a first attempt without this tag produced
+    # 80/443/18080 all three bound, base file's 0.0.0.0:80/:443 alongside the new
+    # 127.0.0.1:18080, exactly the collision with the host's existing nginx this whole
+    # override exists to avoid). !override replaces the list outright, needs Compose
+    # v2.24+ (this host runs v5.3.1).
+    ports: !override
+      - "127.0.0.1:18080:80"
+    volumes: !override
+      - ./traefik/dynamic.prod.behind-proxy.yml:/etc/traefik/dynamic/dynamic.yml:ro

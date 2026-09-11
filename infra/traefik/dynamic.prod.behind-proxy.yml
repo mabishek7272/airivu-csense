@@ -1,0 +1,155 @@
+# Traefik PRODUCTION dynamic configuration for a deployment sitting BEHIND an existing
+# TLS-terminating reverse proxy this platform does not own (a shared host already running
+# nginx for other, unrelated sites - see docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md's "shared
+# host" note). Real, not hypothetical: 103.118.158.92 is exactly this shape - a
+# multi-tenant box where system nginx already owns host ports 80/443 for ~20 other real
+# client domains via certbot-issued certs, so `docker-compose.prod.yml`'s own Traefik
+# (which wants to bind 80/443 itself and run its own Let's Encrypt HTTP-01 challenge)
+# cannot be used as-is without taking those other sites down.
+#
+# Same routing rules, security headers, rate limits, and CORS shape as dynamic.prod.yml -
+# the only real difference is entrypoint (`web`/plain HTTP on an internal-only port,
+# instead of `websecure`/443) and no `tls:`/certResolver block on any router, because TLS
+# terminates at the host's nginx, which reverse-proxies plain HTTP to Traefik. Keep this
+# file in sync with dynamic.yml/dynamic.prod.yml when routing itself changes; only these
+# two properties (entrypoint, tls block) are the deliberate difference.
+#
+# Pair with docker-compose.prod.behind-proxy.yml, which points Traefik's `ports:` at an
+# internal-only port instead of 80/443 and drops the ACME/Let's Encrypt command flags -
+# see that file's own header for exactly what it overrides and why.
+http:
+  routers:
+    tenant-api:
+      rule: "PathPrefix(`/api/v1/tenant`) || PathPrefix(`/api/v1/auth`) || PathPrefix(`/ws/v1/tenant`)"
+      service: tenant-api
+      entryPoints: [web]
+      middlewares: [security-headers, tenant-cors, api-ratelimit]
+
+    admin-api:
+      rule: "PathPrefix(`/api/v1/admin`)"
+      service: admin-api
+      entryPoints: [web]
+      middlewares: [security-headers, platform-cors, api-ratelimit]
+
+    media-hls:
+      rule: "PathPrefix(`/media/hls`)"
+      service: media-hls
+      entryPoints: [web]
+      middlewares: [security-headers, media-strip-hls]
+
+    media-webrtc:
+      rule: "PathPrefix(`/media/webrtc`)"
+      service: media-webrtc
+      entryPoints: [web]
+      middlewares: [security-headers, media-strip-webrtc]
+
+    customer-crm:
+      rule: "Host(`app.3rdi.in`)"
+      service: customer-crm
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+    developer-console:
+      rule: "Host(`console.3rdi.in`)"
+      service: developer-console
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+    demo-site:
+      rule: "Host(`demo.3rdi.in`) || Host(`3rdi.in`)"
+      service: demo-site
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+    # Presigned evidence/report URLs are followed directly by a browser (MINIO_PUBLIC_
+    # ENDPOINT, see docker-compose.prod.yml's own x-backend-env comment on why this can't
+    # be proxied through the platform's own API services) - MinIO itself is never
+    # published to the host (docker-compose.prod.yml's own "no host port published"
+    # design), so this is the one way a real browser can reach it in this topology: routed
+    # through the same Traefik ingress as everything else, not a second host port.
+    object-storage:
+      rule: "Host(`storage.3rdi.in`)"
+      service: object-storage
+      entryPoints: [web]
+      middlewares: [security-headers]
+
+  services:
+    tenant-api:
+      loadBalancer:
+        servers:
+          - url: "http://tenant-api:8000"
+    admin-api:
+      loadBalancer:
+        servers:
+          - url: "http://admin-api:8000"
+    customer-crm:
+      loadBalancer:
+        servers:
+          - url: "http://customer-crm:8080"
+    developer-console:
+      loadBalancer:
+        servers:
+          - url: "http://developer-console:3000"
+    demo-site:
+      loadBalancer:
+        servers:
+          - url: "http://demo-site:8080"
+    media-hls:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8888"
+    media-webrtc:
+      loadBalancer:
+        servers:
+          - url: "http://mediamtx:8889"
+    object-storage:
+      loadBalancer:
+        servers:
+          - url: "http://minio:9000"
+
+  middlewares:
+    # X-Forwarded-Proto/Host from nginx are trusted for the "am I HTTPS" security-header
+    # decisions below - nginx is the only thing that can reach Traefik's internal port
+    # (not published to the host's public interface at all, see the override compose
+    # file), so there is no path for an external client to forge these directly.
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"
+
+    tenant-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "https://app.3rdi.in"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    platform-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "https://console.3rdi.in"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+
+    api-ratelimit:
+      rateLimit:
+        average: 50
+        burst: 100
+
+    media-strip-hls:
+      stripPrefix:
+        prefixes: ["/media/hls"]
+
+    media-strip-webrtc:
+      stripPrefix:
+        prefixes: ["/media/webrtc"]

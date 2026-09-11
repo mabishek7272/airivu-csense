@@ -96,6 +96,29 @@ Watch the `traefik` logs for the first certificate issuance
 (`docker compose -f docker-compose.prod.yml logs -f traefik`) — a failure here is almost
 always DNS not yet propagated or port 80 not reachable, not a Traefik config problem.
 
+**On a shared host** (port 80/443 already belong to a reverse proxy this platform does
+not own — a real case, not hypothetical: `103.118.158.92`, the box named in this repo's
+own history as the legacy system's home, turned out to already run nginx for ~20
+unrelated client domains via certbot when this platform was actually deployed there),
+Traefik cannot bind 80/443 itself without taking those other sites down. Use
+`docker-compose.prod.behind-proxy.yml` as an *additional* `-f` layer (add
+`-f docker-compose.prod.behind-proxy.yml` to every command above, after
+`docker-compose.prod.yml`) — it rebinds Traefik to `127.0.0.1:18080` only and drops its
+own ACME/Let's Encrypt handling, paired with
+`infra/traefik/dynamic.prod.behind-proxy.yml` (`web`-only entrypoints, no per-router
+`tls:` block — TLS terminates wherever the existing proxy already terminates it for every
+other site on that host, e.g. at Cloudflare's edge or via that proxy's own certbot). The
+existing reverse proxy then gets one small addition per hostname — a server block that
+proxies to `127.0.0.1:18080` with `Host`/`X-Forwarded-*` headers set and, if any route
+needs it (this platform's tenant WebSocket endpoints do), the standard `Upgrade`/
+`Connection` websocket-upgrade headers. See that override file's own header comment for
+exactly what it changes and why — Compose's default list-merge *appends* rather than
+replaces `ports`/`command`/`volumes` for a service already defined in the base file, which
+silently reproduces the exact port conflict this whole path exists to avoid unless the
+override uses the `!override` YAML tag (Compose v2.24+) on each of those three keys, not
+a plain list - confirmed for real against `docker compose config`'s own merged output
+before relying on it, not assumed from Compose's docs alone.
+
 ### B.6 Bootstrap the first platform admin
 
 There is no self-service path to platform scope, by design (Operations Manual §A.2) —
