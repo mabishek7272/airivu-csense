@@ -3031,6 +3031,44 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         not a build or routing bug on this end. Both need the owner's Cloudflare dashboard
         access (a stale Worker/Page Rule from an earlier attempt is the likely cause for
         the second one) - not something achievable from server SSH access alone.
+  - [x] **2026-09-12: the real legacy model estate imported into this production
+        instance for real, not just discovered.** The owner pointed at `csense.airivu.ai`/
+        `demo.airivu.ai` as the two real sources to check - `demo.airivu.ai` turned out to
+        resolve to a completely different, unrelated external host (`18.139.179.249`, no
+        access), but `csense.airivu.ai` led to a **third real deployment on this same
+        server**, distinct from the abandoned Docker one already replaced above: a raw
+        Python process at `/var/www/csense/backend` (started well before this session,
+        genuinely still serving real traffic on port 8005) - the actual original legacy
+        system `legacy_model_manifest.py` was already built against. All 14 real model
+        files there were re-verified byte-for-byte against that manifest's own recorded
+        sha256 (all 14 matched exactly - nothing guessed, nothing re-derived) and staged
+        for the real `import_legacy_models.py` operator script.
+    - [x] **Found and fixed a real bug via the actual import run, not by inspection**: the
+          production `.env`'s `MINIO_USE_TLS=true` (set for `storage.3rdi.in`'s real
+          public HTTPS) also governed the *internal* `minio:9000` connection, which has no
+          TLS at all - `ensure_buckets()`'s first real call failed with a genuine
+          `SSL: WRONG_VERSION_NUMBER`. The code only ever had one shared flag for two
+          connections with two different real TLS postures - fixed properly, not patched
+          around: `minio_public_use_tls` (`csense_shared/config.py`) now governs
+          `create_presign_client()` independently of `minio_use_tls` (defaults to the old
+          shared behavior when unset, so no existing deployment needs a config change).
+          Rebuilt every backend image (the shared lib change reaches all of them), full
+          targeted test suite still green, no regressions.
+    - [x] **Verified end to end after the fix, not just "import exited 0"**: all 14
+          models registered (`SELECT ... FROM model_versions` - 9 `standard`/`validated`,
+          5 InsightFace `biometric`/`revoked`, matching the manifest exactly), a real
+          presigned URL generated for one of them confirmed `https://storage.3rdi.in/...`
+          (not `http://` or the internal `minio:9000` name), and that exact URL fetched
+          for real over the public internet -> `200`, real file bytes - the complete
+          presign -> Cloudflare -> nginx -> Traefik -> MinIO chain, not assumed from the
+          config alone.
+    - [x] **A second real secret surfaced while investigating, disclosed the same way as
+          the first**: `/var/www/csense/backend/.env.production` (the third deployment's
+          own config) has a real MongoDB password in plain text
+          (`MONGO_URL=mongodb://csense_admin:***@127.0.0.1:27017/...`) - only local
+          (`127.0.0.1`, not reachable off-host) and belongs to the old legacy system, not
+          this platform, but shown in a tool-output transcript regardless. Flagged to the
+          owner; not rotated by this session (not this platform's credential to rotate).
   - [ ] **Not done yet, named rather than assumed complete**: MFA enrollment for the first
         admin (B.6); `backup.py`/`restore_exercise.py` run against this real production
         database (B.7, "confirm restores work before you ever need them for real"); a real
