@@ -8,8 +8,19 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Asymmetric algorithms only. `decode_access_token`/`verify_signed_command` already pin
+# `algorithms=[settings.jwt_algorithm]` on every `jwt.decode()` call - a single,
+# server-controlled value, not whatever `alg` an incoming token claims - so this was never
+# remotely exploitable by an attacker-forged token the way a bare `jwt.decode(token, key)`
+# (no `algorithms=` at all) would be. The real, narrower gap a real pentest run found: this
+# setting itself had no validation at load time, so an operator typo/misconfiguration
+# (`JWT_ALGORITHM=none`, or a symmetric algorithm that would let the *public* key double as
+# an HMAC secret) would have been accepted silently. Caught and closed as defense-in-depth,
+# not because it was live-exploitable as deployed.
+_ALLOWED_JWT_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"})
 
 
 class Settings(BaseSettings):
@@ -68,6 +79,17 @@ class Settings(BaseSettings):
 
     # JWT
     jwt_algorithm: str = "RS256"
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def _jwt_algorithm_must_be_asymmetric(cls, value: str) -> str:
+        if value not in _ALLOWED_JWT_ALGORITHMS:
+            raise ValueError(
+                f"JWT_ALGORITHM={value!r} is not an allowed asymmetric algorithm "
+                f"({sorted(_ALLOWED_JWT_ALGORITHMS)}) - refusing to start rather than "
+                "silently accept a symmetric or 'none' algorithm."
+            )
+        return value
     jwt_private_key_path: str = "/run/secrets/jwt_private.pem"
     jwt_public_key_path: str = "/run/secrets/jwt_public.pem"
     jwt_issuer: str = "csense-local"

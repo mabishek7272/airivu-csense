@@ -508,7 +508,12 @@ async def probe_camera(
             "UPDATE cameras SET last_probed_at = now(), stream_profile = CAST(:profile AS jsonb), "
             "last_error = :error, "
             "status = CASE WHEN :ok AND status = 'provisioning' THEN 'ready' ELSE status END "
-            "WHERE id = :id"
+            # `deleted_at IS NULL`: found by a real pentest run - without it, a camera
+            # soft-deleted between `load_camera()`'s fetch above and this write (a real,
+            # if narrow, race - another request's DELETE landing mid-probe) would still
+            # get its telemetry updated after deletion. Same guard `_require_own_camera`
+            # already applies everywhere else a camera is looked up.
+            "WHERE id = :id AND deleted_at IS NULL"
         ),
         {
             "id": camera_id,
