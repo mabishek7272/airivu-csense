@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     # presigning falls back to `minio_endpoint`, which is correct only when the two
     # are the same host.
     minio_public_endpoint: str = ""
+    # Separate from `minio_use_tls` on purpose: a real deployment can (and often does)
+    # have these two facts disagree - `minio:9000` on the container network typically has
+    # no cert of its own, while `minio_public_endpoint` sits behind a TLS-terminating
+    # reverse proxy (Traefik, nginx, Cloudflare) that the internal hop never touches.
+    # Found for real, not hypothetical: 103.118.158.92's production deploy has
+    # `minio_public_endpoint=storage.3rdi.in` reachable over real HTTPS via Cloudflare,
+    # but the container-to-container `minio:9000` connection has no TLS at all - a single
+    # shared flag made `ensure_buckets()`/every internal upload fail with
+    # `SSL: WRONG_VERSION_NUMBER` (the internal client tried a TLS handshake against a
+    # plaintext port) the moment `minio_use_tls=true` was set for the public endpoint's
+    # sake. Defaults to `minio_use_tls` when unset, so an existing single-host deployment
+    # (dev, or a dedicated box where both really are the same TLS posture) needs no change.
+    minio_public_use_tls: bool | None = None
     # Pinned so presigning never needs a GetBucketLocation round trip. MinIO
     # defaults to us-east-1 unless configured otherwise.
     minio_region: str = "us-east-1"
@@ -204,6 +217,12 @@ class Settings(BaseSettings):
     @property
     def minio_presign_endpoint(self) -> str:
         return self.minio_public_endpoint or self.minio_endpoint
+
+    @property
+    def minio_presign_use_tls(self) -> bool:
+        """`minio_use_tls` if `minio_public_use_tls` was never set - see that field's own
+        comment for why they're allowed to differ."""
+        return self.minio_use_tls if self.minio_public_use_tls is None else self.minio_public_use_tls
 
     @property
     def customer_crm_origins(self) -> list[str]:

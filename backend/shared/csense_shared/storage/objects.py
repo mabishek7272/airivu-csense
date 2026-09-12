@@ -69,7 +69,11 @@ def create_presign_client(settings: Settings) -> Minio:
         settings.minio_presign_endpoint,
         access_key=settings.minio_root_user,
         secret_key=settings.minio_root_password,
-        secure=settings.minio_use_tls,
+        # Deliberately not `minio_use_tls`: that governs the internal `minio_endpoint`
+        # connection (`create_client` above), which can have a different real TLS
+        # posture than the externally-reachable `minio_presign_endpoint` a browser
+        # follows this URL to - see `Settings.minio_public_use_tls`'s own comment.
+        secure=settings.minio_presign_use_tls,
         region=settings.minio_region,
     )
 
