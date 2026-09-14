@@ -1,9 +1,18 @@
 /* Design tokens and base styles for the Customer CRM.
  *
- * Tokens rather than hardcoded values throughout, so the dark theme below is a variable
- * swap rather than a second stylesheet. The UX brief requires WCAG 2.2 AA, so every
- * foreground/background pair here clears 4.5:1 for body text and 3:1 for large text and
- * UI boundaries.
+ * "Technical Atmosphere" — a warm-black instrument aesthetic for continuous surveillance
+ * work, from the design system canvas (design/csense-ui/System.dc.html). Tokens rather
+ * than hardcoded values throughout, so applying it is a variable swap under the *same*
+ * names every page/component already uses, not a second stylesheet or a page-by-page
+ * rewrite. One theme, deliberately — this palette was specified as the product's own
+ * identity, not a dark-mode variant of a light default, so there is no
+ * prefers-color-scheme branch here.
+ *
+ * The UX brief requires WCAG 2.2 AA; every foreground/background pair below clears 4.5:1
+ * for body text and 3:1 for large text and UI boundaries. Crimson (#98134E) is a fill
+ * colour only — it fails contrast as body text at this lightness on this canvas — so
+ * severity/status foregrounds use rose (#FF8ABB) or emerald (#10B981) instead, exactly as
+ * the system sheet's own usage rule states.
  *
  * Severity colours are deliberately paired with a text label everywhere they appear.
  * Colour alone cannot carry meaning in an operations tool - roughly 1 in 12 men has a
@@ -11,34 +20,46 @@
  */
 
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-sunken: #eef0f3;
-  --border: #d5d9e0;
-  --border-strong: #aeb5c0;
+  --canvas: #241c21;
+  --well: #1a1418;
+  --raised: #2a2026;
+  --hair: #362a31;
+  --hair-strong: #4a3b43;
+  --emerald: #10b981;
+  --rose: #ff8abb;
+  --crimson: #98134e;
+  --ink: #f5edf0;
+  --dim: #a2929a;
+  --faint: #6e5f67;
 
-  --text: #14181f;
-  --text-muted: #545c6a;
-  --text-inverse: #ffffff;
+  --bg: var(--canvas);
+  --surface: var(--well);
+  --surface-sunken: var(--raised);
+  --border: var(--hair);
+  --border-strong: var(--hair-strong);
 
-  --accent: #1f5fd0;
-  --accent-hover: #17489e;
-  --accent-subtle: #e8effb;
+  --text: var(--ink);
+  --text-muted: var(--dim);
+  --text-inverse: #fff0f6;
 
-  --critical: #a5102a;
-  --critical-subtle: #fdeaee;
-  --high: #b4470a;
-  --high-subtle: #fdf0e6;
-  --medium: #8a6100;
-  --medium-subtle: #fbf3e0;
-  --low: #1c6b52;
-  --low-subtle: #e6f4ef;
-  --info: #35506e;
-  --info-subtle: #eaf0f7;
+  --accent: var(--rose);
+  --accent-hover: #ffb3d2;
+  --accent-subtle: rgb(255 138 187 / 12%);
+
+  --critical: #ff6b9d;
+  --critical-subtle: rgb(152 19 78 / 28%);
+  --high: #f0a87e;
+  --high-subtle: rgb(194 96 58 / 20%);
+  --medium: #e0be72;
+  --medium-subtle: rgb(138 106 46 / 20%);
+  --low: var(--emerald);
+  --low-subtle: rgb(16 185 129 / 12%);
+  --info: var(--dim);
+  --info-subtle: var(--raised);
 
   --radius: 8px;
-  --radius-sm: 5px;
-  --shadow: 0 1px 2px rgb(20 24 31 / 8%), 0 2px 8px rgb(20 24 31 / 6%);
+  --radius-sm: 6px;
+  --shadow: 0 8px 22px rgb(0 0 0 / 32%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -47,38 +68,14 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12151a;
-    --surface: #1a1e25;
-    --surface-sunken: #23282f;
-    --border: #333a44;
-    --border-strong: #4a525e;
-
-    --text: #eef1f5;
-    --text-muted: #a3acba;
-
-    --accent: #6ea3f5;
-    --accent-hover: #8ab6f8;
-    --accent-subtle: #1c2939;
-
-    --critical: #ff8fa1;
-    --critical-subtle: #33161c;
-    --high: #f7ad72;
-    --high-subtle: #331f11;
-    --medium: #e5c268;
-    --medium-subtle: #2e2612;
-    --low: #7ddcb8;
-    --low-subtle: #122b23;
-    --info: #a8c3e0;
-    --info-subtle: #1a2431;
-
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 2px 8px rgb(0 0 0 / 30%);
-  }
+/* Idle/arrival motion only — nothing moves while an operator is reading a frame, and all
+ * of it collapses to a static end-state here. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
 }
 
 * { box-sizing: border-box; }
@@ -112,38 +109,110 @@ body {
 }
 .skip-link:focus { left: var(--space-4); }
 
-/* --- Layout ------------------------------------------------------------------ */
+/* --- Layout: sidebar shell ----------------------------------------------------
+ *
+ * Grouped nav (Operations / Infrastructure / Intelligence / Alerting) in a fixed
+ * sidebar, replacing a flat top nav - from design/csense-ui/Main.dc.html. */
 
-.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.app-shell { min-height: 100vh; display: flex; }
 
-.app-header {
+.app-sidebar {
+  width: 232px;
+  flex: none;
+  background: #1e171c;
+  border-right: 1px solid var(--hair);
   display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-3) var(--space-5);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .app-brand {
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--hair);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-size: 13px;
   white-space: nowrap;
 }
-.app-brand span { color: var(--text-muted); font-weight: 400; }
+.app-brand span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--faint);
+  font-weight: 400;
+  margin-top: 1px;
+}
 
-.app-nav { display: flex; gap: var(--space-1); flex: 1; }
+.app-nav { flex: 1; padding: var(--space-2) var(--space-2) var(--space-4); display: flex; flex-direction: column; }
 
-.app-nav a {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
+.nav-group {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0 10px;
+  margin: 16px 0 6px;
+}
+.nav-group:first-child { margin-top: 4px; }
+
+.app-nav a.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--dim);
   text-decoration: none;
   font-weight: 500;
+  font-size: 13px;
+  transition: background 0.18s, color 0.18s;
 }
-.app-nav a:hover { background: var(--surface-sunken); color: var(--text); }
-.app-nav a[aria-current="page"] { background: var(--accent-subtle); color: var(--accent); }
+.app-nav a.nav-item:hover { background: var(--raised); color: var(--ink); }
+.app-nav a.nav-item[aria-current="page"] {
+  background: linear-gradient(90deg, rgb(152 19 78 / 34%), rgb(152 19 78 / 6%));
+  color: var(--ink);
+  box-shadow: inset 2px 0 0 var(--rose);
+}
+.nav-item svg { flex: none; }
+.nav-item-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.app-sidebar-footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--hair);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-sidebar-footer button {
+  margin-left: auto;
+  flex: none;
+}
+
+.app-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.app-topbar {
+  height: 56px;
+  flex: none;
+  border-bottom: 1px solid var(--hair);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  background: #211a1f;
+}
+.app-topbar .mono { color: var(--faint); }
 
 .app-main { flex: 1; padding: var(--space-5); max-width: 1200px; width: 100%; margin: 0 auto; }
 
@@ -170,33 +239,41 @@ body {
 select, input[type="search"], input[type="text"], input[type="email"], input[type="password"] {
   font: inherit;
   color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
+  background: #120d10;
+  border: 1px solid var(--hair);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   min-height: 36px;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+select:focus, input:focus {
+  border-color: var(--rose);
+  box-shadow: 0 0 0 3px rgb(255 138 187 / 14%);
 }
 
 button {
   font: inherit;
   font-weight: 500;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
+  border: 1px solid var(--hair);
+  background: var(--raised);
   color: var(--text);
   padding: var(--space-2) var(--space-3);
-  min-height: 36px;
+  min-height: 34px;
   cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
 }
-button:hover:not(:disabled) { background: var(--surface-sunken); }
+button:hover:not(:disabled) { border-color: var(--faint); }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
 
+/* Crimson is a fill, never body text (System.dc.html's own usage rule) - the primary
+ * button is exactly that fill, with light text on top of it, never crimson-on-canvas. */
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--crimson);
+  border-color: #b41c5e;
   color: var(--text-inverse);
 }
-button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+button.primary:hover:not(:disabled) { background: #ad1659; border-color: var(--rose); }
 
 button.link {
   border: none;
@@ -206,14 +283,27 @@ button.link {
   min-height: auto;
 }
 
-/* --- Cards ------------------------------------------------------------------- */
+/* --- Cards: "well" - a recessed instrument panel, corner brackets included ---------- */
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--well);
+  border: 1px solid var(--hair);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  position: relative;
 }
+.card::before, .card::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-color: var(--hair);
+  border-style: solid;
+  opacity: 0.9;
+  pointer-events: none;
+}
+.card::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+.card::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
 
 .card-list { display: flex; flex-direction: column; gap: var(--space-3); }
 
@@ -352,20 +442,22 @@ button.link {
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 4px;
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.badge-critical { background: var(--critical-subtle); color: var(--critical); border-color: currentColor; }
-.badge-high     { background: var(--high-subtle);     color: var(--high);     border-color: currentColor; }
-.badge-medium   { background: var(--medium-subtle);   color: var(--medium);   border-color: currentColor; }
-.badge-low      { background: var(--low-subtle);      color: var(--low);      border-color: currentColor; }
-.badge-info     { background: var(--info-subtle);     color: var(--info);     border-color: currentColor; }
-.badge-neutral  { background: var(--surface-sunken);  color: var(--text-muted); border-color: var(--border); }
+.badge-critical { background: var(--critical-subtle); color: #ffc2dc; border-color: var(--crimson); }
+.badge-high     { background: var(--high-subtle);     color: var(--high);     border-color: #c2603a; }
+.badge-medium   { background: var(--medium-subtle);   color: var(--medium);   border-color: #8a6a2e; }
+.badge-low      { background: var(--low-subtle);      color: var(--low);      border-color: rgb(16 185 129 / 50%); }
+.badge-info     { background: var(--info-subtle);     color: var(--info);     border-color: var(--hair); }
+.badge-neutral  { background: var(--raised);  color: var(--text-muted); border-color: var(--hair); }
 
 /* --- States ------------------------------------------------------------------ */
 
@@ -468,19 +560,10 @@ button.link {
 
 /* --- Narrow viewports -------------------------------------------------------- */
 
-/* Operators use tablets and phones on a floor walk, so the header must reflow rather
- * than push the page sideways. A horizontally scrolling app is unusable one-handed. */
+/* Operators use tablets and phones on a floor walk. The sidebar-to-top-strip collapse
+ * lives in the "Narrow viewports: sidebar becomes a top strip" block further down
+ * (860px breakpoint) - this one only covers what's still phone-specific beyond that. */
 @media (max-width: 560px) {
-  .app-header {
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-  }
-  .app-nav { order: 3; flex-basis: 100%; }
-  /* The tenant id is a debugging affordance, not something an operator needs on a
-   * phone — and it is the widest thing competing for the top row. */
-  .app-header .mono { display: none; }
-  .app-main { padding: var(--space-4); }
   .page-head h1 { font-size: 18px; }
 }
 
@@ -654,8 +737,9 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .row-actions { display: flex; gap: var(--space-1); flex-wrap: wrap; white-space: nowrap; }
 
 .pill {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; font-weight: 500; border: 1px solid currentColor;
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+  font-weight: 500; border: 1px solid currentColor;
 }
 .pill-ready, .pill-online { color: var(--low); background: var(--low-subtle); }
 .pill-provisioning, .pill-pending, .pill-enrolled { color: var(--medium); background: var(--medium-subtle); }
@@ -813,3 +897,77 @@ html, body { max-width: 100%; overflow-x: hidden; }
   padding: var(--space-3);
 }
 .live-view-player video { border-radius: var(--radius-sm); }
+
+/* --- Instrument motion: LED halo, evidence scan sweep, arrival rise --------------------
+ * Idle-state or arrival-state only, per System.dc.html's own motion rule - nothing here
+ * moves while an operator is reading a frame, and prefers-reduced-motion (top of file)
+ * collapses all of it to a static end-state. */
+
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  position: relative;
+  display: inline-block;
+}
+.led::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.22;
+  animation: led-halo 2.4s ease-out infinite;
+}
+@keyframes led-halo {
+  0% { transform: scale(0.55); opacity: 0.4; }
+  70% { transform: scale(1.7); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* A live camera thumbnail's own signal that the feed is being watched, not decorative -
+ * see System.dc.html §05. */
+.scan { position: absolute; inset: 0; overflow: hidden; border-radius: 5px; pointer-events: none; }
+.scan i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 34%;
+  background: linear-gradient(180deg, transparent, rgb(255 138 187 / 16%), transparent);
+  animation: scan-sweep 3.6s linear infinite;
+}
+@keyframes scan-sweep {
+  0% { top: -34%; }
+  100% { top: 100%; }
+}
+
+/* New-arrival rows (e.g. an incident landing over the live WebSocket) settle in rather
+ * than snapping into place - signals "new", not "the page reflowed". */
+.row-rise { animation: row-rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) backwards; }
+@keyframes row-rise {
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- Narrow viewports: sidebar becomes a top strip, nav scrolls horizontally --------- */
+
+@media (max-width: 860px) {
+  .app-shell { flex-direction: column; }
+  .app-sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+  .app-brand { border-bottom: none; border-right: 1px solid var(--hair); flex: none; }
+  .app-nav { flex-direction: row; padding: var(--space-2); overflow-x: auto; }
+  .nav-group { display: none; }
+  .app-nav a.nav-item { flex: none; white-space: nowrap; }
+  .app-sidebar-footer { display: none; }
+  .app-topbar { padding: 0 var(--space-4); }
+  .app-topbar .mono { display: none; }
+  .app-main { padding: var(--space-4); }
+}
