@@ -3182,14 +3182,14 @@ first pass (cookie-based refresh, exact DTO shapes) carried forward into the rew
         (including the concurrent-401 dedup case), login/logout state transitions in
         `AuthContext`, and cursor-pagination/status-filter-reset behavior in
         `useIncidents`. CI (`.github/workflows/ci.yml`'s `mobile-app` job) runs the same
-        three commands on every push. **Not yet run on a real device, emulator, or
-        Simulator** - no native build step exists in CI (no Xcode on a Linux runner; the
-        Android build needs a real dev-client/EAS run, not plain `expo start`), and this
-        development machine's own real memory constraints (documented earlier in this
-        same phase, from the native Android attempt) apply equally to an emulator here.
-        Named as a real, un-skipped next step (`mobile/app/README.md`'s own "What's
-        verified and what isn't" section), including the native-cookie-jar reliance
-        itself, which has not been exercised against a real backend on a real device.
+        three commands on every push. No native build step exists in CI (no Xcode on a
+        Linux runner), so this still isn't exercised on every push - but it **has** now
+        been run for real on a native iOS Simulator build once, on 2026-09-14 (see the
+        dated entry below): built from source (prebuild + CocoaPods + xcodebuild, 0
+        errors), installed, and launched, with a real screenshot of the login screen
+        working end to end. The native-cookie-jar reliance itself is still unexercised
+        against a real backend on a real device - the Simulator run only proves the app
+        launches and the theme renders, not a login round-trip (see that entry for why).
   - [x] One Windows/npm-specific real finding carried into the README: `expo-secure-store`
         and `@preeternal/react-native-cookie-manager` both needed
         `npm install --legacy-peer-deps` to resolve Expo SDK 57's own peer-dependency
@@ -3202,6 +3202,90 @@ first pass (cookie-based refresh, exact DTO shapes) carried forward into the rew
       "needs a Mac for Xcode" blocker for the app's *code*. A real signed iOS binary via
       EAS Build (or a local Xcode archive) still needs the Mac the user has, and hasn't
       been done in this session - named in `mobile/app/README.md`, not silently claimed.
+
+- [x] **2026-09-14: "Technical Atmosphere" theme applied to `frontend/customer-crm`**,
+      implementing a previously-designed Claude Design canvas mockup
+      (`design/csense-ui/System.dc.html`, `Main.dc.html`) into the real codebase for the
+      first time, rather than leaving it as a design artifact:
+  - [x] **Token swap, not a rewrite** - the design system's own stated philosophy.
+        `src/styles.css`'s `:root` block gained the new primitive tokens (`--canvas
+        #241C21`, `--well #1A1418`, `--raised #2A2026`, `--hair #362A31`, `--emerald
+        #10B981`, `--rose #FF8ABB`, `--crimson #98134E`, `--ink`/`--dim`/`--faint`), with
+        every existing semantic token (`--bg`, `--surface`, `--accent`, `--critical`, ...)
+        remapped to reference them - so the ~20 existing pages needed no per-page edits.
+        Removed the `@media (prefers-color-scheme: dark)` split entirely: this palette is
+        the product's own identity, not a dark-mode variant, the same decision made for
+        the mobile app below. Space Grotesk + JetBrains Mono loaded via Google Fonts.
+        `button.primary` switched from `var(--accent)` to `var(--crimson)` fill - "crimson
+        is a fill, never body text," the same rule the mobile app's primary buttons
+        follow (see below).
+  - [x] New `src/components/Icons.tsx` (22 icons ported verbatim from
+        `System.dc.html`'s SVG paths, plus 3 extrapolated in the same style for pages the
+        original 24-icon sheet didn't cover) and a rewritten `Layout.tsx`: the exact
+        grouped-sidebar shell from `Main.dc.html` (Operations/Infrastructure/
+        Intelligence/Alerting/Administration groups, 232px sidebar, LIVE-indicator top
+        bar), replacing the old flat top-nav header.
+  - [x] **Verified against a real authenticated session, not simulated**: the Vite dev
+        server run directly (`./node_modules/.bin/vite`, bypassing an `npm`-on-PATH
+        flakiness this session hit repeatedly), driven with a real Playwright script
+        logging in as the real Abelamm pilot-tenant account and screenshotting the
+        rendered login page and dashboard - not a static render or a design-tool preview.
+  - [~] **Page-specific layouts not yet done**: the Incidents page's card treatment
+        (evidence-thumbnail scan-sweep, severity chip, sparkline), the Dashboard
+        telemetry rail, and the full Incident Detail page still use their pre-redesign
+        layouts under the new tokens - named explicitly rather than silently left
+        looking "redesigned" when only the shell and colours changed.
+
+- [x] **2026-09-14: "Technical Atmosphere" theme applied to the mobile app** (same
+      token-swap approach used for `frontend/customer-crm` directly above), plus the
+      app's **first-ever real native build and Simulator run**,
+      which surfaced two real, pre-existing bugs neither typecheck nor lint could catch:
+  - [x] `src/theme/colors.ts` rewritten to the single dark palette (canvas `#241C21`,
+        crimson `#98134E`, rose `#FF8ABB`, emerald `#10B981`) instead of the old light/dark
+        split - `useColors()` kept as a hook so no call site needed to change. Primary
+        action buttons (`login.tsx`'s submit, the incident detail screen's
+        acknowledge/resolve/escalate actions) switched from the rose accent to crimson
+        fill, matching the same "crimson is a fill, never body text" rule already applied
+        to the web CRM's `button.primary`. New `src/components/Icons.tsx` ports the
+        product's `react-native-svg` icon set for the tab bar and account screen.
+  - [x] **Built and ran for real on a booted iOS 26 Simulator** (prebuild + CocoaPods +
+        xcodebuild, 0 errors) - not Expo web (tried first and ruled out: this app's
+        session handling relies on native cookie jars with no web equivalent, by design -
+        `src/auth/cookies.ts`'s own comment), and not simulated by inspection. Found and
+        fixed two real bugs this surfaced, both pre-existing (present before this
+        session's theme changes, just never discovered because the app had never been
+        run on a device):
+    1. `expo-modules-core@57.0.14`'s native WorkletsAdapter is compiled against
+       `react-native-worklets ^0.7-0.10`, but expo-router's own transitive
+       `react-native-reanimated@4.6.0` pulls in worklets `0.12.x` - a real upstream
+       version mismatch (`executeSync` doesn't exist in that worklets version), not
+       anything this session's own dependency changes introduced. Neither package is used
+       by this app's own code (pulled in only for expo-router's optional Drawer support);
+       fixed via a `package.json` `overrides` pin to `reanimated@4.5.0`, whose own peer
+       range (`worklets 0.10.x`) is what `expo-modules-core` actually supports, rather
+       than forcing a mismatched pair directly.
+    2. No route matched bare `/` - the root `_layout.tsx`'s `Stack` only names `(tabs)`
+       and `login`, each gated by `Stack.Protected`, neither of which matches an empty
+       path. Cold-launching the app rendered expo-router's own "Unmatched Route" screen
+       instead of the app. Fixed with a new `app/index.tsx` that redirects to `/login` or
+       `/(tabs)/dashboard` based on the same `isLoggedIn` state `_layout.tsx` already
+       gates on - **an unconditional redirect to `/(tabs)/dashboard` was tried first and
+       silently hung the app**: `Stack.Protected` removes the guarded-out branch from the
+       navigator rather than falling back to the visible one, so redirecting to a route
+       the guard hides loops forever instead of erroring. Worth knowing if this pattern
+       (a root index redirecting into a `Stack.Protected`-gated tree) comes up again.
+  - [x] Verified: `npm run typecheck` and `npm run lint` both clean, all 17 existing Jest
+        tests still pass, and a real screenshot of the compiled app's login screen (sent
+        to the user) shows the theme rendering correctly on device - dark canvas, crimson
+        button, correct type.
+  - [~] **Stops at the login screen.** No touch-input automation is available in this
+        sandbox (no `idb`; `cliclick` installs but has no Accessibility permission to
+        grant non-interactively, and the sandbox can't walk through the macOS permission
+        prompt), so the post-login screens (dashboard/incidents/cameras/account) are
+        verified by typecheck + code review only - the same standard as before this
+        entry, not by a real authenticated screenshot the way the login screen and the
+        web CRM were. A real device or a Mac with Accessibility permission granted to
+        whatever drives it would close this gap.
 
 ---
 
