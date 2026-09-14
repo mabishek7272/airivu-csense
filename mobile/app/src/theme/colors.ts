@@ -1,55 +1,53 @@
-import { useColorScheme } from 'react-native';
-
 /**
- * The exact same palette as frontend/customer-crm/src/styles.css's `:root` /
- * `prefers-color-scheme: dark` blocks - copied hex-for-hex rather than re-derived, so a
- * severity/status colour means the same thing on the web CRM and on this app.
+ * The exact same palette as frontend/customer-crm/src/styles.css's `:root` block - copied
+ * hex-for-hex rather than re-derived, so a severity/status colour means the same thing on
+ * the web CRM and on this app. "Technical Atmosphere" (design/csense-ui/System.dc.html) -
+ * one theme, deliberately, same as the web app: this palette is the product's own
+ * identity, specified by the owner, not a dark-mode variant of a light default. There is
+ * therefore no more `light`/`dark` split here, matching the web CRM's own removal of its
+ * `prefers-color-scheme` branch - `useColors()` keeps its existing call signature (no
+ * screen has to change how it reads the palette) but no longer branches on the OS scheme.
  */
-const light = {
-  surface: '#ffffff',
-  surfaceSunken: '#eef0f3',
-  border: '#d5d9e0',
-  text: '#14181f',
-  textMuted: '#545c6a',
-  accent: '#1f5fd0',
-  accentSubtle: '#e8effb',
-  critical: '#a5102a',
-  criticalSubtle: '#fdeaee',
-  high: '#b4470a',
-  highSubtle: '#fdf0e6',
-  medium: '#8a6100',
-  mediumSubtle: '#fbf3e0',
-  low: '#1c6b52',
-  lowSubtle: '#e6f4ef',
-  info: '#35506e',
-  infoSubtle: '#eaf0f7',
+const palette = {
+  canvas: '#241c21',
+  well: '#1a1418',
+  raised: '#2a2026',
+  hair: '#362a31',
+  hairStrong: '#4a3b43',
+  emerald: '#10b981',
+  rose: '#ff8abb',
+  crimson: '#98134e',
+  ink: '#f5edf0',
+  dim: '#a2929a',
+  faint: '#6e5f67',
+
+  surface: '#1a1418',
+  surfaceSunken: '#2a2026',
+  border: '#362a31',
+  text: '#f5edf0',
+  textMuted: '#a2929a',
+  textInverse: '#fff0f6',
+  accent: '#ff8abb',
+  accentHover: '#ffb3d2',
+  accentSubtle: 'rgba(255, 138, 187, 0.12)',
+
+  critical: '#ff6b9d',
+  criticalSubtle: 'rgba(152, 19, 78, 0.28)',
+  high: '#f0a87e',
+  highSubtle: 'rgba(194, 96, 58, 0.2)',
+  medium: '#e0be72',
+  mediumSubtle: 'rgba(138, 106, 46, 0.2)',
+  low: '#10b981',
+  lowSubtle: 'rgba(16, 185, 129, 0.12)',
+  info: '#a2929a',
+  infoSubtle: '#2a2026',
 };
 
-const dark = {
-  surface: '#1a1e25',
-  surfaceSunken: '#23282f',
-  border: '#333a44',
-  text: '#eef1f5',
-  textMuted: '#a3acba',
-  accent: '#6ea3f5',
-  accentSubtle: '#1c2939',
-  critical: '#ff8fa1',
-  criticalSubtle: '#33161c',
-  high: '#f7ad72',
-  highSubtle: '#331f11',
-  medium: '#e5c268',
-  mediumSubtle: '#2e2612',
-  low: '#7ddcb8',
-  lowSubtle: '#122b23',
-  info: '#a8c3e0',
-  infoSubtle: '#1a2431',
-};
+export type Palette = typeof palette;
 
-export type Palette = typeof light;
-
-/** `useColorScheme()` follows the OS setting, same as the web app's own
- * `prefers-color-scheme` media query - no separate in-app theme toggle to keep in sync. */
+/** Kept as a hook (rather than a plain export) so every existing call site
+ * (`const colors = useColors()`) needed zero changes when this stopped branching on the
+ * OS colour scheme - only this function's own body changed. */
 export function useColors(): Palette {
-  const scheme = useColorScheme();
-  return scheme === 'dark' ? dark : light;
+  return palette;
 }

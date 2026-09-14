@@ -129,10 +129,13 @@ export default function IncidentDetailScreen() {
                 key={action.key}
                 onPress={() => runAction(action.key)}
                 disabled={transitioning}
-                style={[styles.actionButton, { backgroundColor: colors.accent, opacity: transitioning ? 0.6 : 1 }]}
+                // Crimson, not colors.accent (rose) - same "crimson is the fill colour for
+                // a primary action" rule as login.tsx's submit button and the web CRM's
+                // button.primary (System.dc.html's own usage note).
+                style={[styles.actionButton, { backgroundColor: colors.crimson, opacity: transitioning ? 0.6 : 1 }]}
                 accessibilityRole="button"
               >
-                <Text style={styles.actionButtonText}>{action.label}</Text>
+                <Text style={[styles.actionButtonText, { color: colors.textInverse }]}>{action.label}</Text>
               </Pressable>
             ))}
           </View>

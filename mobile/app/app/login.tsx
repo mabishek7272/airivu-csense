@@ -68,11 +68,16 @@ export default function LoginScreen() {
         <Pressable
           onPress={onSubmit}
           disabled={isLoggingIn}
-          style={[styles.button, { backgroundColor: colors.accent, opacity: isLoggingIn ? 0.6 : 1 }]}
+          // Crimson, not colors.accent (rose) - crimson is the fill colour for a primary
+          // action, rose is for links/focus/attention-that-has-to-read-as-text. Same rule
+          // the web CRM's own button.primary follows (System.dc.html's own usage note).
+          style={[styles.button, { backgroundColor: colors.crimson, opacity: isLoggingIn ? 0.6 : 1 }]}
           accessibilityRole="button"
           testID="login-submit"
         >
-          <Text style={styles.buttonText}>{isLoggingIn ? 'Signing in…' : 'Sign in'}</Text>
+          <Text style={[styles.buttonText, { color: colors.textInverse }]}>
+            {isLoggingIn ? 'Signing in…' : 'Sign in'}
+          </Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>

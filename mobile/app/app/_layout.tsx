@@ -33,7 +33,11 @@ function RootLayoutNav() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <StatusBar style="auto" />
+      {/* "light" (light icons/text), not "auto" - the app has one theme now (the dark
+          "Technical Atmosphere" canvas), not an OS-follows-light-or-dark split, so the
+          status bar content should always be light, never auto-flip to dark icons on a
+          dark background. */}
+      <StatusBar style="light" />
       <RootLayoutNav />
     </AuthProvider>
   );
