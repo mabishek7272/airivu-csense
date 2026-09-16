@@ -19,7 +19,7 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.0
-	github.com/swaggo/swag v1.16.3
+	github.com/swaggo/swag v1.16.6
 	github.com/vincent-petithory/dataurl v1.0.0
 	go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976
@@ -87,6 +87,7 @@ require (
 	go.mau.fi/util v0.9.10 // indirect
 	golang.org/x/arch v0.10.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
