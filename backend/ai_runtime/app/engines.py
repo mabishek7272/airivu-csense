@@ -975,8 +975,9 @@ class UnifaceMattingEngine:
 # Four of the 15 uniface-zoo models whose output layout needed a public-repo cross-check
 # before decoding (CHECKLIST.md's own "4 need a public-repo cross-check" entry) - the
 # other 11 either fit an existing decode path, are anchor-based detectors needing separate
-# anchor-math work, or (bisenet-parsing/faceattribnet) are deliberately not decoded at all
-# because their output semantics are not recoverable from the ONNX graph. Every decode
+# anchor-math work, or (bisenet-parsing/faceattribnet) needed the public reference's own
+# source to resolve their output semantics - decoded further down this file since
+# 2026-09-16, no longer the "not decoded at all" pair this comment used to name. Every decode
 # below is grounded in this project's own real upstream source for the specific artifact
 # (`backend/migrations/uniface_model_manifest.py`'s own `legacy_paths`), cross-checked
 # against the original upstream repo that source itself re-implements, not guessed from
@@ -2153,6 +2154,354 @@ def _face_detections(
             )
         )
     return detections
+# --- uniface-zoo: BiSeNet face parsing / FaceAttribNet 5 binary attributes -------------
+#
+# The last 2 of the 15 uniface-zoo models, and the 2 CHECKLIST.md previously recorded as
+# "should not be decoded on a guess at all, and are not" - because at the time the only
+# evidence available was the ONNX graph itself, which genuinely does not say which of
+# bisenet's 3 identically-shaped outputs is the real class map, nor what the 5 columns of
+# faceattribnet's `probability` tensor mean. That entry was correct about the evidence it
+# had and wrong about the conclusion: the MIT-licensed public reference implementation
+# these exact weights ship with (`github.com/yakhyo/uniface`) has full source for both, and
+# resolves each question outright rather than by inference. Both decodes below are ported
+# from that source, the same discipline the 4 cross-check models above already follow - not
+# reimplemented from a paper, a description, or the graph in isolation.
+#
+# What the reference resolves, specifically:
+#   * `uniface/parsing/bisenet.py::parse`/`postprocess` only ever reads `outputs[0]` - the
+#     FIRST tensor `session.run(...)` returns, i.e. the ONNX graph's own first declared
+#     output, which our real gate-2 probe confirms is the semantically-named `output`. The
+#     other two (`414`/`424`) are auxiliary BiSeNet context-path heads, present only because
+#     the export traced the training-time forward pass; they carry raw ONNX node IDs for
+#     exactly that reason, while the real head kept its name. This is consistent with, but
+#     NOT proven by, their being identically shaped - see the note in `parse()` below.
+#   * `uniface/attribute/faceattribnet.py::postprocess` unpacks the `(1, 5)` tensor as
+#     `left_eye_open, right_eye_open, eyeglasses, mask, sunglasses` - five INDEPENDENT
+#     binary classifier heads, not a 5-way softmax. They do not sum to 1 and several can be
+#     high at once (a face can wear a mask and sunglasses); threshold each separately.
+
+# `uniface.draw.FACE_PARSING_LABELS`, the CelebAMask-HQ 19-class scheme this checkpoint was
+# trained on. Ported verbatim so a caller can name a class id without re-deriving the list.
+FACE_PARSING_LABELS: tuple[str, ...] = (
+    "background", "skin", "l_brow", "r_brow", "l_eye", "r_eye", "eye_g", "l_ear", "r_ear",
+    "ear_r", "nose", "mouth", "u_lip", "l_lip", "neck", "neck_l", "cloth", "hair", "hat",
+)
+_BISENET_NUM_CLASSES = len(FACE_PARSING_LABELS)  # 19
+_BISENET_FALLBACK_INPUT_SIZE = 512  # only used if the graph declares a symbolic spatial dim
+
+# How far to expand a detector's face box before parsing, as a fraction of the box's own
+# width/height per side (so 0.35 -> a crop 1.7x the box in each dimension).
+#
+# NOT from the reference - `uniface`'s own example crops the raw detector box. It is here
+# because parsing the raw box was MEASURED to fail outright on this platform's own detector
+# output: the SCRFD boxes on the project's one real multi-face fixture are 36x52 and 40x50
+# px, and at margin 0.0 BiSeNet returns a single-class, 100%-`background` mask for both -
+# a degenerate result that a caller could easily mistake for "no face here". Measured on
+# those 2 real faces, live, across 7 margins (each value = distinct classes / skin fraction
+# / background fraction):
+#
+#   margin  face1                     face2
+#   0.00    1  / 0.000 / 1.000        1  / 0.000 / 1.000   <- degenerate, both
+#   0.15    6  / 0.047 / 0.908        2  / 0.017 / 0.983
+#   0.25    7  / 0.270 / 0.619        10 / 0.144 / 0.780
+#   0.35    10 / 0.284 / 0.476        10 / 0.294 / 0.430   <- best on both
+#   0.50    10 / 0.207 / 0.558        12 / 0.200 / 0.377
+#   0.65    6  / 0.156 / 0.584        11 / 0.155 / 0.451
+#   0.80    9  / 0.117 / 0.618        12 / 0.126 / 0.518
+#
+# The mechanism is not a tuning accident: BiSeNet is trained on CelebAMask-HQ, whose crops
+# frame the whole HEAD - hair, ears, neck - while a face detector's box is tight to the
+# face by construction and excludes exactly those classes. Expanding aligns the input with
+# the training distribution rather than compensating for a decode error (a broken decode
+# was ruled out separately: the same code produces an anatomically coherent parse at
+# margin >= 0.25, and `eye_g` fires on both faces, which really are wearing sunglasses).
+#
+# **Weakly grounded, deliberately flagged**: 0.35 is the best value across 2 real faces
+# from 1 photograph. That is enough to reject 0.0, not enough to call 0.35 tuned. Revisit
+# against a real portrait set. A square crop was tested too and did not clearly help, so
+# the crop stays rectangular, matching the reference.
+_BISENET_DEFAULT_CROP_MARGIN = 0.35
+
+
+class BiSeNetEngine:
+    """BiSeNet (ResNet-18) face parsing (`uniface-bisenet-parsing`): a per-pixel class-id
+    mask over the 19 CelebAMask-HQ facial-component classes (`FACE_PARSING_LABELS`).
+
+    Decode ported from `uniface/parsing/bisenet.py::preprocess`/`postprocess` - BGR->RGB,
+    resize to the model's OWN declared input size (read from ONNX metadata, not hardcoded),
+    scale to [0,1], ImageNet mean/std normalisation, CHW, then `argmax` over the class axis
+    and a nearest-neighbour resize back to the input image's own dimensions. Nearest, not
+    bilinear: these are class IDs, and interpolating between class 4 (`l_eye`) and class 6
+    (`eye_g`) would invent class 5 (`r_eye`) at every boundary pixel.
+
+    Does not implement `infer()` into the `Detection` shape, same as the other non-box
+    uniface engines above: a segmentation mask is not a bounding box. Call `parse()`.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        outputs = self._session.get_outputs()
+        names = [o.name for o in outputs]
+        # The reference takes `outputs[0]` positionally. Positional alone would be a fragile
+        # contract for an artifact with three same-shaped outputs, so this additionally
+        # asserts the first one is the semantically-named `output` our real gate-2 probe
+        # recorded - if a future re-export reorders them, this fails loudly instead of
+        # silently decoding an auxiliary training head as if it were the real class map.
+        if not names or names[0] != "output":
+            raise OutputContractUnknownError(
+                f"Expected the first BiSeNet output to be named 'output', got {names}. The "
+                "reference implementation reads outputs[0]; a reordered export would make "
+                "that silently wrong. Record an output_schema on this model version first."
+            )
+        self._output_names = names
+        # (N, C, H, W) -> the reference's own (width, height) convention for cv2.resize.
+        shape = self._input.shape
+        height = shape[2] if isinstance(shape[2], int) else _BISENET_FALLBACK_INPUT_SIZE
+        width = shape[3] if isinstance(shape[3], int) else _BISENET_FALLBACK_INPUT_SIZE
+        self._input_size = (int(width), int(height))
+        self._mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        self._std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        self._labels = label_map or {}
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            labels=self._labels,
+            detail=(
+                f"providers={','.join(self._providers)} input={self._input.name} "
+                f"input_size={self._input_size[0]}x{self._input_size[1]} "
+                f"classes={_BISENET_NUM_CLASSES}"
+            ),
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "uniface-bisenet-parsing produces a per-pixel 19-class segmentation mask, not "
+            "detections - call parse() instead (optionally with a Detection from a paired "
+            "face_detection model, to parse one face rather than the whole frame)."
+        )
+
+    def parse(
+        self,
+        image: np.ndarray,
+        detection: Detection | None = None,
+        *,
+        margin: float = _BISENET_DEFAULT_CROP_MARGIN,
+    ) -> np.ndarray:
+        """Returns a `(H, W)` uint8 mask of class IDs in `0..18`, indexable into
+        `FACE_PARSING_LABELS`.
+
+        With no `detection`, this is the reference's own `parse(image)` exactly: the whole
+        supplied image is treated as the region to parse, and the mask comes back at that
+        image's own dimensions. `margin` is ignored in that case - there is no box to
+        expand. Note that a full, un-cropped scene is NOT what this model is for: measured
+        live on the project's own street-scene fixture, the whole frame parses to 95%
+        `hat`, which is meaningless. It is a face-crop model.
+
+        With a `detection`, the box is expanded by `margin` per side and the mask comes
+        back at the CROP's dimensions. See `_BISENET_DEFAULT_CROP_MARGIN` for the real
+        measurement behind the default and why `margin=0.0` - the reference's own framing -
+        is a genuinely bad default against this platform's own detector. `margin=0.0`
+        remains reachable for anyone who wants the reference's exact behaviour.
+
+        One thing this engine deliberately does NOT claim: that `output` is the primary head
+        because the other two are auxiliary. All three tensors are `(1, 19, H, W)`, measured
+        live - shape cannot tell them apart. The grounds are that the reference reads
+        `outputs[0]` and that `output` is the only one of the three with a semantic name;
+        the auxiliary-head reading explains that asymmetry but is not independently
+        verified here. What IS measured: the three are never equal on a real image (max
+        absolute difference 1.77-3.17 across the crops tested), so they are genuinely
+        distinct heads rather than a duplicated export.
+        """
+        import cv2
+
+        if detection is None:
+            region = image
+        elif margin > 0.0:
+            region = _crop_scaled_bbox(image, detection, scale=1.0 + 2.0 * margin)
+        else:
+            region = _crop_raw_bbox(image, detection)
+        if region.ndim != 3 or region.shape[2] != 3 or region.dtype != np.uint8:
+            raise OutputContractUnknownError(
+                f"parse() expects an 8-bit 3-channel BGR image, got shape {region.shape} "
+                f"dtype {region.dtype}."
+            )
+        original_size = (region.shape[1], region.shape[0])  # (width, height)
+
+        rgb = cv2.cvtColor(region, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, self._input_size, interpolation=cv2.INTER_LINEAR)
+        normalized = (resized.astype(np.float32) / 255.0 - self._mean) / self._std
+        tensor = np.expand_dims(normalized.transpose(2, 0, 1), axis=0).astype(np.float32)
+
+        outputs = self._session.run(self._output_names, {self._input.name: tensor})
+        predicted = outputs[0].squeeze(0).argmax(0).astype(np.uint8)
+        return cv2.resize(predicted, original_size, interpolation=cv2.INTER_NEAREST)
+
+
+# `uniface/attribute/faceattribnet.py::postprocess`'s own unpack order, verbatim. This is
+# the single fact CHECKLIST.md previously recorded as unrecoverable ("5 of *what*, in *what
+# order*, is not recoverable from the graph") - it is recoverable, just not from the graph.
+FACE_ATTRIBUTE_LABELS: tuple[str, ...] = (
+    "left_eye_open", "right_eye_open", "eyeglasses", "mask", "sunglasses",
+)
+_FACEATTRIB_FALLBACK_INPUT_SIZE = 128
+
+
+@dataclass(frozen=True)
+class FaceStateResult:
+    """Five INDEPENDENT binary-classifier probabilities in [0, 1] - deliberately not a
+    single `label`/`confidence` pair like `LivenessResult`, because these heads do not
+    compete: they do not sum to 1 and several can be high at once. Threshold each
+    separately. Named after the reference's own `uniface.types.FaceStateResult`.
+    """
+
+    left_eye_open: float
+    right_eye_open: float
+    eyeglasses: float
+    mask: float
+    sunglasses: float
+
+    def as_dict(self) -> dict[str, float]:
+        return {name: float(getattr(self, name)) for name in FACE_ATTRIBUTE_LABELS}
+
+
+def _faceattrib_letterbox(image_bgr: np.ndarray, target_size: int) -> np.ndarray:
+    """Ported from `uniface.common.letterbox_resize(image, target_size, fill_value=0)`,
+    which is what `FaceAttribNet.preprocess` calls: aspect-preserving resize onto a centred
+    square canvas of zeros, BGR->RGB, scaled to [0, 1], NCHW float32.
+
+    Zero padding, not the 114 grey `letterbox_resize` defaults to - `preprocess` passes
+    `fill_value=0` explicitly. Scaling to [0,1] is the ONLY normalisation: FaceAttribNet's
+    mean/std normalisation is baked into the ONNX graph itself (the reference's own class
+    docstring says so), so applying ImageNet mean/std here the way BiSeNet above does would
+    normalise the input twice.
+    """
+    import cv2
+
+    if image_bgr.ndim != 3 or image_bgr.shape[2] != 3 or image_bgr.dtype != np.uint8:
+        raise OutputContractUnknownError(
+            f"FaceAttribNet expects an 8-bit 3-channel BGR crop, got shape "
+            f"{image_bgr.shape} dtype {image_bgr.dtype}."
+        )
+    img_h, img_w = image_bgr.shape[:2]
+    scale = min(target_size / img_h, target_size / img_w)
+    new_h, new_w = int(img_h * scale), int(img_w * scale)
+    resized = cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    canvas = np.full((target_size, target_size, 3), 0, dtype=np.uint8)
+    pad_h = (target_size - new_h) // 2
+    pad_w = (target_size - new_w) // 2
+    canvas[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
+
+    rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    return np.ascontiguousarray(np.expand_dims(rgb.transpose(2, 0, 1), axis=0))
+
+
+class FaceAttribNetEngine:
+    """FaceAttribNet (Qualcomm) 5 binary face attributes (`uniface-faceattribnet-
+    attributes`): left/right eye openness, eyeglasses, face mask, sunglasses.
+
+    Decode ported from `uniface/attribute/faceattribnet.py`. The column order
+    (`FACE_ATTRIBUTE_LABELS`) comes from that file's `postprocess()`, which is the only
+    place it is written down - the graph names the tensor `probability` and nothing more.
+
+    No softmax, deliberately: these are five independent binary heads, per the reference's
+    own class docstring. Applying one would be the same class of plausible-but-silently-
+    wrong decode `OutputContractUnknownError` exists to prevent, and would look fine -
+    five numbers in [0,1] - while being meaningless.
+
+    Needs a face bbox, matching the reference's `predict(image, face)`/`face.bbox`. Takes a
+    full frame plus a `Detection` from the platform's own already-`production` face detector
+    (`insightface-buffalo-l-detect`), the same two-stage shape as every other engine here;
+    unlike the alignment-based ones it needs only `bbox`, no keypoints.
+    """
+
+    # The reference's own default `margin=0.0` - no crop expansion. Unlike BiSeNet above,
+    # this default was measured to work as-is on this platform's own detector boxes (real
+    # 36x52 / 40x50 px SCRFD crops of two sunglass-wearing faces both scored `sunglasses`
+    # 0.98-1.00 and `mask` <= 0.02), so there is no reason to depart from the reference here.
+    _MARGIN = 0.0
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        outputs = self._session.get_outputs()
+        if len(outputs) != 1 or list(outputs[0].shape)[-1] != len(FACE_ATTRIBUTE_LABELS):
+            raise OutputContractUnknownError(
+                f"Expected a single (batch, {len(FACE_ATTRIBUTE_LABELS)}) output, got "
+                f"{[(o.name, list(o.shape)) for o in outputs]}. The column meanings ported "
+                "here are only valid for that exact layout."
+            )
+        shape = self._input.shape
+        height = shape[2] if isinstance(shape[2], int) else _FACEATTRIB_FALLBACK_INPUT_SIZE
+        width = shape[3] if isinstance(shape[3], int) else _FACEATTRIB_FALLBACK_INPUT_SIZE
+        if int(height) != int(width):
+            # The reference refuses a non-square input_size for exactly this reason: its
+            # preprocessing letterboxes onto a SQUARE canvas, so a non-square request
+            # cannot be honoured.
+            raise OutputContractUnknownError(
+                f"FaceAttribNet preprocessing letterboxes onto a square canvas, but this "
+                f"artifact declares a {width}x{height} input."
+            )
+        self._input_size = int(height)
+        self._labels = label_map or {}
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            labels=self._labels,
+            detail=(
+                f"providers={','.join(self._providers)} input={self._input.name} "
+                f"attributes={','.join(FACE_ATTRIBUTE_LABELS)}"
+            ),
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        raise OutputContractUnknownError(
+            "uniface-faceattribnet-attributes produces 5 independent binary attribute "
+            "probabilities, not detections - call predict_face_state() with a Detection "
+            "from a paired face_detection model instead."
+        )
+
+    def predict_face_state(
+        self, image: np.ndarray, detection: Detection, *, margin: float | None = None
+    ) -> FaceStateResult:
+        """Five independent attribute probabilities for one already-detected face.
+
+        Named `predict_face_state` rather than `predict_attributes` on purpose, even though
+        both this and `FairFaceEngine` carry task_code="face_attribute": the two return
+        entirely different things (5 independent binary heads here; competing race/gender/
+        age distributions there), and reusing one name for two incompatible return types
+        would make a call site's correctness depend on which model happened to be loaded.
+        `face state` is the reference's own word for this model's output
+        (`uniface.types.FaceStateResult`, `BaseAttribute.predict`).
+
+        `margin` expands the crop by that fraction of the box per side, matching the
+        reference's own `margin` constructor argument; `None` uses `_MARGIN` (0.0, the
+        reference's default), which crops the raw box exactly as `FaceAttribNet.preprocess`
+        does.
+        """
+        effective_margin = self._MARGIN if margin is None else margin
+        crop = (
+            _crop_scaled_bbox(image, detection, scale=1.0 + 2.0 * effective_margin)
+            if effective_margin > 0.0
+            else _crop_raw_bbox(image, detection)
+        )
+        blob = _faceattrib_letterbox(crop, self._input_size)
+        raw = self._session.run(None, {self._input.name: blob})[0]
+        left_eye_open, right_eye_open, eyeglasses, mask, sunglasses = (
+            np.squeeze(raw).astype(float).tolist()
+        )
+        return FaceStateResult(
+            left_eye_open=left_eye_open,
+            right_eye_open=right_eye_open,
+            eyeglasses=eyeglasses,
+            mask=mask,
+            sunglasses=sunglasses,
+        )
 
 
 # --- TFLite (.tflite) ---------------------------------------------------------------
@@ -2258,17 +2607,21 @@ _INSIGHTFACE_MODEL_NAMES = ("insightface-buffalo-l-detect", "insightface-buffalo
 
 # The 4 uniface-zoo models that needed a public-repo cross-check before decoding
 # (fairface/minifasnet/mobilegaze/pipnet - see CHECKLIST.md's "4 need a public-repo
-# cross-check" entry). Dispatched by model_name for the same reason as everything else in
-# this function: task_code alone is ambiguous or shared for at least some of these
-# (`face_attribute` is shared with `uniface-faceattribnet-attributes`, deliberately not
-# decoded; `face_landmark` is shared with `uniface-facemesh-landmark`, a different model
-# with a different output shape, decoded separately above).
+# cross-check" entry), plus the 5 resolved after them, 2026-09-16: blazeface/centerface/
+# retinaface (the 3 anchor-based detectors), and bisenet/faceattribnet (previously the 2
+# "no-guess" models - the same public reference resolves both outright, see each engine's
+# own class docstring for what changed). Dispatched by model_name for the same reason as
+# everything else in this function: task_code alone is ambiguous or shared for at least
+# some of these (`face_attribute` is shared between `uniface-fairface-attributes` and
+# `uniface-faceattribnet-attributes`, two models whose "attributes" are entirely different
+# things; `face_landmark` is shared with `uniface-facemesh-landmark`, a different model
+# with a different output shape, decoded separately above; `face_parsing` is unique to
+# bisenet, but dispatched by model_name anyway, for the same reason as everything else in
+# this table).
 #
-# The 3 uniface-zoo face detectors (blazeface/centerface/retinaface) join the same table.
-# They are the one group here that DOES produce a `Detection` list from `infer()`, so
-# unlike every other entry they are reachable through the ordinary `/internal/v1/infer` and
-# `/internal/v1/validate-infer` paths with no special endpoint.
-#
+# The 3 face detectors are the one group here that DOES produce a `Detection` list from
+# `infer()`, so unlike every other entry they are reachable through the ordinary
+# `/internal/v1/infer` and `/internal/v1/validate-infer` paths with no special endpoint.
 # All 3 carry task_code="face_detection" - the exact task_code `insightface-buffalo-l-
 # detect` already owns, on an unrelated architecture (SCRFD vs BlazeFace/CenterFace/
 # RetinaFace). Dispatch by model_name keeps them apart: `build_engine` checks
@@ -2284,6 +2637,8 @@ _UNIFACE_ENGINES_BY_MODEL_NAME: dict[str, type] = {
     "uniface-blazeface-detect": BlazeFaceEngine,
     "uniface-centerface-detect": CenterFaceEngine,
     "uniface-retinaface-detect": RetinaFaceEngine,
+    "uniface-bisenet-parsing": BiSeNetEngine,
+    "uniface-faceattribnet-attributes": FaceAttribNetEngine,
 }
 
 

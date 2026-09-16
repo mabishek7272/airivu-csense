@@ -1206,11 +1206,17 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
       - so this remains the same accepted, recorded position CLARIFICATIONS.md #15
       already carries, not a new legal fact. `license_metadata` stays the visible record
       if the position is ever revisited.
-- [~] **18 models pulled in `uploaded` (2026-09-03/09-05: 15 `uniface-zoo` + 3 Airivu
-      intern-trained) - real validation against a real golden set, not a rubber stamp.**
-      Owner instruction was "validate and ship tha too quick"; this pass is the honest
-      version of that - real per-model evidence, real findings (two real problems found,
-      not promoted), not everything flipped to `production` on request.
+- [x] **2026-09-16: closed. All 18 models pulled in `uploaded` (2026-09-03/09-05: 15
+      `uniface-zoo` + 3 Airivu intern-trained) now have real gate 2-4 evidence - real
+      validation against a real golden set, not a rubber stamp.** Owner instruction was
+      "validate and ship tha too quick"; this pass is the honest version of that - real
+      per-model evidence, real findings (three real problems found across the 18, not
+      promoted past them: 2 failed intern models, 1 failed cross-check model), not
+      everything flipped to `production` on request. "Closed" means every model has a
+      real, evidenced final state - not that every model reached `production`: 12 of the
+      15 uniface-zoo models sit at `validating`, correctly blocked by the existing
+      biometric-acknowledgement gate pending the owner's own sign-off, per this session's
+      explicit instruction never to pass `acknowledge_biometric=true` on their behalf.
   - [x] **New TRD §15.2 gate 2-4 path added**: `/internal/v1/validate-infer` in
         `backend/ai_runtime/app/main.py` + `get_by_version_id`/`VALIDATABLE_STATES` in
         `registry.py`. The existing `run_model_validation.py` path
@@ -1263,13 +1269,24 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           never measurable either way (no real abuse footage exists in this project, and
           none was staged to manufacture a positive example - see the manifest's own note
           on why that would be its own bad practice).
-  - [~] **The 15 `uniface-zoo` ONNX models are a materially bigger job - gate 2 (load/
-        shape) done for real for all 15; gates 3-4 (accuracy) now done for real for 13 of
-        them: the 6 low-risk models (all passed real testing) and the 4 cross-check models
-        (3 passed - 1 promoted to `validated`, 2 blocked at `validating` by the biometric-
-        acknowledgement gate; 1 failed and correctly not promoted further) on 2026-09-11,
-        plus the 3 face detectors (all 3 passed, all 3 at `validating`) on 2026-09-16. Only
-        the 2 no-guess models remain undecoded, deliberately.** Checked
+  - [x] **The 15 `uniface-zoo` ONNX models are a materially bigger job - gate 2 (load/
+        shape) done for real for all 15; gates 3-4 (accuracy) now done for real for all 15,
+        as of 2026-09-16, closing this entry.** 2026-09-11: the 6 low-risk models (all
+        passed real testing) and the 4 cross-check models (3 passed - 1 promoted to
+        `validated`, 2 blocked at `validating` by the biometric-acknowledgement gate; 1
+        failed and correctly not promoted further). 2026-09-16, two independent worktrees
+        in parallel: the 3 face detectors (`blazeface`/`centerface`/`retinaface` - all 3
+        passed, all 3 at `validating`) and the 2 previously-called-unresolvable "no-guess"
+        models (`bisenet-parsing`/`faceattribnet-attributes` - both passed, 1 promoted to
+        `validated`, 1 blocked at `validating` by the same biometric gate; the public
+        reference implementation resolved what this file had recorded as needing the
+        original training config, so that earlier entry is corrected below rather than
+        quietly reworded). **Net final state across all 15: 2 at `validated`
+        (`modnet`-matting, `bisenet`-parsing - both `access_classification=standard`), 12
+        at `validating` (blocked at the biometric-acknowledgement gate, the owner's own
+        call per this session's explicit instructions - not forced past it), and 1
+        (`minifasnet`-antispoofing, the one cross-check model that failed) correctly never
+        promoted past its own failing run - not overridden.** Checked
         `backend/ai_runtime/app/engines.py`: `OnnxEngine._decode` only understands the
         end-to-end YOLO 6/7-column layout the plate detector uses. None of these 15 models
         are YOLO-shaped - **zero decode logic exists anywhere in this codebase for any of
@@ -1323,6 +1340,12 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             this file ("shipping a guessed mapping would be exactly the failure mode
             `OutputContractUnknownError` exists to avoid") - needs the original training
             config or a labelled reference to resolve, not guessed at here.
+            **SUPERSEDED 2026-09-16 - this was right about the evidence and wrong about the
+            conclusion; both are now decoded for real, see the entry below.** "Not
+            recoverable from the graph" was correct and still is. "Needs the original
+            training config" was not: the MIT-licensed public reference implementation
+            these exact weights ship with (`github.com/yakhyo/uniface`) has full source for
+            both models and answers both questions outright.
     - [x] **New validation-only path added to support this**: `/internal/v1/validate-infer`
           (`backend/ai_runtime/app/main.py`) + `get_by_version_id`/`VALIDATABLE_STATES`
           (`registry.py`) - addressed by `version_id`, reaches `uploaded`/`validating`
@@ -1860,6 +1883,159 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             `uniface-mobilegaze-estimation` (`yaw_deg=3.91` - matches the offline run's
             `3.9deg`), `uniface-pipnet-landmark` (98 real points returned). Full targeted
             test suite (46 tests) and `ruff` still clean after this change.
+    - [~] **The 2 "no-guess" models decoded for real, 2026-09-16 - the earlier entry above
+          was wrong, and is corrected rather than quietly reworded.** `uniface-bisenet-
+          parsing` and `uniface-faceattribnet-attributes` were on record in this file as
+          needing "the original training config or a labelled reference to resolve". The
+          half of that claim about the ONNX graph was correct and still is - the graph
+          genuinely does not say which of bisenet's 3 identically-shaped outputs is the
+          real class map, nor what faceattribnet's 5 `probability` columns mean. The
+          conclusion drawn from it was wrong: **the real public reference implementation
+          these exact weights ship with resolves both outright** (`github.com/yakhyo/
+          uniface`, MIT - the same clone at `uniface-main/` the 6 low-risk models were
+          already ported from, which simply had not been consulted for these two). No
+          training config was needed and nothing was guessed.
+        - **What the reference actually settles**, each read from its own source, not
+          inferred: `uniface/parsing/bisenet.py::postprocess` reads **only `outputs[0]`**
+          (`outputs[0].squeeze(0).argmax(0)`) - the graph's first declared output, which
+          the gate-2 probe confirms is the semantically-named `output`; `414`/`424` are
+          auxiliary training-time heads. `uniface/attribute/faceattribnet.py::postprocess`
+          unpacks the `(1,5)` tensor as **`left_eye_open, right_eye_open, eyeglasses,
+          mask, sunglasses`** - 5 *independent binary classifier heads*, explicitly not a
+          softmax, thresholded separately. That column order is the single fact this file
+          previously called unrecoverable.
+        - [x] **Real gate-2 re-probed live, not trusted from the earlier write-up.** Both
+              artifacts fetched fresh from the real `csense-models` MinIO bucket by their
+              own registry `artifact_uri`, re-hashed (**both sha256 match the registry
+              row exactly**), and loaded with a fresh `onnxruntime.InferenceSession`
+              inside the real `csense-ai-runtime-1` container. `bisenet-parsing`: input
+              `input` `(batch,3,512,512)`, outputs `output`/`414`/`424`, each concretely
+              `(1,19,512,512)` float32 on a real forward pass - so the primary output is
+              named `output` and really is `(1,19,H,W)`, as expected. `faceattribnet`:
+              input `image` `(batch,3,128,128)`, single output `probability`
+              `(batch,5)` -> `(1,5)` float32. Also measured, because shape alone cannot
+              distinguish bisenet's three outputs: **they are never numerically equal on a
+              real image** (max absolute difference 1.77-3.17 across every crop tested),
+              so they are genuinely distinct heads, not a duplicated export. The
+              auxiliary-head reading explains why only one has a semantic name, but that
+              specific claim is flagged in the code as explained-not-independently-proven.
+        - [x] **`BiSeNetEngine` + `FaceAttribNetEngine` in `engines.py`**, following the
+              established "dedicated method per non-box output shape" pattern - `parse()`
+              and `predict_face_state()`; `infer()` raises `OutputContractUnknownError` on
+              both, naming the real method to call, same as every other uniface engine.
+              Preprocessing/postprocessing ported line-for-line from the reference
+              (bisenet: BGR->RGB, resize to the size read from the model's own ONNX
+              metadata, ImageNet mean/std, CHW, `argmax` then `INTER_NEAREST` resize back
+              - nearest because interpolating between class 4 `l_eye` and class 6 `eye_g`
+              would invent class 5 `r_eye` at every boundary; faceattribnet: letterbox to
+              128x128 with **zero** padding (the reference passes `fill_value=0`, not
+              `letterbox_resize`'s own 114 grey default), scale to [0,1] and **nothing
+              else** - mean/std is baked into the ONNX graph, so adding it here would
+              normalise twice). Registered in `_UNIFACE_ENGINES_BY_MODEL_NAME`; both
+              task_codes (`face_parsing`, `face_attribute`) reach them by model_name like
+              everything else in that table. Two now-stale comments elsewhere in
+              `engines.py` calling these "deliberately not decoded" were corrected rather
+              than left to mislead.
+        - [x] **`predict_face_state()`, deliberately not `predict_attributes()`** - a
+              decision with no spec, recorded at the point of decision per this file's own
+              convention. `FairFaceEngine` already owns `predict_attributes` and shares
+              `task_code="face_attribute"` with this model, but the two return entirely
+              different things (5 independent binary heads vs. competing race/gender/age
+              distributions). Reusing the name would make a call site's correctness depend
+              on which model happened to be loaded. "Face state" is the reference's own
+              word for this output (`uniface.types.FaceStateResult`).
+        - [x] **A real finding, found by running it rather than by reading it: at the
+              reference's own framing this model returns a degenerate mask.** Parsing the
+              raw SCRFD detector box (margin 0.0, exactly what `uniface`'s own example
+              does) produced a **single-class, 100%-`background` mask for both real
+              faces** - an output a caller could easily read as "no face here". A decode
+              bug was ruled out before blaming the input, not assumed away: the same code
+              produces an anatomically coherent parse once the crop is widened, and the
+              full frame parses to 95% `hat` (nonsense, and correctly so - it is a
+              face-crop model, not a scene model). The real cause is distribution: BiSeNet
+              trains on CelebAMask-HQ crops framing the whole **head** (hair, ears, neck),
+              while a detector box is tight to the face by construction and excludes
+              exactly those classes - and these SCRFD boxes are only 36x52 and 40x50 px.
+              A real 7-value margin sweep across both faces is recorded in
+              `_BISENET_DEFAULT_CROP_MARGIN`'s own comment; `0.35` ships as the default.
+              **Flagged as weakly grounded, not presented as tuned**: 2 real faces from 1
+              photograph is enough to reject `0.0` outright and not enough to call `0.35`
+              optimal. `margin=0.0` stays reachable for the reference's exact behaviour.
+        - [x] **Real gate 3-4 through the live HTTP API - the first uniface validation in
+              this project that did not need the docker-cp/local-import fallback.** The
+              earlier uniface runs had to import `engines.py` directly because `ai-runtime`
+              was running a pre-change image that was not allowed to be rebuilt. That
+              constraint no longer applied: `ai-runtime` was rebuilt from this worktree
+              and recreated, so `POST /internal/v1/validate-infer-uniface` genuinely
+              reached the new engines (extended `_UNIFACE_VALIDATION_MODELS` to 12, plus
+              2 new response shapes `FaceParsingOut`/`FaceStateOut` and 2 new branches in
+              `_run_uniface_inference`). `scripts/run_uniface_model_validation_parsing_
+              attrib.py` drives it; real `model_validation_runs` rows recorded via the
+              real Admin API, reports uploaded to MinIO, `environment=
+              "local-docker-ai-runtime-http"` on both rows so the method is visible on the
+              record itself. Re-confirmed identical results after a final rebuild, so the
+              numbers below belong to the committed code, not an intermediate build.
+          - **`uniface-faceattribnet-attributes`: PASSED, 4/4** - and the result is itself
+            real evidence that the ported column order is right, not just asserted.
+            `sunglasses` came back **0.997 and 0.980** on the two faces, both of which
+            visibly wear sunglasses, while `mask` came back **0.023 and 0.00004** and
+            neither wears one. If the columns were ordered differently, the last column
+            would not be the one lighting up on exactly the attribute both subjects
+            actually have. The measured sums (**1.18 and 1.69, not 1.0**) independently
+            confirm these are independent binary heads rather than a softmax - recorded in
+            the report as `predicted_sum` so the claim is checkable from the row itself.
+            `eyeglasses` stayed low (0.0012/0.0006) while `sunglasses` was ~1.0, which is
+            consistent with two mutually exclusive eyewear heads - observed, not a
+            documented contract, so it is recorded and never scored. Promoted `uploaded ->
+            validating`; blocked at `validating -> validated` by the real `422
+            biometric_promotion_requires_acknowledgement` gate (confirmed live, same as
+            the 5 biometric models before it) - correctly not overridden.
+          - **`uniface-bisenet-parsing`: PASSED, 8/8 structural-plausibility checks**, and
+            promoted all the way to **`validated`** - it is `access_classification=
+            standard`, not biometric (confirmed against the real registry row), so no
+            acknowledgement gate stands in its way, same as `modnet` before it. Face 1
+            parsed into 7 classes (skin 0.271, hair 0.168, `eye_g` 0.058, neck 0.016);
+            face 2 into 10 (skin 0.266, cloth 0.142, hair 0.130, nose 0.018, u_lip 0.008,
+            l_lip 0.005, `eye_g` 0.017). That is a real face parse with the components in
+            sensible proportions. **`eye_g` firing on both faces is a genuine independent
+            cross-check**: it agrees with faceattribnet's `sunglasses` 0.997/0.980 on the
+            same two faces from an entirely different model and a different decode.
+        - **Named gaps, stated plainly rather than papered over**:
+          - **Per-pixel parsing accuracy / IoU is unmeasured.** There is no per-pixel
+            ground truth for these faces and none was fabricated; hand-annotating 19
+            classes and then scoring the model against that annotation would be inventing
+            a golden set, not building one. What is graded is structural plausibility -
+            not degenerate, contains `skin`, contains an eye-region class, contains head
+            context - which is exactly what catches the degenerate-mask failure this model
+            really does exhibit. `metrics.accuracy` is `null` on the recorded run, never a
+            number, the same `None`-not-0.0 discipline the intern-model runs established.
+          - **`sunglasses` has no negative control anywhere in this repository.** No
+            fixture contains a bare-eyed face, so the pass shows the model fires correctly
+            on sunglasses and (via `mask`) does not fire on everything - it does not
+            establish a false-positive rate. Its false-positive rate is unmeasured.
+          - **Eye-openness accuracy is unmeasured and cannot be measured from what exists
+            here.** Both subjects' eyes are fully occluded by sunglasses, so there is no
+            visually assertable ground truth for `left_eye_open`/`right_eye_open` on
+            either face - this project's one real photograph with faces happens to contain
+            no face with visible eyes at all. Recorded in full in every run, scored on
+            nothing.
+          - **Both models were exercised on 2 small faces (36x52 / 40x50 px) in 1 street
+            photograph**, far from either model's intended portrait use case. No new
+            fixture was staged: `stock_streetscene_3adults.jpg` was reused from the
+            existing golden set after re-confirming that every other committed frame (7
+            Autotek NVR night/interior frames, 9 vehicle photos) still has no usable face.
+            These results say the decode is correct and the output is sensible; they do
+            not say either model is accurate.
+        - [x] **11 new unit tests** (`backend/tests/test_uniface_engines.py`, now 24 and
+              all green) pin the dispatch for both new models, the two ported label orders
+              (a reordering of either would silently mislabel every output), the
+              faceattribnet letterbox math (zero padding, aspect ratio preserved, BGR->RGB,
+              and a loud refusal of a non-uint8 crop that would otherwise truncate to
+              zeros and return confident nonsense), both `infer()` refusals, and a
+              regression guard that the bisenet crop margin never silently returns to the
+              degenerate 0.0. Full backend suite green alongside them (**528 passed, 316
+              skipped, 0 failed**); `ruff check backend scripts` clean - one real B905
+              finding (`zip()` without `strict=`) was fixed rather than suppressed.
 
 
 ## Phase 5 — Incident, Evidence, and Notification MVP

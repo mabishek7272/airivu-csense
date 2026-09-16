@@ -1,0 +1,28 @@
+{
+  "model_name": "uniface-bisenet-parsing",
+  "task": "Per real detected face (via the paired production face_detection model, insightface-buffalo-l-detect / SCRFD), BiSeNet's per-pixel 19-class parsing mask, graded for STRUCTURAL PLAUSIBILITY only - not for accuracy. There is no per-pixel ground-truth annotation for these faces and none was invented.",
+  "classes": ["mask_not_degenerate", "skin_present", "eye_class_present", "hair_or_cloth_context_present"],
+  "class_order": ["background", "skin", "l_brow", "r_brow", "l_eye", "r_eye", "eye_g", "l_ear", "r_ear", "ear_r", "nose", "mouth", "u_lip", "l_lip", "neck", "neck_l", "cloth", "hair", "hat"],
+  "crop_margin": 0.35,
+  "thresholds": {
+    "min_distinct_classes": 4,
+    "min_skin_fraction": 0.05,
+    "max_single_class_fraction": 0.95
+  },
+  "note": "**Accuracy and per-class IoU are unmeasured and are not claimed.** Grading a segmentation model properly needs per-pixel labelled ground truth; this repository has none for face parsing, and hand-annotating 19 classes over a face to then score the model against that annotation would be inventing a golden set, not building one. What IS checked is that the mask is structurally sensible and, in particular, NOT degenerate - the specific silent-failure mode this model actually exhibits (see below).\n\n`class_order` is the CelebAMask-HQ 19-class scheme, ported verbatim from the public reference implementation's own uniface/draw.py::FACE_PARSING_LABELS. The decode reads outputs[0] - the graph's first declared output, confirmed live to be the semantically-named `output` - per the reference's own postprocess(). The artifact exports three identically-shaped (1,19,H,W) tensors named `output`/`414`/`424`; the latter two carry raw ONNX-export node IDs and are auxiliary training-time heads, unused at inference. Measured live: the three are never numerically equal on a real image (max absolute difference 1.77-3.17 across the crops tested), so they are genuinely distinct heads rather than a duplicated export - but shape alone cannot tell them apart, which is exactly why the reference source, not the graph, is what resolves this.\n\n**A real finding, recorded rather than smoothed over.** At the reference's own framing (the raw detector box, margin 0.0) this model returns a single-class, 100%-`background` mask for BOTH faces in this image - a degenerate output that a caller could easily mistake for 'no face here'. The cause is framing and scale, not a decode bug: BiSeNet trains on CelebAMask-HQ crops that frame the whole head (hair, ears, neck), while a face detector's box is tight to the face and excludes exactly those classes; and the SCRFD boxes here are only 36x52 and 40x50 px. A decode bug was ruled out separately - the same code produces an anatomically coherent parse (skin as the dominant face region, hair above, cloth/neck below, small nose/lip/ear regions) once the crop is expanded, and `eye_g` fires on both faces, which really are wearing sunglasses. That last point is a genuine independent cross-check: it agrees with uniface-faceattribnet-attributes scoring `sunglasses` 0.998 and 0.979 on the same two faces, from an entirely different model.\n\n`crop_margin` 0.35 is therefore the engine's shipped default, chosen from a real 7-value sweep across both faces (recorded in engines.py's own _BISENET_DEFAULT_CROP_MARGIN comment). **It is weakly grounded and flagged as such**: 2 real faces from 1 photograph is enough to reject 0.0 outright, not enough to call 0.35 tuned. It should be revisited against a real portrait set.\n\nThe faces here are also far smaller and lower-resolution than this model's intended portrait use case, so these results say the decode is correct and the output is sensible - they do not say the model is accurate. Same honest limit the uniface-modnet-matting manifest already records for a matte on a wide street scene.\n\nFaces are matched to ground truth by nearest detected face-centre to each entry's own expected_center_px, against the real SCRFD detector at confidence 0.4 - the same centres the uniface-fairface-attributes manifest already established for this image and detector.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark square sunglasses, short dark hair, dark coat over a red top. A plausible parse should show skin over the face, hair above it, an eye-region class (l_eye/r_eye, or eye_g given the sunglasses), and cloth/neck context below."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, round amber-tinted sunglasses, cream shearling coat. A plausible parse should show skin, hair, an eye-region class, and a substantial cloth region from the very light-coloured coat."
+        }
+      ]
+    }
+  ]
+}
