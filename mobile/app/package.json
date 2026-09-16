@@ -4,7 +4,7 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@preeternal/react-native-cookie-manager": "^6.4.0",
-    "expo": "~57.0.18",
+    "expo": "~57.0.22",
     "expo-constants": "~57.0.16",
     "expo-linking": "~57.0.8",
     "expo-router": "~57.0.17",
