@@ -10,7 +10,7 @@
 #     timezone at display time; a container-local timezone would put a second, silent
 #     conversion in the middle of that.
 
-FROM golang:1.25.0-alpine AS build
+FROM golang:1.27.1-alpine AS build
 
 RUN apk update && apk add --no-cache git build-base libjpeg-turbo-dev libwebp-dev
 
