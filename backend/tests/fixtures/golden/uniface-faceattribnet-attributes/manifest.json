@@ -1,0 +1,27 @@
+{
+  "model_name": "uniface-faceattribnet-attributes",
+  "task": "Per real detected face (via the paired production face_detection model, insightface-buffalo-l-detect / SCRFD), FaceAttribNet's 5 independent binary attribute probabilities, graded only on the two attributes a human can confidently assert from direct visual inspection of this photograph: sunglasses (both subjects visibly wear them) and mask (neither subject wears one).",
+  "classes": ["sunglasses", "mask"],
+  "attribute_order": ["left_eye_open", "right_eye_open", "eyeglasses", "mask", "sunglasses"],
+  "threshold": 0.5,
+  "note": "The column order under `attribute_order` is the single fact this project previously recorded as unrecoverable ('5 of *what*, in *what order*, is not recoverable from the graph' - CHECKLIST.md). It is not recoverable from the ONNX graph, which names the tensor only `probability`; it comes from the MIT-licensed public reference implementation these exact weights ship with (github.com/yakhyo/uniface, uniface/attribute/faceattribnet.py::postprocess), which unpacks the (1,5) tensor in exactly this order. These are five INDEPENDENT binary classifier heads, not a 5-way softmax: they do not sum to 1 (measured 1.40 and 1.12 on the two faces below) and several can be high at once. Each is thresholded separately at 0.5; no softmax or sigmoid is applied anywhere in the decode.\n\nOnly one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg, already used by the intern-child-adult-detection and uniface-fairface-attributes manifests. It is reused here rather than staging anything new; no fresh camera frames were pulled for this work.\n\nWhat is NOT graded, and why:\n\n- left_eye_open / right_eye_open: both subjects' eyes are fully occluded by opaque or tinted sunglasses, so there is no visually assertable ground truth for eye openness on either face. Recorded in every validation run, never scored. This is the project's one real photograph with faces, and it happens to contain no face with visible eyes at all - so eye-openness accuracy for this model is genuinely unmeasured, not merely untested here.\n\n- eyeglasses: it is not documented anywhere whether this head means 'any eyewear' (in which case sunglasses should also fire it) or 'clear/prescription glasses specifically' (in which case it should not). Measured behaviour is the latter - eyeglasses came back 0.012 and 0.001 while sunglasses came back 0.998 and 0.979 on the same two faces - which is consistent with two mutually exclusive eyewear heads, but that is an observation from two faces, not a documented contract. Recorded, never scored.\n\nThere is no negative control for `sunglasses` anywhere in this repository: no fixture contains a bare-eyed face. So a pass here shows the model fires correctly on sunglasses, and shows via `mask` that it does not simply fire on everything - it does not establish a false-positive rate for `sunglasses`. Stated plainly rather than presented as a clean pass.\n\nFaces are matched to ground truth by nearest detected face-centre to each entry's own expected_center_px, computed against the real SCRFD detector at confidence 0.4 - not by assuming a fixed model output order. The expected_center_px values are the same ones the uniface-fairface-attributes manifest already established against the same detector and image.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "sunglasses": true,
+          "mask": false,
+          "note": "Younger man, dark jacket over a red top, dark square sunglasses fully occluding the eyes, short dark hair. Sunglasses unambiguous; no face covering of any kind."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "sunglasses": true,
+          "mask": false,
+          "note": "Bearded man, tan/cream shearling-style coat, round amber-tinted sunglasses. Sunglasses unambiguous; full beard is visible and uncovered, so 'mask' is unambiguously false."
+        }
+      ]
+    }
+  ]
+}

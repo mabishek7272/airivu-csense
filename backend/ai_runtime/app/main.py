@@ -22,7 +22,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, UploadFile
 from pydantic import BaseModel
 
-from app.engines import EngineUnavailableError, OutputContractUnknownError
+from app.engines import FACE_PARSING_LABELS, EngineUnavailableError, OutputContractUnknownError
 from app.loader import ArtifactVerificationError, ModelArtifactCache
 from app.pool import ModelPool
 from app.registry import get_by_version_id, get_deployable_by_name, get_state_by_name, list_deployable
@@ -201,13 +201,49 @@ class Landmark98Out(BaseModel):
     points: list[list[float]]  # 98 x (x_norm, y_norm, confidence)
 
 
+class FaceParsingOut(BaseModel):
+    """One face's 19-class parsing mask summary from `uniface-bisenet-parsing`
+    (`engines.py`'s `BiSeNetEngine.parse`).
+
+    The mask itself is `crop_size[0] * crop_size[1]` uint8 class IDs - far too large to
+    return inline as JSON, and not useful to a validation harness in raw form anyway. What
+    is returned is the per-class pixel FRACTION of the parsed crop, which is exactly what
+    a plausibility check needs: a real face crop should come back mostly `skin`/`hair`
+    with small, non-zero `l_eye`/`r_eye`/`nose`/`u_lip`/`l_lip` regions, and a mask that
+    collapsed to a single class (the classic silent-wrong-decode signature) is immediately
+    visible as one class at ~1.0."""
+
+    detector_confidence: float
+    bbox: list[float]
+    crop_size: list[int]
+    class_fractions: dict[str, float]  # only classes actually present, label -> fraction
+    distinct_classes: int
+
+
+class FaceStateOut(BaseModel):
+    """One face's 5 independent binary attributes from
+    `uniface-faceattribnet-attributes` (`engines.py`'s `FaceStateResult`).
+
+    Flat probabilities with no top-1 `label`/`confidence` pair, unlike `LivenessOut`
+    above, because these five heads do not compete - they do not sum to 1 and several can
+    be high at once. Collapsing them to a single winner would misrepresent the model."""
+
+    detector_confidence: float
+    bbox: list[float]
+    left_eye_open: float
+    right_eye_open: float
+    eyeglasses: float
+    mask: float
+    sunglasses: float
+
+
 class UnifaceValidationResponse(BaseModel):
     """Response for `/internal/v1/validate-infer-uniface` - a separate response shape
-    from `InferenceResponse` because none of these 10 models' outputs are a `Detection`
+    from `InferenceResponse` because none of these 12 models' outputs are a `Detection`
     list (see `engines.py`'s own engine docstrings for why `infer()` deliberately raises
     for all of them). Exactly one of `embeddings`/`landmarks`/`matte`/`attributes`/
-    `liveness`/`gaze`/`landmarks98` is populated, matching which of the 10 models
-    `version_id` names."""
+    `liveness`/`gaze`/`landmarks98`/`parsing`/`face_state` is populated, matching which of
+    the 12 models `version_id` names."""
 
     model_name: str
     version_id: str
@@ -222,6 +258,8 @@ class UnifaceValidationResponse(BaseModel):
     liveness: list[LivenessOut] | None = None
     gaze: list[GazeOut] | None = None
     landmarks98: list[Landmark98Out] | None = None
+    parsing: list[FaceParsingOut] | None = None
+    face_state: list[FaceStateOut] | None = None
 
 
 # --- Endpoints -----------------------------------------------------------------------
@@ -416,11 +454,12 @@ async def validate_infer(
     return await _run_inference(registered, image, confidence)
 
 
-# The 10 uniface-zoo models `/internal/v1/validate-infer-uniface` below knows how to run:
+# The 12 uniface-zoo models `/internal/v1/validate-infer-uniface` below knows how to run:
 # the 6 low-risk models (`UnifaceEmbeddingEngine`/`UnifaceFaceMeshEngine`/
 # `UnifaceMattingEngine`) plus the 4 cross-check models (`FairFaceEngine`/
-# `MiniFasNetEngine`/`MobileGazeEngine`/`PipNetEngine`) - see engines.py's own dispatch
-# tables. Kept here rather than imported from engines.py's private dicts so this
+# `MiniFasNetEngine`/`MobileGazeEngine`/`PipNetEngine`) plus the 2 resolved against the
+# same public reference on 2026-09-16 (`BiSeNetEngine`/`FaceAttribNetEngine`) - see
+# engines.py's own dispatch tables. Kept here rather than imported from engines.py's private dicts so this
 # endpoint's supported-model list is visible and grep-able in one place, independent of
 # engines.py's internal dispatch structure. The 4 cross-check models had no live HTTP path
 # at all until this addition - they were validated by importing engines.py directly into a
@@ -438,6 +477,8 @@ _UNIFACE_VALIDATION_MODELS: dict[str, str] = {
     "uniface-minifasnet-antispoofing": "liveness",
     "uniface-mobilegaze-estimation": "gaze",
     "uniface-pipnet-landmark": "landmarks98",
+    "uniface-bisenet-parsing": "parsing",
+    "uniface-faceattribnet-attributes": "face_state",
 }
 # The platform's own already-verified face detector (production state, confirmed live
 # this session) - reused rather than building a second face cropper, per this session's
@@ -456,10 +497,11 @@ async def validate_infer_uniface(
     confidence: float = Form(0.25),
     frame: UploadFile = File(...),
 ) -> UnifaceValidationResponse:
-    """Gate 2-4 validation harness for the 10 uniface-zoo models with a non-`Detection`
+    """Gate 2-4 validation harness for the 12 uniface-zoo models with a non-`Detection`
     output (`_UNIFACE_VALIDATION_MODELS` above) - the sibling of `/internal/v1/
     validate-infer` for models whose output is a face embedding, a dense landmark mesh, a
-    portrait alpha matte, an attribute/liveness score, or a gaze angle, none of which fit
+    portrait alpha matte, an attribute/liveness score, a gaze angle, a per-pixel parsing
+    mask, or a set of independent binary attribute probabilities, none of which fit
     `InferenceResponse`/`_run_inference`. Same version_id-addressed, VALIDATABLE_STATES
     scoping as `/internal/v1/validate-infer` - see that endpoint's own docstring for why.
 
@@ -484,7 +526,7 @@ async def validate_infer_uniface(
             status_code=422,
             code="not_a_uniface_validation_model",
             message=(
-                f"'{registered.model_name}' is not one of the 10 models this endpoint "
+                f"'{registered.model_name}' is not one of the 12 models this endpoint "
                 f"validates: {sorted(_UNIFACE_VALIDATION_MODELS)}. Use /internal/v1/"
                 "validate-infer for a model whose output is a Detection list."
             ),
@@ -697,6 +739,46 @@ async def _run_uniface_inference(loaded, detector_loaded, kind: str, image, conf
                     )
                 )
             return {"face_count": len(detections), "landmarks98": results}
+
+        if kind == "parsing":
+            results = []
+            for d in detections:
+                mask = loaded.engine.parse(image, d)
+                ids, counts = np.unique(mask, return_counts=True)
+                total = float(mask.size)
+                results.append(
+                    FaceParsingOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        crop_size=[int(mask.shape[1]), int(mask.shape[0])],
+                        class_fractions={
+                            FACE_PARSING_LABELS[int(i)]: round(float(c) / total, 6)
+                            # strict=True: np.unique(return_counts=True) always returns
+                            # two equal-length arrays, so a length mismatch would be a
+                            # real bug rather than something to silently truncate.
+                            for i, c in zip(ids.tolist(), counts.tolist(), strict=True)
+                        },
+                        distinct_classes=int(ids.size),
+                    )
+                )
+            return {"face_count": len(detections), "parsing": results}
+
+        if kind == "face_state":
+            results = []
+            for d in detections:
+                s = loaded.engine.predict_face_state(image, d)
+                results.append(
+                    FaceStateOut(
+                        detector_confidence=round(d.confidence, 4),
+                        bbox=[round(v, 5) for v in d.bbox],
+                        left_eye_open=round(s.left_eye_open, 6),
+                        right_eye_open=round(s.right_eye_open, 6),
+                        eyeglasses=round(s.eyeglasses, 6),
+                        mask=round(s.mask, 6),
+                        sunglasses=round(s.sunglasses, 6),
+                    )
+                )
+            return {"face_count": len(detections), "face_state": results}
 
         raise OutputContractUnknownError(f"No uniface validation path for kind '{kind}'.")
 

@@ -27,9 +27,15 @@ if str(AI_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(AI_RUNTIME_ROOT))
 
 from app.engines import (  # noqa: E402
+    FACE_ATTRIBUTE_LABELS,
+    FACE_PARSING_LABELS,
+    BiSeNetEngine,
+    FaceAttribNetEngine,
+    FaceStateResult,
     UnifaceEmbeddingEngine,
     UnifaceFaceMeshEngine,
     UnifaceMattingEngine,
+    _faceattrib_letterbox,
     _facemesh_roi_from_box,
     _facemesh_warp_roi,
     _uniface_recognition_blob,
@@ -214,3 +220,137 @@ def test_uniface_matting_engine_infer_raises_output_contract_unknown():
 
     with pytest.raises(OutputContractUnknownError):
         engine.infer(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+# --- BiSeNet parsing / FaceAttribNet attributes -------------------------------------------
+#
+# The 2 models CHECKLIST.md previously recorded as "should not be decoded on a guess at
+# all". Same discipline as everything above: real artifact inference is validated
+# separately against real weights and a real image (scripts/
+# run_uniface_model_validation_parsing_attrib.py), and these tests pin only what a unit
+# test genuinely can - the dispatch table, the ported label orders, and the pure
+# preprocessing math.
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected_cls"),
+    [
+        ("uniface-bisenet-parsing", BiSeNetEngine),
+        ("uniface-faceattribnet-attributes", FaceAttribNetEngine),
+    ],
+)
+def test_build_engine_dispatches_the_two_resolved_models(model_name, expected_cls, monkeypatch):
+    """These 2 must reach their own engines, not the generic OnnxEngine fall-through they
+    used to hit. That fall-through is not a harmless no-op: `OnnxEngine._decode` only
+    understands the YOLO 6/7-column layout, and the cross-check work already found it
+    silently returning zero detections rather than erroring when a non-YOLO output
+    happened to have a matching column count."""
+    import app.engines as engines_mod
+
+    sentinel = object()
+    monkeypatch.setitem(engines_mod.ENGINES_BY_RUNTIME, "onnxruntime", lambda path, labels: sentinel)
+    monkeypatch.setattr(expected_cls, "__init__", lambda self, path, labels=None: None)
+
+    engine = build_engine("onnxruntime", Path("/fake.onnx"), None, "face_parsing", model_name)
+    assert isinstance(engine, expected_cls)
+    assert engine is not sentinel
+
+
+def test_face_parsing_labels_match_the_reference_19_class_scheme():
+    """Ported verbatim from the reference's own `uniface/draw.py::FACE_PARSING_LABELS`.
+    Index 0 must be `background` (argmax returns a class id, and the endpoint indexes this
+    tuple directly), and the tuple must be exactly 19 long - the model's own class axis."""
+    assert len(FACE_PARSING_LABELS) == 19
+    assert FACE_PARSING_LABELS[0] == "background"
+    assert FACE_PARSING_LABELS[1] == "skin"
+    assert FACE_PARSING_LABELS[6] == "eye_g"
+    assert FACE_PARSING_LABELS[17] == "hair"
+    assert len(set(FACE_PARSING_LABELS)) == 19  # no duplicate would-be-ambiguous names
+
+
+def test_face_attribute_labels_are_the_reference_column_order():
+    """The one fact that was previously called unrecoverable. This exact order is what
+    `uniface/attribute/faceattribnet.py::postprocess` unpacks the (1,5) tensor into; a
+    reordering here would silently mislabel every attribute the model reports."""
+    assert FACE_ATTRIBUTE_LABELS == (
+        "left_eye_open", "right_eye_open", "eyeglasses", "mask", "sunglasses",
+    )
+
+
+def test_face_state_result_as_dict_round_trips_in_label_order():
+    result = FaceStateResult(
+        left_eye_open=0.1, right_eye_open=0.2, eyeglasses=0.3, mask=0.4, sunglasses=0.5
+    )
+    assert result.as_dict() == {
+        "left_eye_open": 0.1, "right_eye_open": 0.2, "eyeglasses": 0.3,
+        "mask": 0.4, "sunglasses": 0.5,
+    }
+    assert tuple(result.as_dict()) == FACE_ATTRIBUTE_LABELS
+
+
+def test_faceattrib_letterbox_pads_with_zeros_and_preserves_aspect_ratio():
+    """A 2:1 landscape crop must land centred in a square canvas with ZERO padding (the
+    reference passes `fill_value=0`, not `letterbox_resize`'s own 114 grey default) and
+    with its aspect ratio intact - a plain resize would stretch the face, and grey padding
+    would feed the model a border it never saw in training."""
+    crop = np.full((64, 128, 3), 255, dtype=np.uint8)  # white, 2:1
+    blob = _faceattrib_letterbox(crop, 128)
+
+    assert blob.shape == (1, 3, 128, 128)
+    assert blob.dtype == np.float32
+    # Scaled to [0,1] only - no mean/std here, that is baked into the ONNX graph.
+    assert blob.max() == pytest.approx(1.0)
+    # The image occupies the middle 64 rows; the rows above/below are zero padding.
+    assert blob[0, :, 0, :].max() == pytest.approx(0.0)
+    assert blob[0, :, 127, :].max() == pytest.approx(0.0)
+    assert blob[0, :, 64, :].min() == pytest.approx(1.0)
+
+
+def test_faceattrib_letterbox_converts_bgr_to_rgb():
+    """`letterbox_resize` converts BGR->RGB before normalising. A pure-blue BGR crop must
+    therefore come back as channel 2 (blue in RGB), not channel 0."""
+    crop = np.zeros((32, 32, 3), dtype=np.uint8)
+    crop[:, :, 0] = 255  # BGR blue
+    blob = _faceattrib_letterbox(crop, 128)
+
+    centre = blob[0, :, 64, 64]
+    assert centre[0] == pytest.approx(0.0)  # R
+    assert centre[2] == pytest.approx(1.0)  # B
+
+
+def test_faceattrib_letterbox_rejects_a_non_uint8_crop():
+    """Pasting a float image onto the uint8 canvas would truncate it to zeros and the model
+    would return confident nonsense with no error - the reference guards this for the same
+    reason (`uniface.common.validate_image`)."""
+    from app.engines import OutputContractUnknownError
+
+    with pytest.raises(OutputContractUnknownError):
+        _faceattrib_letterbox(np.zeros((32, 32, 3), dtype=np.float32), 128)
+
+
+def test_bisenet_engine_infer_raises_output_contract_unknown():
+    engine = BiSeNetEngine.__new__(BiSeNetEngine)
+    from app.engines import OutputContractUnknownError
+
+    with pytest.raises(OutputContractUnknownError, match="parse"):
+        engine.infer(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+def test_faceattribnet_engine_infer_raises_output_contract_unknown():
+    engine = FaceAttribNetEngine.__new__(FaceAttribNetEngine)
+    from app.engines import OutputContractUnknownError
+
+    with pytest.raises(OutputContractUnknownError, match="predict_face_state"):
+        engine.infer(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+def test_bisenet_default_crop_margin_is_nonzero():
+    """Regression guard for a real, measured finding: at the reference's own margin of 0.0
+    this model returns a degenerate 100%-`background` mask on both real faces in this
+    project's only face fixture (SCRFD boxes of 36x52 and 40x50 px). Dropping the expansion
+    back to 0 would silently reintroduce that - a mask a caller could easily read as
+    "no face here". See engines.py's own _BISENET_DEFAULT_CROP_MARGIN comment for the full
+    7-value sweep behind the default."""
+    from app.engines import _BISENET_DEFAULT_CROP_MARGIN
+
+    assert _BISENET_DEFAULT_CROP_MARGIN > 0.0
