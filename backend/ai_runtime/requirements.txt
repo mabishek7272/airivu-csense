@@ -29,7 +29,7 @@ ai-edge-litert>=1.0 ; python_version < "3.13"
 # CPU-only torch precedent above. Confirmed this set is sufficient: `import
 # insightface.model_zoo` and `insightface.utils.face_align` both succeed with exactly these
 # packages present and no `opencv-python`.
-onnx>=1.16
+onnx>=1.22.0
 scikit-image>=0.22
 scipy>=1.11
 tqdm>=4.66
