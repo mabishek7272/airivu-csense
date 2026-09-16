@@ -8,5 +8,5 @@
 #
 # Everything else the agent needs is in the standard library - sqlite3 for the spool,
 # http.server for the local detection listener, asyncio for the loops.
-httpx>=0.27
+httpx>=0.28.1
 cryptography>=42.0
