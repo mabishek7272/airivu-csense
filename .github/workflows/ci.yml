@@ -12,6 +12,14 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # For the bandit SARIF upload below - code scanning needs this even though every
+      # other step in this job only reads. GitHub Advanced Security (required for private
+      # repos to accept a SARIF upload at all) may not be enabled here; that upload step
+      # is `continue-on-error: true` for exactly that reason, so this permission grant
+      # is inert rather than harmful on a repo where it doesn't apply.
+      security-events: write
     services:
       postgres:
         image: postgres:16
@@ -65,7 +73,7 @@ jobs:
           pip install -r backend/admin_api/requirements.txt
           pip install -r backend/tests/requirements.txt
           pip install -r backend/notification_worker/requirements.txt
-          pip install ruff mypy pip-audit bandit
+          pip install ruff mypy pip-audit bandit bandit-sarif-formatter
 
       - name: Lint (ruff)
         # `scripts/` too: the e2e and operational scripts are how this system gets
@@ -87,6 +95,25 @@ jobs:
         # `psql()` cleanup helpers in e2e scripts with no attacker-controlled input, and
         # `urlopen` calls against hardcoded operator-configured hosts) and turn this
         # blocking once it's actually clean rather than merely quiet.
+
+      - name: Static analysis (SAST) - SARIF for code scanning
+        # A second bandit run rather than a single `-f sarif` invocation: SARIF is a
+        # machine-readable format, not something worth also making a human read in the
+        # job log, so the human-facing run above stays on bandit's own default text
+        # output and this one exists purely to produce the upload artifact below.
+        run: bandit -r backend scripts -ll -x '**/tests/**,**/node_modules/**,**/__pycache__/**' -f sarif -o bandit.sarif || true
+
+      - name: Upload bandit SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        # continue-on-error, not `|| true` on the action itself: code scanning upload
+        # needs GitHub Advanced Security, which a private repo may not have enabled -
+        # that 403 is expected and not a CI failure, same non-blocking philosophy as
+        # every other scan step in this workflow (see this job's own SCA/SAST TODOs).
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
 
       - name: Bootstrap non-superuser application roles
         working-directory: backend/migrations
@@ -170,6 +197,9 @@ jobs:
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -201,6 +231,16 @@ jobs:
           path: gitleaks.sarif
           if-no-files-found: ignore
 
+      - name: Upload gitleaks SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        # See the backend job's own comment on this same pattern: needs GitHub Advanced
+        # Security, a 403 here on a repo without it is expected, not a real CI failure.
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
   container-and-iac-scan:
     # Trivy in filesystem mode, not image mode: this workflow doesn't build any of the
     # service Docker images (that happens in infra/, not CI), so there's no built image
@@ -212,6 +252,9 @@ jobs:
     # over-broad permissions). Non-blocking for the same reason pip-audit/bandit/npm
     # audit all are above - a first run against an unreviewed baseline.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -223,8 +266,19 @@ jobs:
           scanners: vuln,config,secret
           severity: HIGH,CRITICAL
           exit-code: "0"
-        # TODO(Phase 8): triage the baseline, upload SARIF to code scanning, and turn
-        # exit-code to "1" once it's actually clean rather than merely quiet. `scanners:
-        # secret` overlaps with the dedicated `secret-scan` job above by design - two
-        # different tools agreeing is more reassuring than either running alone, not
-        # redundant.
+          format: sarif
+          output: trivy.sarif
+        # TODO(Phase 8): triage the baseline and turn exit-code to "1" once it's actually
+        # clean rather than merely quiet. `scanners: secret` overlaps with the dedicated
+        # `secret-scan` job above by design - two different tools agreeing is more
+        # reassuring than either running alone, not redundant.
+
+      - name: Upload Trivy SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        # See the backend job's own comment on this same pattern: needs GitHub Advanced
+        # Security, a 403 here on a repo without it is expected, not a real CI failure.
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy

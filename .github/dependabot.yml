@@ -1,0 +1,126 @@
+# CHECKLIST.md Phase 8's own "Deliberately deferred" list named this explicitly: a
+# Dependabot/Renovate config to keep the frontend/backend baselines the CI security scans
+# (bandit/pip-audit/npm audit/Trivy/gitleaks) surface from silently drifting further apart
+# from what's actually fixed. One entry per real manifest in this repo - not a guess at
+# what might exist, each of these was confirmed present before being listed here.
+#
+# Deliberately weekly, not daily: this repo already has several known, named baseline
+# gaps that need their own dedicated fix pass (react-router 6->7, vite 6->8, a future
+# eslint-config-next major bump - see ci.yml's own TODOs) rather than a bump PR arriving
+# before anyone's looked at the last one.
+version: 2
+updates:
+  # --- Python (pip) - one entry per directory with its own requirements.txt/pyproject.toml ---
+  - package-ecosystem: "pip"
+    directory: "/backend/shared"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/tenant_api"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/admin_api"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/notification_worker"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/ai_runtime"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/pipeline_runtime"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/edge_agent"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/migrations"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "pip"
+    directory: "/backend/tests"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+
+  # --- JavaScript/TypeScript (npm) - every real frontend/mobile app ---
+  - package-ecosystem: "npm"
+    directory: "/frontend/customer-crm"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+    ignore:
+      # Both already named as known, real findings needing their own dedicated
+      # breaking-change pass (ci.yml's own TODO on this app's npm-audit step) - not
+      # something a routine Dependabot bump should force through on its own.
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "npm"
+    directory: "/frontend/developer-console"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+    ignore:
+      # eslint-config-next's own build-time chain (glob/minimatch) needs an
+      # eslint-config-next major bump - ci.yml's own TODO on this app's npm-audit step.
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "npm"
+    directory: "/frontend/demo-site"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+  - package-ecosystem: "npm"
+    directory: "/mobile/app"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+
+  # --- Go modules - the WhatsApp notification gateway ---
+  - package-ecosystem: "gomod"
+    directory: "/edge/whatsapp-gateway"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
+
+  # --- Docker base images - every real service Dockerfile ---
+  - package-ecosystem: "docker"
+    directory: "/backend/tenant_api"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/admin_api"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/notification_worker"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/ai_runtime"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/pipeline_runtime"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/edge_agent"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/backend/migrations"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/edge/whatsapp-gateway"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 3
+
+  # --- The CI workflow itself ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: { interval: "weekly" }
+    open-pull-requests-limit: 5
