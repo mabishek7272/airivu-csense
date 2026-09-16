@@ -2834,10 +2834,27 @@ Legacy system access provided 2026-08-25, so this is partially unblocked.
         side effect of wiring the scan; the Developer Console's remaining baseline is
         `eslint-config-next`'s own build-time tooling chain (`glob`/`minimatch`), fixed
         only by an `eslint-config-next` major bump.
-  - [ ] **Deliberately deferred**: turning any of these blocking once triaged; uploading
-        SARIF output to GitHub code scanning (findings currently only visible in the
-        workflow's own log/artifact); a Dependabot/Renovate config to keep the frontend
-        baselines from silently drifting further.
+  - [x] **2026-09-16: SARIF upload to GitHub code scanning wired for all 3 scanners**,
+        and a real Dependabot config added - 2 of the 3 previously-deferred items above.
+        Bandit has no native SARIF formatter (checked for real: `-f` only accepts
+        `csv/custom/html/json/screen/txt/xml/yaml`) - added `bandit-sarif-formatter` and
+        confirmed locally against this repo's own `backend`/`scripts` that it produces
+        real, valid SARIF 2.1.0 (266 results). Trivy's own `format: sarif` was confirmed
+        the same way, locally, with the real `trivy` CLI (106 results) before trusting it
+        in CI. Every upload step is `continue-on-error: true` - code scanning needs GitHub
+        Advanced Security, which a private repo may not have; a 403 there is expected, not
+        a CI failure, matching this workflow's own established non-blocking stance.
+        `.github/dependabot.yml` covers every real manifest actually present (checked by
+        listing them, not assumed): 9 pip directories, 4 npm apps, 1 Go module
+        (`edge/whatsapp-gateway` - confirmed it's Go, not JS, before assuming npm), 8
+        docker directories, github-actions itself - with the two already-named real
+        baseline gaps (customer-crm's react-router major, developer-console's
+        eslint-config-next major) excluded from auto-PRs since each needs its own
+        dedicated pass, not a bot-opened PR on top of a gap already tracked above.
+  - [ ] **Still deliberately deferred**: turning any of these blocking. That needs actual
+        triage of each baseline (real judgment calls per finding), not a config change -
+        left for a dedicated pass rather than done as a side effect of wiring SARIF/
+        Dependabot.
 - [x] DAST baseline scan against local stack, two real findings found and fixed
   - [x] `scripts/dast_baseline.py`: OWASP ZAP's own `zap-api-scan.py`, driven from
         `tenant-api`/`admin-api`'s real, already-live OpenAPI documents, against the real
