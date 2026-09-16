@@ -1,5 +1,5 @@
 # Build context: backend/  (needs access to ../shared)
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 # Unlike the edge agent, this service runs on the full x86 production box (CLAUDE.md: "16
 # cores / 32GB RAM, no GPU") and is not fighting an ARM/no-compiler constraint - it
