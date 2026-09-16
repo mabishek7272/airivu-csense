@@ -2666,12 +2666,42 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         the first tenant's job id, with its own job list empty (RLS isolation, not just
         an authorization check in application code). Full PASS. Backend: 277 passed,
         164 skipped; `ruff check` clean.
-  - [ ] **Deliberately scoped to one export type this pass**: incidents only, as CSV.
-        The same `export_jobs`/background-task/presigned-download mechanism would cover
-        detections, audit events, or camera health history without changes - just a new
-        `export_type` and its own query-building function - named as a real, easy next
-        slice rather than silently left unconsidered. No Developer Console or Customer
-        CRM UI yet - fully usable and exercised via the API and the e2e script.
+  - [x] **2026-09-17: detections export added** - the "easy next slice" named above,
+        taken. `POST /api/v1/tenant/exports/detections` with the same mechanism
+        (`export_jobs`/background-task/presigned-download), `csense_shared.exports.
+        detections.build_detections_csv` mirroring `build_incidents_csv`'s own shape.
+        Filter vocabulary (`camera_id`/`site_id`/`event_type`/`since`/`until`/
+        `min_confidence`) matches `detections.list_detections`'s own Query params exactly
+        rather than inventing a second one. `objects` (a nested JSONB list per detection)
+        is flattened to a `"class:confidence; class:confidence"` summary string
+        (`summarize_objects`, new) plus a plain `object_count` column - a CSV cell can't
+        hold nested structure, and the full structured data stays reachable per-detection
+        via the existing `GET .../detections/{id}`. `list_exports`/`get_export` needed no
+        changes at all - both were already `export_type`-agnostic; confirmed (not
+        assumed) that `detections.py` requires the same `incident.read` permission
+        `exports.py` already gated on, so no permission branching was needed either.
+    - [x] 9 new unit tests (`backend/tests/test_exports_detections.py`, mirroring
+          `test_exports.py`'s own structure) plus 2 for `summarize_objects` itself
+          (empty/None input, a missing `class`/`confidence` on one malformed object not
+          crashing the whole export) - all passing, alongside the original 6
+          incidents-export tests (re-run, still passing - no regression).
+    - [x] **Verified for real, against the live stack, not just unit-tested**: new
+          `scripts/e2e_exports_detections.py` (mirroring `e2e_exports.py`'s own proof
+          shape) - five real detections seeded across two real cameras, a real export job
+          reaches `completed` with the right `row_count`, the real downloaded CSV
+          contains every seeded detection id *and* the real camera names (not just ids -
+          proves the join, not just the query), *and* a real flattened
+          `objects_summary` value; a `camera_id` filter and a `min_confidence` filter
+          both narrow correctly; the job list carries a real `"detections"` export_type
+          row; a second, unrelated tenant gets a 404 for this tenant's job id (RLS). Full
+          PASS. `e2e_exports.py` (incidents) re-run afterward on the same rebuilt
+          container - still full PASS, no regression from the shared `csense_shared.
+          exports` package changes.
+  - [ ] **Still deliberately scoped**: audit events and camera health history exports
+        remain unbuilt - the same mechanism would cover them, still just a new
+        `export_type` and query function each. No Developer Console or Customer CRM UI
+        for triggering/downloading *any* export type yet - fully usable and exercised via
+        the API and both e2e scripts.
 - [x] License grace/restriction + renewal flow
   - [x] `csense_shared.licensing.lifecycle` (new): `sync_license_status` computes and
         persists `active -> grace -> expired` purely against `expires_at`/`grace_ends_at`
