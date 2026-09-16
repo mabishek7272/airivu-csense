@@ -1,0 +1,59 @@
+{
+  "model_name": "uniface-blazeface-detect",
+  "task": "Face detection, SHORT RANGE. Graded differently from the other two uniface detectors, deliberately - see short_range_note. Recall is graded on a short-range crop of each real face (the framing this model was actually trained for); false positives are graded on full frames with no face in them.",
+  "classes": ["face"],
+  "confidence_threshold": 0.5,
+  "short_range_note": "BlazeFace short-range is MediaPipe's own ~2m selfie/front-camera detector on a 128x128 input. On the full stock_streetscene_3adults.jpg frame each real face is only ~5% of the frame width - about 6 pixels once letterboxed to 128px - and this model returns ZERO detections there. That is its documented design limit, not a decode failure, and the distinction was established by measurement rather than assumed: the detection_range_sweep recorded in this model's own validation run holds the same real face down to a face occupying 8.7% of the frame width (confidence 0.59, still correctly located) and loses it by 6.0%, while CenterFace and RetinaFace still find it at 5.1%. Grading recall on the full street frame would therefore be grading the wrong thing - it would record a 'failure' that is really a capability boundary, and would hide whether the anchor decode works at all. So recall is graded on a fixed 3.5x crop around each face, and the full-frame zero-detection result is recorded in the run as a finding rather than scored.",
+  "tolerance": {
+    "min_iou_vs_scrfd": 0.5,
+    "max_false_positive_rate": 0.0,
+    "crop_factor": 3.5,
+    "note": "IoU is measured against SCRFD's box on the same crop. BlazeFace scores lower IoU than RetinaFace/CenterFace against SCRFD (measured 0.72/0.80 vs 0.82-0.93) because MediaPipe's box convention genuinely covers a slightly different face extent - a squarer box - not because the decode is worse. 0.5 is a 'same face, same place' bar chosen with that known convention difference in mind."
+  },
+  "keypoints": {
+    "count": 6,
+    "order": "right eye, left eye, nose tip, mouth centre, right ear, left ear (MediaPipe's own order)",
+    "note": "6 keypoints, NOT the 5-point ArcFace alignment template every other face model in this platform emits. A BlazeFace Detection must therefore never be fed to an alignment/embedding path; engines.py's embed() guards already reject it, and a unit test pins that. Structural evidence the keypoint decode is right, measured on face 0's crop against SCRFD re-run on the SAME crop: point 3 (mouth centre) = (0.5245, 0.5880) against the midpoint of SCRFD's own two mouth corners = (0.5214, 0.5884) - 0.003 apart in x, 0.0004 in y; points 0/1 = (0.4644, 0.5575) bracket SCRFD's two eyes (0.4801, 0.5667); and points 4/5 = 0.3751 and 0.5805 sit laterally OUTSIDE that eye span at eye height, which is where ears are. A wrong stride or offset in the 16-column regressor layout would not reproduce that arrangement."
+  },
+  "note": "Only one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg. The three Autotek frames are real customer-site NVR captures with no human face at any usable resolution, used as negative controls.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected_face_count": 2,
+      "grade_on": "short_range_crop",
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark jacket/red top, dark square sunglasses."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, tan coat, round amber sunglasses."
+        }
+      ]
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "expected_face_count": 0,
+      "grade_on": "full_frame",
+      "note": "Real Autotek NVR frame, interior storage room, no people."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "expected_face_count": 0,
+      "grade_on": "full_frame",
+      "note": "Real Autotek NVR frame, garage with parked vehicles, no people."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "expected_face_count": 0,
+      "grade_on": "full_frame",
+      "note": "Real Autotek NVR frame, night IR, effectively blank."
+    }
+  ],
+  "unmeasured": [
+    "Landmark ACCURACY. The 6 points are structurally correct (see keypoints.note), but no hand-labelled MediaPipe 6-point ground truth exists in this repo, so per-point error is not scored.",
+    "Suitability for this platform's actual CCTV use case. The measured ~12%-of-frame-width floor means BlazeFace would find nothing in a typical wide-angle camera frame; it is validated as a correct decode, NOT recommended as a site detector.",
+    "Night/IR recall - the night frame here is a negative control with no face in it."
+  ]
+}
