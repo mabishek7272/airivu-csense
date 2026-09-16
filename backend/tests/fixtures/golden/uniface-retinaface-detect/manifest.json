@@ -1,0 +1,48 @@
+{
+  "model_name": "uniface-retinaface-detect",
+  "task": "Face detection. Graded two ways on real frames: recall - every face a human can see must be found, and its box must agree with the platform's own already-`production` face detector (insightface-buffalo-l-detect / SCRFD) at IoU >= 0.5 on the same frame; and false positives - frames with no human face in them at all must return zero detections.",
+  "classes": ["face"],
+  "confidence_threshold": 0.5,
+  "tolerance": {
+    "min_iou_vs_scrfd": 0.5,
+    "max_false_positive_rate": 0.0,
+    "note": "IoU is measured against SCRFD's own box, not a hand-drawn ground truth: SCRFD is already `production` in this registry and independently validated, so it is the best real reference available here, and two detectors from unrelated architecture families agreeing on a box location is meaningful evidence that both decoded the frame correctly. It is NOT a claim that SCRFD's box is pixel-perfect truth - IoU 0.5 is deliberately a loose 'same face, same place' bar rather than a tight one, because RetinaFace and SCRFD genuinely use slightly different box conventions around the chin/hairline."
+  },
+  "note": "Only one real, usable source image exists anywhere in this repo's committed fixtures with clearly visible human faces - stock_streetscene_3adults.jpg (already used by intern-child-adult-detection and the other uniface golden sets). A third person in that photo is cropped at the frame edge and is not detected by SCRFD either, so only the 2 fully-visible faces are listed as expected. The three Autotek frames are real customer-site NVR captures with no human face at any usable resolution - they are the negative controls, and they are what makes the false-positive rate a real measurement rather than an untested zero.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected_face_count": 2,
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark jacket/red top, dark square sunglasses."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, tan coat, round amber sunglasses."
+        }
+      ]
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, interior storage room, no people."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, garage with parked vehicles, no people."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, night IR, effectively blank. Also the only night/IR condition anywhere in this set - see CLAUDE.md on night detection thresholds being unvalidated generally."
+    }
+  ],
+  "unmeasured": [
+    "Landmark ACCURACY. The 5 points are structurally correct (right count, right order, and on the real faces they land within ~1-2px of SCRFD's own 5 points), but no hand-labelled 5-point ground truth exists in this repo, so landmark error is not scored anywhere in this manifest.",
+    "Night/IR recall. The one night frame here is a negative control - it contains no face, so it tests false positives only. No real face has ever been tested against this model under IR.",
+    "Crowded / small-face / rotated-face recall. Two upright, unoccluded (bar sunglasses) adult faces in one photo is the entire positive set."
+  ]
+}

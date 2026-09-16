@@ -102,13 +102,26 @@ def test_build_engine_face_recognition_task_code_does_not_reach_insightface(mode
 
 
 def test_build_engine_falls_through_to_generic_onnx_for_unknown_model_name(monkeypatch):
-    """A model_name this file doesn't recognise (the other 9 uniface-zoo models, or
-    anything future) must still reach the plain OnnxEngine path unchanged."""
+    """A model_name this file doesn't recognise (the remaining undecoded uniface-zoo
+    models, or anything future) must still reach the plain OnnxEngine path unchanged.
+
+    This test used to use `uniface-retinaface-detect` as its stand-in for "unrecognised".
+    That stopped being true when RetinaFace got a real decode (2026-09-16) and the test
+    failed - correctly, and worth recording rather than quietly swapping the name: a
+    registered model reaching `OnnxEngine` is precisely the silent-wrong-decode bug this
+    suite exists to catch, so the assertion was right and its example had simply become
+    stale. It now uses a name that is not, and will not be, in any dispatch table.
+    """
     import app.engines as engines_mod
+
+    unregistered = "not-a-real-model-name-for-dispatch-fallthrough"
+    assert unregistered not in engines_mod._UNIFACE_ENGINES_BY_MODEL_NAME
+    assert unregistered not in engines_mod._UNIFACE_EMBEDDING_FAMILIES
+    assert unregistered not in engines_mod._INSIGHTFACE_MODEL_NAMES
 
     sentinel = object()
     monkeypatch.setitem(engines_mod.ENGINES_BY_RUNTIME, "onnxruntime", lambda path, labels: sentinel)
-    result = build_engine("onnxruntime", Path("/fake.onnx"), None, "face_detection", "uniface-retinaface-detect")
+    result = build_engine("onnxruntime", Path("/fake.onnx"), None, "face_detection", unregistered)
     assert result is sentinel
 
 
@@ -214,3 +227,273 @@ def test_uniface_matting_engine_infer_raises_output_contract_unknown():
 
     with pytest.raises(OutputContractUnknownError):
         engine.infer(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+# --- uniface-zoo face detectors: anchor maths and decode geometry ------------------------
+#
+# These are the checks that actually discriminate a correct anchor/decode port from a
+# plausible-looking wrong one. Real-artifact inference is validated separately against real
+# weights and real face images (CHECKLIST.md's own gate 3-4 entry for these 3); what a unit
+# test CAN pin is the pure maths - the anchor grids, the weighted-NMS blend, and the
+# coordinate conventions - with inputs whose correct answers are known independently.
+
+def test_blazeface_anchor_grid_is_exactly_896_at_128px():
+    """896 is the live artifact's own real head dimension (gate-2 probe: `regressors`
+    (batch, 896, 16)). The anchor generator must land on exactly that number - this is the
+    single check that catches a wrong MediaPipe SSD config, because a different stride set
+    or scale count produces a different count, not subtly different boxes."""
+    from app.engines import _BLAZEFACE_NUM_ANCHORS, _blazeface_anchors
+
+    anchors = _blazeface_anchors(128)
+    assert anchors.shape == (896, 2)
+    assert _BLAZEFACE_NUM_ANCHORS == 896
+    # 16x16 cells x 2 anchors = 512 at stride 8, 8x8 x 6 = 384 at stride 16.
+    assert 512 + 384 == 896
+    # Centres are normalised cell centres, so strictly inside (0, 1).
+    assert anchors.min() > 0.0 and anchors.max() < 1.0
+
+
+def test_blazeface_anchor_grid_refuses_a_mismatched_input_size():
+    """A wrong input size silently yields a different anchor count; the port raises rather
+    than decoding a 896-row head against the wrong grid."""
+    from app.engines import OutputContractUnknownError, _blazeface_anchors
+
+    with pytest.raises(OutputContractUnknownError):
+        _blazeface_anchors(256)
+
+
+def test_retinaface_anchor_grid_is_exactly_16800_at_640px():
+    """16800 is what the real artifact returned for `loc`/`conf`/`landmarks` at a 640x640
+    input in this session's own live gate-2 probe. Deriving the same number from the ported
+    stride/min_size config is the evidence that the anchor grid belongs to THIS artifact
+    rather than to some other RetinaFace training config."""
+    from app.engines import _RETINAFACE_INPUT_SIZE, _retinaface_anchors
+
+    priors = _retinaface_anchors(_RETINAFACE_INPUT_SIZE)
+    # strides 8/16/32 over 640px -> 80x80 + 40x40 + 20x20 cells, 2 anchor sizes each.
+    assert (80 * 80 + 40 * 40 + 20 * 20) * 2 == 16800
+    assert priors.shape == (16800, 4)
+    # Centre-offset form, normalised: cx, cy in (0,1); s_kx, s_ky are min_size/640.
+    assert priors[:, :2].min() > 0.0 and priors[:, :2].max() < 1.0
+    assert set(np.round(np.unique(priors[:, 2]) * 640).astype(int)) == {16, 32, 64, 128, 256, 512}
+
+
+def test_retinaface_decode_boxes_recovers_the_prior_when_the_offset_is_zero():
+    """A zero location prediction must decode to exactly the prior box itself. This pins
+    both variances and the log-space width/height term: with loc=0, `exp(0)=1` leaves the
+    prior size untouched and the centre unmoved, whatever the variance values are - so any
+    decode that mangles the centre/size algebra shows up immediately."""
+    from app.engines import _retinaface_decode_boxes
+
+    priors = np.array([[0.5, 0.5, 0.2, 0.4]], dtype=np.float32)
+    boxes = _retinaface_decode_boxes(np.zeros((1, 4), dtype=np.float32), priors)
+    # cx=0.5, cy=0.5, w=0.2, h=0.4 -> xyxy
+    assert np.allclose(boxes[0], [0.4, 0.3, 0.6, 0.7], atol=1e-6)
+
+
+def test_retinaface_decode_landmarks_recovers_the_prior_centre_when_offsets_are_zero():
+    """All five points collapse onto the prior centre at zero offset, and only the FIRST
+    variance (0.1) scales them - landmarks have no log-space size term, unlike boxes."""
+    from app.engines import _RETINAFACE_VARIANCES, _retinaface_decode_landmarks
+
+    priors = np.array([[0.5, 0.25, 0.2, 0.4]], dtype=np.float32)
+    points = _retinaface_decode_landmarks(np.zeros((1, 10), dtype=np.float32), priors)
+    assert points.shape == (1, 5, 2)
+    assert np.allclose(points[0], np.tile([0.5, 0.25], (5, 1)), atol=1e-6)
+
+    # A unit offset on point 0's x moves it by variance[0] * prior width, nothing else.
+    pred = np.zeros((1, 10), dtype=np.float32)
+    pred[0, 0] = 1.0
+    moved = _retinaface_decode_landmarks(pred, priors)
+    assert np.isclose(moved[0, 0, 0], 0.5 + _RETINAFACE_VARIANCES[0] * 0.2, atol=1e-6)
+    assert np.isclose(moved[0, 0, 1], 0.25, atol=1e-6)
+    assert np.allclose(moved[0, 1:], np.tile([0.5, 0.25], (4, 1)), atol=1e-6)
+
+
+def test_uniface_nms_keeps_the_best_box_and_drops_its_duplicate():
+    """The ported NMS takes an already-score-sorted input and uses upstream's `+1` area
+    convention. Two near-identical boxes must collapse to one; a distant box survives."""
+    from app.engines import _uniface_nms
+
+    dets = np.array(
+        [
+            [10, 10, 50, 50, 0.9],
+            [11, 11, 51, 51, 0.8],  # ~same box, lower score -> suppressed
+            [200, 200, 240, 240, 0.7],  # elsewhere -> kept
+        ],
+        dtype=np.float32,
+    )
+    keep = _uniface_nms(dets, 0.4)
+    assert keep == [0, 2]
+
+
+def test_blazeface_weighted_nms_blends_rather_than_discards():
+    """MediaPipe's weighted NMS score-averages overlapping candidates into the winner
+    instead of dropping them - the reason the plain IoU-discard NMS above cannot be
+    substituted. Two overlapping boxes must produce ONE row whose centre is the
+    score-weighted average of both, not simply the higher-scoring box's own centre."""
+    from app.engines import _blazeface_weighted_nms
+
+    # rows: (score, cx, cy, w, h) - keypoint columns omitted, the blend is column-agnostic.
+    rows = np.array(
+        [
+            [0.8, 0.50, 0.50, 0.2, 0.2],
+            [0.4, 0.54, 0.50, 0.2, 0.2],
+        ]
+    )
+    out = _blazeface_weighted_nms(rows, 0.3)
+    assert out.shape[0] == 1
+    assert out[0, 0] == 0.8  # winner keeps its own score
+    # centre_x = (0.8*0.50 + 0.4*0.54) / 1.2
+    assert np.isclose(out[0, 1], (0.8 * 0.50 + 0.4 * 0.54) / 1.2)
+    # A discard-style NMS would have left 0.50 untouched.
+    assert not np.isclose(out[0, 1], 0.50)
+
+
+def test_blazeface_weighted_nms_terminates_on_a_zero_area_box():
+    """Upstream's `merge[0] = True` guard: a zero-area box has an IoU of 0 against itself,
+    so relying on self-overlap to clear the threshold would loop forever."""
+    from app.engines import _blazeface_weighted_nms
+
+    rows = np.array([[0.9, 0.5, 0.5, 0.0, 0.0]])
+    out = _blazeface_weighted_nms(rows, 0.3)
+    assert out.shape[0] == 1
+
+
+def test_face_detections_clips_boxes_but_not_keypoints():
+    """Deliberate asymmetry, documented in `_face_detections`: a box is clipped to the
+    frame because every downstream consumer treats `Detection.bbox` as an in-frame region,
+    while a real ear/jaw landmark can genuinely sit outside the frame and clamping it would
+    fabricate a landmark on the border rather than report where the model put it."""
+    from app.engines import _face_detections
+
+    boxes = np.array([[-20.0, -10.0, 120.0, 90.0]])
+    scores = np.array([0.77])
+    keypoints = np.array([[[-20.0, 50.0], [110.0, 50.0]]])
+    dets = _face_detections(boxes, scores, keypoints, width=100, height=100, labels={})
+
+    assert len(dets) == 1
+    assert dets[0].class_name == "face"
+    assert dets[0].bbox == (0.0, 0.0, 1.0, 0.9)  # clipped
+    assert dets[0].keypoints[0][0] == pytest.approx(-0.2)  # NOT clipped
+    assert dets[0].keypoints[1][0] == pytest.approx(1.1)
+    # Keypoints carry the box's own score - none of these models emits a per-point one.
+    assert all(kp[2] == pytest.approx(0.77) for kp in dets[0].keypoints)
+
+
+@pytest.mark.parametrize(
+    "model_name,expected_cls_name",
+    [
+        ("uniface-blazeface-detect", "BlazeFaceEngine"),
+        ("uniface-centerface-detect", "CenterFaceEngine"),
+        ("uniface-retinaface-detect", "RetinaFaceEngine"),
+    ],
+)
+def test_build_engine_dispatches_the_three_detectors_by_model_name(
+    model_name, expected_cls_name, monkeypatch
+):
+    """All 3 carry task_code="face_detection" - the same task_code `insightface-buffalo-l-
+    detect` (SCRFD) already owns. They must dispatch by exact model_name and must NOT reach
+    InsightFaceEngine, whose `insightface.model_zoo` router is built for a different
+    architecture entirely. Same regression this suite already pins for face_recognition."""
+    import app.engines as engines_mod
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(f"{model_name} must not reach InsightFaceEngine")
+
+    monkeypatch.setattr(engines_mod, "InsightFaceEngine", _boom)
+
+    class _Tensor:
+        name = "input"
+        shape = ["batch", 3, 128, 128]
+
+    class _Session:
+        def get_inputs(self):
+            return [_Tensor()]
+
+        def get_outputs(self):
+            return [_Tensor()]
+
+    monkeypatch.setattr(
+        engines_mod, "_onnx_session", lambda path: (_Session(), ["CPUExecutionProvider"])
+    )
+
+    engine = build_engine(
+        "onnxruntime", Path("/fake.onnx"), None, "face_detection", model_name
+    )
+    assert type(engine).__name__ == expected_cls_name
+
+
+def test_the_three_detectors_are_registered_and_insightface_still_wins_its_own_names():
+    """Belt-and-braces on the dispatch table itself: the 3 new names are present, and
+    adding them did not disturb the 2 legacy InsightFace names that share their task_code."""
+    import app.engines as engines_mod
+
+    table = engines_mod._UNIFACE_ENGINES_BY_MODEL_NAME
+    assert table["uniface-blazeface-detect"] is engines_mod.BlazeFaceEngine
+    assert table["uniface-centerface-detect"] is engines_mod.CenterFaceEngine
+    assert table["uniface-retinaface-detect"] is engines_mod.RetinaFaceEngine
+    assert "insightface-buffalo-l-detect" not in table
+    assert "insightface-buffalo-l-detect" in engines_mod._INSIGHTFACE_MODEL_NAMES
+
+
+def test_blazeface_six_keypoints_are_rejected_by_the_five_point_alignment_paths():
+    """BlazeFace emits 6 MediaPipe keypoints, not the 5-point ArcFace alignment template.
+    A BlazeFace Detection must therefore FAIL loudly at `embed()` rather than being
+    silently mis-aligned - upstream marks the same distinction as
+    `supports_alignment = False`. This asserts the existing guard actually covers the
+    6-point case, not just the too-few case the older test pins."""
+    from app.engines import Detection, OutputContractUnknownError
+
+    engine = UnifaceEmbeddingEngine.__new__(UnifaceEmbeddingEngine)
+    six_point = Detection(
+        class_id=0, class_name="face", confidence=0.9, bbox=(0.1, 0.1, 0.5, 0.5),
+        keypoints=[(0.1 * i, 0.1 * i, 0.9) for i in range(6)],
+    )
+    with pytest.raises(OutputContractUnknownError):
+        engine.embed(np.zeros((10, 10, 3), dtype=np.uint8), six_point)
+
+
+def test_centerface_resize_rounds_each_axis_up_to_a_multiple_of_32_independently():
+    """CenterFace's FPN needs both sides divisible by 32, and each side is rounded up
+    independently - which is exactly why the decode must carry TWO scale factors and apply
+    them per axis. A single shared factor would skew every box on a non-square frame."""
+    from app.engines import CenterFaceEngine
+
+    engine = CenterFaceEngine.__new__(CenterFaceEngine)
+    image = np.zeros((519, 713, 3), dtype=np.uint8)
+    resized, scale_w, scale_h = engine._resize(image)
+
+    assert resized.shape[0] % 32 == 0 and resized.shape[1] % 32 == 0
+    assert scale_w == pytest.approx(resized.shape[1] / 713)
+    assert scale_h == pytest.approx(resized.shape[0] / 519)
+    assert scale_w != scale_h  # the whole point: the axes really do differ
+
+
+def test_centerface_resize_caps_large_frames_but_never_upscales_small_ones():
+    """The 640x640 cap bounds CPU cost on a mainstream frame (CLAUDE.md: no GPU on the
+    prod box); anything already inside the cap runs at its own resolution, never upscaled.
+
+    The real 704x576 substream this platform actually infers on is recorded here because
+    it is NOT left alone - 704 exceeds the 640 cap, so it is scaled to 640x544. That was
+    this test's own first (wrong) assumption, caught by the test failing; the engine was
+    right. Worth pinning as real behaviour rather than deleting: the substream is the
+    platform's normal inference source, so "CenterFace downscales it slightly" is a fact
+    about production, not a corner case.
+    """
+    from app.engines import CenterFaceEngine
+
+    engine = CenterFaceEngine.__new__(CenterFaceEngine)
+
+    big, _, _ = engine._resize(np.zeros((1520, 2592, 3), dtype=np.uint8))
+    assert big.shape[1] <= 640 + 31
+
+    # The real 704x576 substream: capped on width, so both axes scale.
+    substream, scale_w, scale_h = engine._resize(np.zeros((576, 704, 3), dtype=np.uint8))
+    assert substream.shape[:2] == (544, 640)
+    assert scale_w < 1.0 and scale_h < 1.0
+
+    # Genuinely inside the cap and already 32-aligned: untouched, both factors exactly 1.
+    small, scale_w, scale_h = engine._resize(np.zeros((480, 640, 3), dtype=np.uint8))
+    assert small.shape[:2] == (480, 640)
+    assert (scale_w, scale_h) == (1.0, 1.0)

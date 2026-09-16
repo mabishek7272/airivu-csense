@@ -1,0 +1,48 @@
+{
+  "model_name": "uniface-centerface-detect",
+  "task": "Face detection. Graded two ways on real frames: recall - every face a human can see must be found, and its box must agree with the platform's own already-`production` face detector (insightface-buffalo-l-detect / SCRFD) at IoU >= 0.5 on the same frame; and false positives - frames with no human face in them at all must return zero detections.",
+  "classes": ["face"],
+  "confidence_threshold": 0.5,
+  "tolerance": {
+    "min_iou_vs_scrfd": 0.5,
+    "max_false_positive_rate": 0.0,
+    "note": "IoU is measured against SCRFD's own box, not a hand-drawn ground truth: SCRFD is already `production` in this registry and independently validated, so it is the best real reference available here, and two detectors from unrelated architecture families agreeing on a box location is meaningful evidence that both decoded the frame correctly. It is NOT a claim that SCRFD's box is pixel-perfect truth."
+  },
+  "note": "CenterFace is anchor-free (CenterNet-style), despite being grouped with the two anchor-based detectors in CHECKLIST.md's own risk tiering - established by reading the real reference source, not assumed from the grouping. Its specific silent-failure risks are the log-space box scale and the (dy, dx) landmark pair order, both of which this golden set exercises indirectly: a swapped landmark order still lands inside the box on a roughly-square face, so the real check is that the 5 points agree positionally with SCRFD's own 5 points, which is recorded in the run's per-image results.",
+  "images": [
+    {
+      "file": "stock_streetscene_3adults.jpg",
+      "expected_face_count": 2,
+      "faces": [
+        {
+          "expected_center_px": [289, 446],
+          "note": "Younger man, dark jacket/red top, dark square sunglasses."
+        },
+        {
+          "expected_center_px": [135, 446],
+          "note": "Bearded man, tan coat, round amber sunglasses."
+        }
+      ]
+    },
+    {
+      "file": "autotek_c4_storage_room.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, interior storage room, no people."
+    },
+    {
+      "file": "autotek_c8_garage_cars.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, garage with parked vehicles, no people."
+    },
+    {
+      "file": "autotek_c1_night_blank.jpg",
+      "expected_face_count": 0,
+      "note": "Real Autotek NVR frame, night IR, effectively blank."
+    }
+  ],
+  "unmeasured": [
+    "Landmark ACCURACY. Structurally correct and positionally close to SCRFD's own points on the real faces, but no hand-labelled 5-point ground truth exists in this repo, so landmark error is not scored.",
+    "Rotated-face behaviour. The reference implementation's own note says CenterFace landmark accuracy degrades past roughly 20-30 degrees of in-plane rotation; both faces here are upright, so that limit is inherited-and-documented, not measured.",
+    "Night/IR recall - the night frame here is a negative control with no face in it."
+  ]
+}

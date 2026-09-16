@@ -12,7 +12,9 @@ stages never branch on model format.
 """
 from __future__ import annotations
 
+import itertools
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -1533,6 +1535,625 @@ class PipNetEngine:
         return LandmarkResult(points=points)
 
 
+# --- uniface-zoo face detectors (BlazeFace / CenterFace / RetinaFace) -----------------
+#
+# The last 3 of the 15 `uniface-zoo` models pulled 2026-09-03, and the highest-risk decode
+# of the set: CHECKLIST.md's own tiering calls them out as the group where "a wrong anchor
+# grid produces plausible-looking but silently wrong boxes". Every constant below is ported
+# from the real reference implementation these exact weights ship with - github.com/yakhyo/
+# uniface (MIT), the clone at `uniface-main/` in this repo's working tree - not re-derived
+# from the architecture papers and not inferred from the ONNX graph in isolation.
+#
+# Real gate-2 shapes, re-probed live this session against the real artifacts (a fresh
+# `onnxruntime.InferenceSession` inside the running `csense-ai-runtime-1` container, each
+# artifact fetched from the real `csense-models` MinIO bucket and sha256-verified against
+# its own registry row before loading) - NOT trusted from any prior write-up:
+#   uniface-blazeface-detect:  input "input" (batch,3,128,128) f32
+#                              -> "regressors" (batch,896,16) + "scores" (batch,896,1)
+#   uniface-centerface-detect: input "input" (batch,3,height,width) f32, fully dynamic
+#                              -> "heatmap" (b,1,h/4,w/4), "scale" (b,2,h/4,w/4),
+#                                 "offset" (b,2,h/4,w/4), "landmarks" (b,10,h/4,w/4)
+#   uniface-retinaface-detect: input "input" (batch,3,height,width) f32, fully dynamic
+#                              -> "loc" (b,N,4), "conf" (b,N,2), "landmarks" (b,N,10)
+#
+# Two of those probes are load-bearing confirmations of the anchor maths, not just shape
+# bookkeeping, because the anchor count is the one thing a wrong anchor config cannot fake:
+#   * RetinaFace at a 640x640 input returned N=16800 priors. The ported `_retinaface_
+#     anchors((640,640))` generates exactly 16800 - strides (8,16,32) give 80x80 + 40x40 +
+#     20x20 = 8400 cells, 2 min_sizes per cell. A mismatched training config (a different
+#     stride set, 3 sizes per level, a different input size) would land on a different
+#     number and the decode would fail loudly on the shape rather than silently mis-place
+#     boxes. This is why RetinaFace runs at a fixed 640x640 here even though the graph's
+#     own H/W axes are dynamic: the priors are a function of the input size, so the size
+#     the anchors were built for and the size actually fed to the model must be the same.
+#   * BlazeFace's head is a literal (896, 16) - the ported `_blazeface_anchors(128)`
+#     asserts on exactly 896, and 16 = 4 box terms + 6 keypoints x 2, which is what fixes
+#     the keypoint count at 6 rather than the 5 every other face model in this file uses.
+#
+# `uniface-centerface-detect` is grouped with the other two in CHECKLIST.md's risk tiering
+# but is NOT actually anchor-based - confirmed by reading the real source rather than
+# assuming the grouping was right. It is anchor-free/CenterNet-style: faces are peaks in a
+# stride-4 heatmap, with separate scale/offset/landmark maps read at each peak's own cell.
+# There is no anchor grid to get wrong; the equivalent trap is the stride (4) and the
+# per-axis rounding, both taken from the reference below.
+#
+# All three are dispatched by exact model_name (see `_UNIFACE_ENGINES_BY_MODEL_NAME`), and
+# all three carry task_code="face_detection" - the same task_code `insightface-buffalo-l-
+# detect` (SCRFD) already owns, on a completely unrelated architecture. Nothing here
+# branches on task_code, deliberately: that would re-open exactly the dispatch collision
+# already found and closed for the face_recognition task_code.
+
+# --- BlazeFace -----------------------------------------------------------------------
+#
+# Ported from `uniface/detection/blazeface.py`. MediaPipe's SsdAnchorsCalculator config
+# for `face_detection_short_range`; hardcoded upstream (and here) because every output
+# dimension except the input size is a dynamic symbol in the ONNX metadata - re-confirmed
+# by the live probe above, whose only concrete input dims were 3x128x128.
+_BLAZEFACE_ANCHOR_STRIDES = (8, 16, 16, 16)
+_BLAZEFACE_NUM_ANCHORS = 896
+_BLAZEFACE_NUM_KEYPOINTS = 6
+# MediaPipe's own score_clipping_thresh, applied BEFORE the sigmoid: strongly-negative
+# anchor logits overflow np.exp otherwise.
+_BLAZEFACE_SCORE_CLIP = 100.0
+# uniface's own BlazeFace default. Its NMS is MediaPipe's *weighted* variant, so this is a
+# blend threshold, not a discard threshold - see `_blazeface_weighted_nms`.
+_BLAZEFACE_NMS_THRESHOLD = 0.3
+
+
+def _blazeface_anchors(input_size: int) -> np.ndarray:
+    """SSD anchor centres for the short-range face detector.
+
+    Ported verbatim from `uniface.detection.blazeface._generate_face_anchors`. Layers
+    sharing a stride stack their anchors per cell, giving 16x16x2 + 8x8x6 = 896 anchors at
+    128px (aspect ratio 1.0, one interpolated scale, fixed anchor size).
+
+    Returns normalised (896, 2) anchor centres. Raises if the count does not match the
+    exported head - the one check that actually catches a wrong anchor config.
+    """
+    anchors: list[tuple[float, float]] = []
+    idx = 0
+    while idx < len(_BLAZEFACE_ANCHOR_STRIDES):
+        last = idx
+        while (
+            last < len(_BLAZEFACE_ANCHOR_STRIDES)
+            and _BLAZEFACE_ANCHOR_STRIDES[last] == _BLAZEFACE_ANCHOR_STRIDES[idx]
+        ):
+            last += 1
+        repeats = 2 * (last - idx)
+        cells = input_size // _BLAZEFACE_ANCHOR_STRIDES[idx]
+        for y in range(cells):
+            for x in range(cells):
+                anchors.extend([((x + 0.5) / cells, (y + 0.5) / cells)] * repeats)
+        idx = last
+
+    if len(anchors) != _BLAZEFACE_NUM_ANCHORS:
+        raise OutputContractUnknownError(
+            f"Expected {_BLAZEFACE_NUM_ANCHORS} BlazeFace anchors for a {input_size}px input, "
+            f"generated {len(anchors)}. The anchor config does not match this artifact's head."
+        )
+    return np.array(anchors, dtype=np.float64)
+
+
+def _blazeface_weighted_nms(detections: np.ndarray, iou_threshold: float) -> np.ndarray:
+    """MediaPipe's *weighted* non-maximum suppression, ported from the same reference.
+
+    Overlapping candidates are score-averaged into the winner rather than discarded, boxes
+    and keypoints alike - so the plain IoU-discard NMS the rest of this file uses (and
+    `cv2.dnn.NMSBoxes` in `decode_raw_yolo`) cannot be substituted without changing the
+    output. Rows are (score, cx, cy, w, h, kp0x, kp0y, ...), normalised.
+
+    The winner joins its own blend unconditionally: relying on its self-IoU clearing the
+    threshold loops forever when it cannot (iou_threshold=1.0 fails the strict `>`, and a
+    zero-area box scores an IoU of 0 against itself). That guard is upstream's own.
+    """
+    remaining = detections[np.argsort(-detections[:, 0])]
+    output = []
+    while len(remaining):
+        top = remaining[0]
+        x1 = remaining[:, 1] - remaining[:, 3] / 2
+        y1 = remaining[:, 2] - remaining[:, 4] / 2
+        x2 = remaining[:, 1] + remaining[:, 3] / 2
+        y2 = remaining[:, 2] + remaining[:, 4] / 2
+        tx1, ty1 = top[1] - top[3] / 2, top[2] - top[4] / 2
+        tx2, ty2 = top[1] + top[3] / 2, top[2] + top[4] / 2
+
+        inter = np.maximum(0, np.minimum(x2, tx2) - np.maximum(x1, tx1)) * np.maximum(
+            0, np.minimum(y2, ty2) - np.maximum(y1, ty1)
+        )
+        union = (x2 - x1) * (y2 - y1) + (tx2 - tx1) * (ty2 - ty1) - inter
+        iou = inter / np.maximum(union, 1e-9)
+
+        merge = iou > iou_threshold
+        merge[0] = True
+
+        overlapping = remaining[merge]
+        weights = overlapping[:, :1]
+        blended = top.copy()
+        total_weight = weights.sum()
+        if total_weight > 0:
+            blended[1:] = (overlapping[:, 1:] * weights).sum(axis=0) / total_weight
+        output.append(blended)
+        remaining = remaining[~merge]
+
+    return np.array(output)
+
+
+class BlazeFaceEngine:
+    """MediaPipe BlazeFace short-range face detector (`uniface-blazeface-detect`).
+
+    An SSD detector over two anchor grids on a 128x128 letterboxed image. Preprocessing,
+    anchor generation, decode and weighted NMS are all ported from `uniface/detection/
+    blazeface.py`; see this section's header comment for the live gate-2 evidence that the
+    896-anchor grid matches this exact artifact's head.
+
+    **Emits 6 keypoints, not the 5-point alignment template** (right eye, left eye, nose
+    tip, mouth centre, right ear, left ear - MediaPipe's own order). This is a real,
+    load-bearing difference from every other face model in this file, and upstream marks it
+    the same way (`supports_alignment = False`): these keypoints cannot be fed to
+    `InsightFaceEngine.embed()` / `UnifaceEmbeddingEngine.embed()` / the aligned-chip
+    croppers, which all need the 5-point ArcFace template in the detector's own order. Both
+    `embed()` paths already refuse a non-5-point Detection explicitly, so a BlazeFace
+    Detection fails loudly there rather than producing a silently mis-aligned crop - checked
+    against those methods' own guards rather than assumed.
+
+    Short-range covers faces within roughly 2m and scores below SCRFD on WIDER FACE; it is
+    a 460KB model, not a replacement for the platform's production SCRFD detector.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        self._labels = label_map or {}
+        # Only the input size survives export as a concrete dimension (upstream's own note,
+        # confirmed by the live probe: ("batch", 3, 128, 128)).
+        size = self._input.shape[2]
+        if not isinstance(size, int):
+            raise OutputContractUnknownError(
+                "BlazeFace artifact declares a dynamic spatial input dimension; the 896-anchor "
+                "grid is a function of a fixed input size and cannot be generated without it."
+            )
+        self._input_size = int(size)
+        self._anchors = _blazeface_anchors(self._input_size)
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            labels=self._labels,
+            detail=(
+                f"blazeface anchors={len(self._anchors)} input_size={self._input_size} "
+                f"keypoints={_BLAZEFACE_NUM_KEYPOINTS} providers={','.join(self._providers)}"
+            ),
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        import cv2
+
+        height, width = image.shape[:2]
+        size = self._input_size
+
+        # Aspect-preserving letterbox onto a square canvas, centred - upstream warps the
+        # input itself rather than going through the shared resize helper.
+        scale = size / max(height, width)
+        pad_x, pad_y = (size - width * scale) / 2.0, (size - height * scale) / 2.0
+        matrix = np.array([[scale, 0.0, pad_x], [0.0, scale, pad_y]])
+        canvas = cv2.warpAffine(image, matrix, (size, size))
+
+        # BlazeFace expects RGB normalised to [-1, 1] (not the [0,1] OnnxEngine._preprocess
+        # applies, and not the Caffe BGR mean RetinaFace uses) - per its own preprocess().
+        rgb = canvas[:, :, ::-1].astype(np.float32)
+        blob = np.transpose((rgb - 127.5) / 127.5, (2, 0, 1))[np.newaxis]
+
+        regressors, logits = self._session.run(self._output_names, {self._input.name: blob})
+
+        raw = np.clip(
+            logits[0].ravel().astype(np.float64), -_BLAZEFACE_SCORE_CLIP, _BLAZEFACE_SCORE_CLIP
+        )
+        scores = 1.0 / (1.0 + np.exp(-raw))
+        keep = scores >= confidence
+        if not keep.any():
+            return []
+
+        reg, anchor = regressors[0][keep].astype(np.float64), self._anchors[keep]
+        rows = np.empty((int(keep.sum()), 5 + 2 * _BLAZEFACE_NUM_KEYPOINTS))
+        rows[:, 0] = scores[keep]
+        rows[:, 1:3] = reg[:, 0:2] / size + anchor  # centre x, y
+        rows[:, 3:5] = reg[:, 2:4] / size  # width, height
+        for k in range(_BLAZEFACE_NUM_KEYPOINTS):
+            rows[:, 5 + 2 * k : 7 + 2 * k] = reg[:, 4 + 2 * k : 6 + 2 * k] / size + anchor
+
+        rows = _blazeface_weighted_nms(rows, _BLAZEFACE_NMS_THRESHOLD)
+
+        def unletterbox(xy_normalised: np.ndarray) -> np.ndarray:
+            return (xy_normalised * size - (pad_x, pad_y)) / scale
+
+        centres = unletterbox(rows[:, 1:3])
+        halves = rows[:, 3:5] * size / scale / 2.0
+        bboxes = np.concatenate([centres - halves, centres + halves], axis=1)
+        keypoints = unletterbox(rows[:, 5:].reshape(-1, _BLAZEFACE_NUM_KEYPOINTS, 2))
+
+        return _face_detections(
+            bboxes, rows[:, 0], keypoints, width, height, self._labels
+        )
+
+
+# --- CenterFace ----------------------------------------------------------------------
+#
+# Ported from `uniface/detection/centerface.py`.
+# CenterFace predicts on a single feature map downsampled 4x from the input; the FPN needs
+# both input sides to be a multiple of 32. Both constants are upstream's own.
+_CENTERFACE_STRIDE = 4
+_CENTERFACE_SIZE_DIVISOR = 32
+_CENTERFACE_NMS_THRESHOLD = 0.3
+# Upper bound on inference resolution, not a fixed shape: larger frames are scaled down to
+# fit, smaller ones are left at native resolution. uniface's own default; it matters here
+# because the graph's H/W are fully dynamic, so without a cap a 2592x1520 mainstream frame
+# would run the FPN at full resolution on a CPU-only box (see CLAUDE.md's core budget).
+_CENTERFACE_MAX_SIZE = (640, 640)
+
+
+class CenterFaceEngine:
+    """CenterFace anchor-free face detector (`uniface-centerface-detect`).
+
+    **Not actually anchor-based**, despite CHECKLIST.md's own risk grouping - established by
+    reading the real source, not by trusting the grouping. Faces are peaks in a stride-4
+    centre heatmap, with box scale, centre offset and 5-point landmarks read from three more
+    maps at each peak's own cell (CenterNet-style). The live gate-2 probe agrees: the four
+    outputs are named `heatmap`/`scale`/`offset`/`landmarks` with 1/2/2/10 channels at
+    exactly a quarter of the input resolution.
+
+    The traps here are the ones a decode can still get silently wrong, and all are taken
+    from the reference rather than re-derived:
+      * box size is `exp(scale) * 4` - a log-space prediction, so dropping the exp yields
+        boxes a few pixels across that still look like plausible detections;
+      * landmark pairs are stored (dy, dx), NOT (dx, dy) - `points[1::2]` is x and
+        `points[0::2]` is y. Swapping them mirrors every landmark about the box diagonal,
+        which on a roughly-square face crop still lands inside the box;
+      * each side is rounded UP independently to a multiple of 32, so the horizontal and
+        vertical scale factors are different numbers and must be applied per axis.
+
+    Landmarks come from a single coarse feature-map cell per face and are less precise than
+    SCRFD/RetinaFace; upstream's own note adds that accuracy degrades past ~20-30 degrees of
+    in-plane rotation.
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        self._labels = label_map or {}
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            labels=self._labels,
+            detail=(
+                f"centerface stride={_CENTERFACE_STRIDE} max_size={_CENTERFACE_MAX_SIZE} "
+                f"anchor_free=true providers={','.join(self._providers)}"
+            ),
+        )
+
+    @staticmethod
+    def _resize(image: np.ndarray) -> tuple[np.ndarray, float, float]:
+        """Mirrors `CenterFace._resize`: scale down to fit the cap, never up, then round
+        each side up to a multiple of 32 independently. Returns (resized, scale_w, scale_h)
+        - two separate factors, because that independent rounding skews the axes."""
+        import cv2
+
+        height, width = image.shape[:2]
+        max_width, max_height = _CENTERFACE_MAX_SIZE
+        ratio = min(1.0, max_width / width, max_height / height)
+
+        divisor = _CENTERFACE_SIZE_DIVISOR
+        new_width = max(divisor, int(np.ceil(width * ratio / divisor) * divisor))
+        new_height = max(divisor, int(np.ceil(height * ratio / divisor) * divisor))
+
+        resized = cv2.resize(image, (new_width, new_height))
+        return resized, new_width / width, new_height / height
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        original_height, original_width = image.shape[:2]
+        resized, scale_w, scale_h = self._resize(image)
+
+        # CenterFace consumes raw RGB pixel values - no mean subtraction, no /255 scaling.
+        # Confirmed against its own preprocess(); normalising would silently darken every
+        # input by 255x and the heatmap would simply go quiet.
+        blob = resized[:, :, ::-1].astype(np.float32).transpose(2, 0, 1)[np.newaxis]
+        heatmap, scale, offset, lms = self._session.run(
+            self._output_names, {self._input.name: np.ascontiguousarray(blob)}
+        )
+
+        height, width = resized.shape[:2]
+        heat = heatmap[0, 0]
+        cy, cx = np.where(heat > confidence)
+        if len(cy) == 0:
+            return []
+
+        scores = heat[cy, cx]
+        box_h = np.exp(scale[0, 0, cy, cx]) * _CENTERFACE_STRIDE
+        box_w = np.exp(scale[0, 1, cy, cx]) * _CENTERFACE_STRIDE
+        offset_y = offset[0, 0, cy, cx]
+        offset_x = offset[0, 1, cy, cx]
+
+        x1 = np.clip((cx + offset_x + 0.5) * _CENTERFACE_STRIDE - box_w / 2, 0, width)
+        y1 = np.clip((cy + offset_y + 0.5) * _CENTERFACE_STRIDE - box_h / 2, 0, height)
+        x2 = np.clip(x1 + box_w, 0, width)
+        y2 = np.clip(y1 + box_h, 0, height)
+        bboxes = np.stack([x1, y1, x2, y2], axis=1)
+
+        # Landmarks are predicted relative to the box as (dy, dx) pairs per point.
+        points = lms[0][:, cy, cx]  # (10, N)
+        kps_x = points[1::2].T * box_w[:, None] + x1[:, None]
+        kps_y = points[0::2].T * box_h[:, None] + y1[:, None]
+        landmarks = np.stack([kps_x, kps_y], axis=2)  # (N, 5, 2)
+
+        bboxes[:, 0::2] /= scale_w
+        bboxes[:, 1::2] /= scale_h
+        landmarks[..., 0] /= scale_w
+        landmarks[..., 1] /= scale_h
+
+        order = scores.argsort()[::-1]
+        pre_det = np.hstack((bboxes, scores[:, None])).astype(np.float32, copy=False)[order]
+        landmarks = landmarks[order]
+
+        keep = _uniface_nms(pre_det, _CENTERFACE_NMS_THRESHOLD)
+        pre_det, landmarks = pre_det[keep], landmarks[keep]
+
+        return _face_detections(
+            pre_det[:, :4], pre_det[:, 4], landmarks,
+            original_width, original_height, self._labels,
+        )
+
+
+# --- RetinaFace ----------------------------------------------------------------------
+#
+# Ported from `uniface/detection/retinaface.py` plus `uniface/common.py`'s own
+# `generate_anchors`/`decode_boxes`/`decode_landmarks`/`non_max_suppression`/`resize_image`.
+# The FPN strides and per-level anchor sizes ARE the training config this section's header
+# warns about; they are copied, not reconstructed.
+_RETINAFACE_STEPS = (8, 16, 32)
+_RETINAFACE_MIN_SIZES = ((16, 32), (64, 128), (256, 512))
+# The offset-regression variances the model was trained with. A wrong pair here is the
+# textbook silent failure: boxes still land near the face, just consistently the wrong size.
+_RETINAFACE_VARIANCES = (0.1, 0.2)
+# Fixed, because the priors are a function of it - see the header comment. Upstream's own
+# default, and the size whose 16800 priors the live probe confirmed.
+_RETINAFACE_INPUT_SIZE = (640, 640)
+_RETINAFACE_NMS_THRESHOLD = 0.4
+_RETINAFACE_PRE_NMS_TOPK = 5000
+_RETINAFACE_POST_NMS_TOPK = 750
+# Caffe-order BGR channel means. RetinaFace does NOT swap to RGB - unlike BlazeFace and
+# CenterFace above, which both do. Per-model, read from each one's own preprocess().
+_RETINAFACE_BGR_MEAN = (104.0, 117.0, 123.0)
+
+
+def _retinaface_anchors(image_size: tuple[int, int]) -> np.ndarray:
+    """Ported verbatim from `uniface.common.generate_anchors` (RetinaFace-specific).
+
+    Returns (num_anchors, 4) priors in centre-offset form, normalised: cx, cy, s_kx, s_ky.
+    At 640x640 this is exactly 16800 rows, matching the live probe's own N - the check that
+    the anchor grid belongs to this artifact.
+
+    Note upstream's axis convention, kept as-is rather than "fixed": the feature-map extents
+    are derived from `image_size[0]`/`image_size[1]` in the opposite order to the scale
+    terms. That is invisible for the square input this engine always uses, and rewriting it
+    would be changing the reference on a guess about which reading was intended.
+    """
+    anchors: list[float] = []
+    feature_maps = [
+        [math.ceil(image_size[0] / step), math.ceil(image_size[1] / step)]
+        for step in _RETINAFACE_STEPS
+    ]
+
+    for k, (map_height, map_width) in enumerate(feature_maps):
+        step = _RETINAFACE_STEPS[k]
+        for i, j in itertools.product(range(map_height), range(map_width)):
+            for min_size in _RETINAFACE_MIN_SIZES[k]:
+                s_kx = min_size / image_size[1]
+                s_ky = min_size / image_size[0]
+                dense_cx = [x * step / image_size[1] for x in [j + 0.5]]
+                dense_cy = [y * step / image_size[0] for y in [i + 0.5]]
+                for cy, cx in itertools.product(dense_cy, dense_cx):
+                    anchors += [cx, cy, s_kx, s_ky]
+
+    return np.array(anchors, dtype=np.float32).reshape(-1, 4)
+
+
+def _retinaface_decode_boxes(loc: np.ndarray, priors: np.ndarray) -> np.ndarray:
+    """Ported from `uniface.common.decode_boxes`. Undoes the offset regression encoding
+    used at train time; returns normalised xyxy."""
+    var0, var1 = _RETINAFACE_VARIANCES
+    cxcy = priors[:, :2] + loc[:, :2] * var0 * priors[:, 2:]
+    wh = priors[:, 2:] * np.exp(loc[:, 2:] * var1)
+    boxes = np.zeros_like(loc)
+    boxes[:, :2] = cxcy - wh / 2
+    boxes[:, 2:] = cxcy + wh / 2
+    return boxes
+
+
+def _retinaface_decode_landmarks(predictions: np.ndarray, priors: np.ndarray) -> np.ndarray:
+    """Ported from `uniface.common.decode_landmarks`. Only the first variance applies to
+    landmarks - they are pure centre offsets with no log-space size term."""
+    var0 = _RETINAFACE_VARIANCES[0]
+    reshaped = predictions.reshape(predictions.shape[0], 5, 2)
+    priors_xy = np.repeat(priors[:, :2][:, np.newaxis, :], 5, axis=1)
+    priors_wh = np.repeat(priors[:, 2:][:, np.newaxis, :], 5, axis=1)
+    return priors_xy + reshaped * var0 * priors_wh
+
+
+def _uniface_nms(dets: np.ndarray, threshold: float) -> list[int]:
+    """Ported from `uniface.common.non_max_suppression`, used by RetinaFace and CenterFace.
+
+    Kept rather than reusing `cv2.dnn.NMSBoxes` (what `decode_raw_yolo` uses for the plate
+    detector) because this one computes areas with the `+1` pixel convention upstream uses
+    and takes an already-score-sorted input; the two do not return identical keep sets.
+    """
+    x1, y1, x2, y2, scores = dets[:, 0], dets[:, 1], dets[:, 2], dets[:, 3], dets[:, 4]
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    order = scores.argsort()[::-1]
+
+    keep: list[int] = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(int(i))
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        w = np.maximum(0.0, xx2 - xx1 + 1)
+        h = np.maximum(0.0, yy2 - yy1 + 1)
+        inter = w * h
+        ovr = inter / (areas[i] + areas[order[1:]] - inter)
+        order = order[np.where(ovr <= threshold)[0] + 1]
+
+    return keep
+
+
+class RetinaFaceEngine:
+    """RetinaFace (MobileNetV2 backbone) face detector (`uniface-retinaface-detect`).
+
+    The classic `loc`/`conf`/`landmarks` head with 5-point landmarks, decoded against a
+    fixed 640x640 anchor grid ported from `uniface.common.generate_anchors`. The live gate-2
+    probe returned exactly 16800 priors at that input size, which is what the ported anchor
+    generator produces - see this section's header for why that number is the real check.
+
+    Two details that would each be a silent wrong-box bug if guessed:
+      * the face score is `conf[:, 1]`, not `conf[:, 0]` - column 0 is background. Reading
+        column 0 inverts every score and the detector "finds" faces in empty sky;
+      * preprocessing subtracts the Caffe BGR mean (104, 117, 123) with NO RGB swap and no
+        /255 - the opposite of both other detectors in this section.
+
+    Unlike BlazeFace, these 5 points are the alignment template (left eye, right eye, nose,
+    left mouth corner, right mouth corner) in the same order the platform's SCRFD detector
+    emits, so a RetinaFace `Detection` is structurally usable by the `embed()` /
+    aligned-chip paths. **That structural fit is not itself validated accuracy** - landmark
+    precision against a ground truth was never measured here (CHECKLIST.md states the gap).
+    """
+
+    def __init__(self, artifact_path: Path, label_map: dict[int, str] | None = None) -> None:
+        self._session, self._providers = _onnx_session(artifact_path)
+        self._input = self._session.get_inputs()[0]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        self._labels = label_map or {}
+        self._priors = _retinaface_anchors(_RETINAFACE_INPUT_SIZE)
+
+    def info(self) -> EngineInfo:
+        shape = tuple(d if isinstance(d, int) else -1 for d in self._input.shape)
+        return EngineInfo(
+            framework="onnx", runtime="onnxruntime", available=True, input_shape=shape,
+            labels=self._labels,
+            detail=(
+                f"retinaface priors={len(self._priors)} input_size={_RETINAFACE_INPUT_SIZE} "
+                f"providers={','.join(self._providers)}"
+            ),
+        )
+
+    def infer(self, image: np.ndarray, *, confidence: float = 0.25) -> list[Detection]:
+        import cv2
+
+        original_height, original_width = image.shape[:2]
+        target_w, target_h = _RETINAFACE_INPUT_SIZE
+
+        # `uniface.common.resize_image`: aspect-preserving resize pasted at the TOP-LEFT of a
+        # zero canvas, not centred. That is why the inverse below is a plain divide with no
+        # pad offset - a centred letterbox would need one, and adding it "for safety" would
+        # shift every box by half the padding.
+        im_ratio = float(original_height) / original_width
+        model_ratio = target_h / target_w
+        if im_ratio > model_ratio:
+            new_height = target_h
+            new_width = int(new_height / im_ratio)
+        else:
+            new_width = target_w
+            new_height = int(new_width * im_ratio)
+        resize_factor = float(new_height) / original_height
+        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        canvas[:new_height, :new_width, :] = cv2.resize(image, (new_width, new_height))
+
+        mean = np.array(_RETINAFACE_BGR_MEAN, dtype=np.float32)
+        blob = (canvas.astype(np.float32) - mean).transpose(2, 0, 1)[np.newaxis]
+
+        outputs = self._session.run(self._output_names, {self._input.name: np.ascontiguousarray(blob)})
+        loc, conf, landmark_pred = (outputs[0].squeeze(0), outputs[1].squeeze(0), outputs[2].squeeze(0))
+
+        if loc.shape[0] != self._priors.shape[0]:
+            raise OutputContractUnknownError(
+                f"RetinaFace returned {loc.shape[0]} predictions but the ported anchor grid for "
+                f"{_RETINAFACE_INPUT_SIZE} generates {self._priors.shape[0]} priors. The anchor "
+                "config does not match this artifact - decoding anyway would produce "
+                "plausible-looking but wrong boxes."
+            )
+
+        boxes = _retinaface_decode_boxes(loc, self._priors)
+        landmarks = _retinaface_decode_landmarks(landmark_pred, self._priors)
+
+        # Normalised canvas coords -> canvas pixels -> original-image pixels.
+        boxes = boxes * np.array([target_w, target_h] * 2, dtype=np.float32) / resize_factor
+        landmarks = landmarks * np.array([target_w, target_h], dtype=np.float32) / resize_factor
+
+        scores = conf[:, 1]  # column 1 is face, column 0 is background
+        mask = scores > confidence
+        boxes, landmarks, scores = boxes[mask], landmarks[mask], scores[mask]
+        if scores.size == 0:
+            return []
+
+        order = scores.argsort()[::-1][:_RETINAFACE_PRE_NMS_TOPK]
+        boxes, landmarks, scores = boxes[order], landmarks[order], scores[order]
+
+        detections = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
+        keep = _uniface_nms(detections, _RETINAFACE_NMS_THRESHOLD)
+        detections = detections[keep][:_RETINAFACE_POST_NMS_TOPK]
+        landmarks = landmarks[keep][:_RETINAFACE_POST_NMS_TOPK]
+
+        return _face_detections(
+            detections[:, :4], detections[:, 4], landmarks,
+            original_width, original_height, self._labels,
+        )
+
+
+def _face_detections(
+    boxes_px: np.ndarray,
+    scores: np.ndarray,
+    keypoints_px: np.ndarray,
+    width: int,
+    height: int,
+    labels: dict[int, str],
+) -> list[Detection]:
+    """Shared tail for the three detectors above: pixel boxes/keypoints in the ORIGINAL
+    frame's coordinate space -> this file's normalised `Detection` shape.
+
+    Keypoints carry the box's own detection score, the same convention `InsightFaceEngine`
+    already uses for SCRFD (none of these three models emits a per-landmark confidence).
+    Keypoints are NOT clipped to the frame while boxes are: a real jaw or ear point can sit
+    just outside a tight box or a frame edge, and clamping it to 0.0/1.0 would quietly
+    fabricate a landmark on the border rather than reporting where the model actually put
+    it. Boxes are clipped because every downstream consumer of `Detection.bbox` in this
+    codebase treats it as an in-frame region.
+    """
+    detections: list[Detection] = []
+    for i in range(boxes_px.shape[0]):
+        x1, y1, x2, y2 = (float(v) for v in boxes_px[i])
+        score = float(scores[i])
+        detections.append(
+            Detection(
+                class_id=0,
+                class_name=labels.get(0, "face"),
+                confidence=score,
+                bbox=(
+                    float(np.clip(x1 / width, 0.0, 1.0)),
+                    float(np.clip(y1 / height, 0.0, 1.0)),
+                    float(np.clip(x2 / width, 0.0, 1.0)),
+                    float(np.clip(y2 / height, 0.0, 1.0)),
+                ),
+                keypoints=[
+                    (float(kx) / width, float(ky) / height, score) for kx, ky in keypoints_px[i]
+                ],
+            )
+        )
+    return detections
+
 
 # --- TFLite (.tflite) ---------------------------------------------------------------
 
@@ -1642,11 +2263,27 @@ _INSIGHTFACE_MODEL_NAMES = ("insightface-buffalo-l-detect", "insightface-buffalo
 # (`face_attribute` is shared with `uniface-faceattribnet-attributes`, deliberately not
 # decoded; `face_landmark` is shared with `uniface-facemesh-landmark`, a different model
 # with a different output shape, decoded separately above).
+#
+# The 3 uniface-zoo face detectors (blazeface/centerface/retinaface) join the same table.
+# They are the one group here that DOES produce a `Detection` list from `infer()`, so
+# unlike every other entry they are reachable through the ordinary `/internal/v1/infer` and
+# `/internal/v1/validate-infer` paths with no special endpoint.
+#
+# All 3 carry task_code="face_detection" - the exact task_code `insightface-buffalo-l-
+# detect` already owns, on an unrelated architecture (SCRFD vs BlazeFace/CenterFace/
+# RetinaFace). Dispatch by model_name keeps them apart: `build_engine` checks
+# `_INSIGHTFACE_MODEL_NAMES` first, by exact name, so the two legacy InsightFace artifacts
+# still reach `InsightFaceEngine` and these 3 never do. Nothing in these engines branches on
+# task_code, deliberately - the face_recognition collision this file already found and
+# closed is the same bug one task_code branch away.
 _UNIFACE_ENGINES_BY_MODEL_NAME: dict[str, type] = {
     "uniface-fairface-attributes": FairFaceEngine,
     "uniface-minifasnet-antispoofing": MiniFasNetEngine,
     "uniface-mobilegaze-estimation": MobileGazeEngine,
     "uniface-pipnet-landmark": PipNetEngine,
+    "uniface-blazeface-detect": BlazeFaceEngine,
+    "uniface-centerface-detect": CenterFaceEngine,
+    "uniface-retinaface-detect": RetinaFaceEngine,
 }
 
 

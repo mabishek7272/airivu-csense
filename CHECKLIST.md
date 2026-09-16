@@ -1241,12 +1241,12 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           none was staged to manufacture a positive example - see the manifest's own note
           on why that would be its own bad practice).
   - [~] **The 15 `uniface-zoo` ONNX models are a materially bigger job - gate 2 (load/
-        shape) done for real for all 15; gates 3-4 (accuracy) now done for real for 10 of
-        them, 2026-09-11: the 6 low-risk models (all passed real testing) and the 4
-        cross-check models (3 passed - 1 promoted to `validated`, 2 blocked at
-        `validating` by the biometric-acknowledgement gate; 1 failed and correctly not
-        promoted further). The 3 anchor-based detectors and 2 no-guess models remain
-        untouched below.** Checked
+        shape) done for real for all 15; gates 3-4 (accuracy) now done for real for 13 of
+        them: the 6 low-risk models (all passed real testing) and the 4 cross-check models
+        (3 passed - 1 promoted to `validated`, 2 blocked at `validating` by the biometric-
+        acknowledgement gate; 1 failed and correctly not promoted further) on 2026-09-11,
+        plus the 3 face detectors (all 3 passed, all 3 at `validating`) on 2026-09-16. Only
+        the 2 no-guess models remain undecoded, deliberately.** Checked
         `backend/ai_runtime/app/engines.py`: `OnnxEngine._decode` only understands the
         end-to-end YOLO 6/7-column layout the plate detector uses. None of these 15 models
         are YOLO-shaped - **zero decode logic exists anywhere in this codebase for any of
@@ -1285,7 +1285,11 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
             landmarks, CenterNet-style), `retinaface` (`loc`/`conf`/`landmarks`, the
             classic 5-point-landmark RetinaFace head). Same family of risk already named
             in this file for `license-plate-detector`'s NMS/anchor handling - a wrong
-            anchor grid produces plausible-looking but silently wrong boxes.
+            anchor grid produces plausible-looking but silently wrong boxes. *(All 3
+            decoded and validated 2026-09-16, see the dedicated entry below. One
+            correction this tiering got wrong and the later work caught: `centerface` is
+            NOT anchor-based at all - it is anchor-free/CenterNet-style, established by
+            reading the real reference source rather than inheriting this grouping.)*
           - **2 should not be decoded on a guess at all, and are not**: `bisenet-parsing`
             exports 3 output tensors named `output`/`414`/`424` - the last two are raw
             ONNX-export node IDs, not semantic names, and nothing in the delivered artifact
@@ -1615,6 +1619,193 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         - Not touched here: the 6 low-risk models (dispatched separately) and the 3
           anchor-based detectors / 2 no-guess models (still correctly excluded, per the
           reasoning already on record above).
+    - [~] **The 3 face detectors (`blazeface`/`centerface`/`retinaface`) decoded and
+          validated for real, 2026-09-16, in an isolated worktree** - the highest-risk
+          group of the 15 by this file's own tiering ("a wrong anchor grid produces
+          plausible-looking but silently wrong boxes"). All 3 passed; all 3 sit at
+          `validating`. `BlazeFaceEngine`/`CenterFaceEngine`/`RetinaFaceEngine` in
+          `engines.py`, registered in `_UNIFACE_ENGINES_BY_MODEL_NAME`. Unlike the other 9
+          uniface engines, these 3 DO produce the ordinary `Detection` list, so they need
+          no special endpoint - they run through the existing `/internal/v1/validate-infer`
+          unchanged.
+      - [x] **Real gate-2 shapes re-probed live, not trusted from this file's own summary
+            above**: a fresh `onnxruntime.InferenceSession` on each artifact inside the
+            real running `ai-runtime` container, each fetched from the real `csense-models`
+            MinIO bucket and **sha256-verified against its own registry row before
+            loading** (all 3 matched). Recorded:
+            `blazeface` input `input` `(batch,3,128,128)` f32 -> `regressors`
+            `(batch,896,16)` + `scores` `(batch,896,1)`;
+            `centerface` input `(batch,3,height,width)` f32 *fully dynamic* -> `heatmap`
+            `(b,1,h/4,w/4)` + `scale` `(b,2,...)` + `offset` `(b,2,...)` + `landmarks`
+            `(b,10,...)`;
+            `retinaface` input `(batch,3,height,width)` f32 *fully dynamic* -> `loc`
+            `(b,N,4)` + `conf` `(b,N,2)` + `landmarks` `(b,N,10)`.
+      - [x] **Two of those probes are real evidence about the anchor maths, not just shape
+            bookkeeping** - the anchor count is the one thing a wrong training config
+            cannot fake:
+          - **RetinaFace returned N=16800 priors at a 640x640 input**, and the ported
+            anchor generator produces exactly 16800 (strides 8/16/32 over 640px = 80x80 +
+            40x40 + 20x20 = 8400 cells, 2 `min_sizes` each). A different stride set or
+            anchor-size count lands on a different number, so this is a genuine match
+            between the artifact and the config the decode assumes, not a coincidence.
+            The engine also asserts this at inference time and raises
+            `OutputContractUnknownError` on a mismatch rather than decoding anyway. It is
+            also why RetinaFace runs at a **fixed** 640x640 despite the graph's H/W being
+            dynamic: the priors are a function of the input size, so the size the anchors
+            were built for and the size fed to the model must be the same.
+          - **BlazeFace's head is literally `(896, 16)`**, and the ported MediaPipe SSD
+            anchor config generates exactly 896 (16x16x2 at stride 8 + 8x8x6 at stride 16);
+            `_blazeface_anchors` raises rather than returning a mismatched grid. `16` = 4
+            box terms + 6 keypoints x 2, which is what fixes the keypoint count at **6**
+            rather than the 5 every other face model here uses.
+      - [x] **Every constant ported line-for-line from the real reference these weights
+            ship with** - `github.com/yakhyo/uniface` (MIT), the clone at `uniface-main/`
+            in this repo's working tree, per each model's own `legacy_paths` in
+            `uniface_model_manifest.py`: `uniface/detection/{blazeface,centerface,
+            retinaface}.py` plus `uniface/common.py`'s `generate_anchors`/`decode_boxes`/
+            `decode_landmarks`/`non_max_suppression`/`resize_image`. Not re-derived from
+            the papers, not inferred from the ONNX graph. The specific things that would
+            each have been a silent wrong-box bug if guessed, all taken from the source and
+            documented at the point of the code:
+          - RetinaFace's face score is `conf[:, 1]`, **not** `conf[:, 0]` (column 0 is
+            background - reading it inverts every score); its preprocessing subtracts the
+            Caffe BGR mean `(104,117,123)` with **no** RGB swap and no `/255`; its
+            letterbox pastes at the **top-left** of a zero canvas, not centred, which is
+            why the inverse transform is a plain divide with no pad offset.
+          - CenterFace's box size is `exp(scale) * 4` - log-space, so dropping the `exp`
+            yields few-pixel boxes that still look like plausible detections; its landmark
+            pairs are stored **(dy, dx)**, not (dx, dy), which on a roughly-square face
+            would still land inside the box if swapped; and each side is rounded up to a
+            multiple of 32 **independently**, so the two axis scale factors genuinely
+            differ and must be applied per axis.
+          - BlazeFace normalises to **[-1, 1]** RGB (not `[0,1]`, not the Caffe mean), and
+            uses MediaPipe's **weighted** NMS - overlapping candidates are score-averaged
+            into the winner rather than discarded, so neither this file's existing
+            `cv2.dnn.NMSBoxes` path nor the ported plain NMS can be substituted. Upstream's
+            `merge[0] = True` guard is kept too (a zero-area box has IoU 0 against itself,
+            so relying on self-overlap loops forever).
+      - [x] **A real premise correction, from reading the source rather than trusting the
+            grouping**: `centerface` is **not anchor-based**, despite sitting in this
+            file's "3 anchor-based detectors" tier. It is anchor-free/CenterNet-style -
+            faces are peaks in a stride-4 heatmap, with scale/offset/landmark maps read at
+            each peak's own cell. The live gate-2 probe agrees (four outputs named
+            `heatmap`/`scale`/`offset`/`landmarks` at exactly a quarter resolution). There
+            is no anchor grid to get wrong; its equivalent traps are the ones listed above.
+      - [x] **Real gate 3-4 through the REAL deployed HTTP route** - a genuine step up from
+            how the previous 10 had to be validated. `POST /internal/v1/validate-infer`,
+            served by a container actually running the code under test, against the real
+            golden images. ai-runtime has **no Traefik route by design**
+            (`infra/docker-compose.yml`: raw frames in, raw detections out, no tenant
+            scoping of its own - TRD §16), so there is no host port to call and the HTTP
+            client runs *inside* the container:
+            `scripts/_uniface_detector_validate_in_container.py`, driven by
+            `scripts/run_uniface_model_validation_detectors.py`. **The shared running
+            `csense-ai-runtime-1` was deliberately not patched** (a second agent was
+            working on this same stack and the same file); instead a sidecar
+            (`csense-ai-runtime-validate`) was created from the same image with the
+            candidate `engines.py` deployed into it. `--runtime-container` selects which,
+            and every recorded run's own `method_note` says which one served it - never
+            silently.
+      - [x] **Recall scored by cross-check against another already-validated detector, on
+            the same frame** - the sanity check that two unrelated architectures agree on
+            where a face is. The reference is the platform's own already-`production`
+            SCRFD (`insightface-buffalo-l-detect`). Measured, all at confidence 0.5:
+            | model | recall vs SCRFD | mean IoU | min IoU | FPR |
+            |---|---|---|---|---|
+            | `uniface-retinaface-detect` | 1.0 (2/2) | 0.862 | 0.818 | 0.0 |
+            | `uniface-centerface-detect` | 1.0 (2/2) | 0.864 | 0.862 | 0.0 |
+            | `uniface-blazeface-detect` | 1.0 (2/2)* | 0.755 | 0.715 | 0.0 |
+            *BlazeFace's recall is graded on a short-range crop - see its own entry below.
+            Stated plainly: IoU is measured against SCRFD's box, **not** a hand-drawn
+            ground truth, and 0.5 is deliberately a loose "same face, same place" bar
+            because these detectors genuinely use slightly different box conventions around
+            the chin/hairline. It is evidence that both decoded the frame correctly, not a
+            claim that SCRFD's box is truth.
+      - [x] **False-positive rate is a real measurement, not an untested zero**: 3 real
+            Autotek NVR frames with no human face in them (interior storage room, garage
+            with parked vehicles, night IR blank) are committed as negative controls in
+            each golden set. **All 3 models returned zero boxes on all 3 frames.**
+      - [x] **Landmark decode confirmed structurally against SCRFD's own points**, which is
+            what actually catches a swapped coordinate order:
+          - `retinaface` and `centerface` 5-point outputs land within **0.0003-0.003
+            normalised** (~1-3 px) of SCRFD's own 5 points on both real faces, in the same
+            order. CenterFace's `(dy, dx)` storage order is therefore confirmed correct -
+            a swap would have mirrored every point about the box diagonal.
+          - `blazeface`'s 6 points were checked against SCRFD **re-run on the same crop**
+            (the harness was fixed mid-work to record crop-space reference points rather
+            than full-frame ones, which had made the stored comparison look like a gross
+            error when it was only a change of coordinate frame): point 3 (mouth centre)
+            = `(0.5245, 0.5880)` vs the midpoint of SCRFD's two mouth corners
+            `(0.5214, 0.5884)` - 0.003 apart in x, 0.0004 in y; points 0/1 bracket SCRFD's
+            two eyes; points 4/5 sit laterally **outside** that eye span at eye height,
+            i.e. ears. A wrong stride or offset in the 16-column regressor would not
+            reproduce that arrangement.
+      - [x] **BlazeFace returns ZERO detections on the full street scene - established as
+            a real capability limit by measurement, not excused as one.** On the full frame
+            each face is ~5% of the frame width (~6px once letterboxed to 128px). Rather
+            than assume "short-range model, must be fine", a detection-range sweep was run
+            and is recorded in the model's own validation run: BlazeFace holds the same
+            real face down to **8.7% of frame width** (confidence 0.59, still correctly
+            located) and loses it by 6.0%, while CenterFace and RetinaFace still find it at
+            5.1%. So the decode demonstrably works and the zero is the documented ~2m
+            short-range design boundary. Its golden manifest grades recall on a fixed 3.5x
+            crop for that reason, applied identically to both faces (not tuned per face to
+            make something pass), and records the full-frame zero as a finding rather than
+            scoring it. **Practical consequence worth stating: BlazeFace would find nothing
+            in a typical wide-angle CCTV frame. It is validated as a correct decode, NOT
+            recommended as a site detector.**
+      - [x] **BlazeFace's 6 keypoints are structurally incompatible with every alignment
+            path in this platform, and fail loudly rather than silently** - it emits
+            MediaPipe's 6 points (right eye, left eye, nose tip, mouth centre, right ear,
+            left ear), not the 5-point ArcFace template, and upstream marks the same
+            distinction as `supports_alignment = False`. Checked against the real guards
+            rather than assumed: both `InsightFaceEngine.embed()` and
+            `UnifaceEmbeddingEngine.embed()` already require exactly 5 keypoints, so a
+            BlazeFace `Detection` raises `OutputContractUnknownError` there instead of
+            producing a mis-aligned crop. A new unit test pins that specific 6-point case.
+      - [x] **Real `model_validation_runs` rows recorded via the real Admin API** for all 3
+            (`run_uniface_model_validation_detectors.py`, same service account / Admin API
+            flow as the earlier suites), reports uploaded to MinIO, all 3 `status=passed`.
+            All 3 promoted `uploaded -> validating` for real. **All 3 blocked at
+            `validating -> validated` by the pre-existing biometric-acknowledgement gate
+            (real `422 biometric_promotion_requires_acknowledgement`, confirmed live)** -
+            all 3 are `access_classification=biometric` and `validated` is a
+            `DEPLOYABLE_STATE`. Correctly not overridden: `acknowledge_biometric` is the
+            owner's call. Net state: 3 at `validating`, none at `staging`/`production`.
+      - [x] **A real stale test was caught rather than quietly edited around**:
+            `test_build_engine_falls_through_to_generic_onnx_for_unknown_model_name` used
+            `uniface-retinaface-detect` as its stand-in for "a model_name no engine claims".
+            Registering RetinaFace made that false and the test failed - correctly, since a
+            registered model reaching the generic `OnnxEngine` is precisely the silent-
+            wrong-decode bug that suite exists to catch. The assertion was right and only
+            its example had gone stale; it now uses a name that will never be registered.
+      - [x] **17 new unit tests** (`backend/tests/test_uniface_engines.py`, 29 in that file
+            now) pin the anchor counts against the live artifacts' own real head dimensions,
+            the RetinaFace box/landmark decode algebra (zero offset must recover the prior
+            exactly - which pins both variances and the log-space size term), the weighted-
+            vs-plain NMS distinction, the deliberate clip-boxes-but-not-keypoints
+            asymmetry, the dispatch table, and CenterFace's per-axis 32-alignment. One of
+            those tests failed first with a wrong premise of its own - it assumed the real
+            704x576 substream runs at native size, when 704 exceeds the 640 cap so it is
+            scaled to 640x544; the engine was right, the test was wrong, and the corrected
+            test now pins that real production behaviour instead of deleting the case.
+            Full targeted suite green: **66 passed** (`test_uniface_engines.py`,
+            `test_ai_runtime_decoder.py`, `test_insightface_engine.py`,
+            `test_ai_runtime_loader.py`), `ruff check` clean on every touched file.
+      - [~] **Named gaps, not smoothed over.** (1) **Landmark ACCURACY is unverified for
+            all 3.** The points are structurally correct and positionally very close to
+            SCRFD's, but no hand-labelled 5-point ground truth exists anywhere in this
+            repo, so per-point error is not scored in any manifest - "agrees with another
+            detector" is not the same claim as "is accurate". (2) **The entire positive set
+            is 2 upright adult faces in 1 photo** - still the only committed image in this
+            repo with usable human faces. No crowded, small-face, rotated, or occluded-face
+            recall is measured. (3) **No night/IR face has ever been tested** against any of
+            the 3 - the one night frame here is a negative control containing no face, so
+            it tests false positives only; CLAUDE.md's standing warning about night
+            thresholds being unvalidated applies to these 3 unchanged. (4) The sidecar used
+            to serve the HTTP validation is not the deployed compose service - the code is
+            real and the route is real, but `csense-ai-runtime-1` still needs a rebuild
+            after this branch merges before these 3 are reachable in the normal stack.
     - [x] **Both worktrees merged into `phase-1-foundation`, by hand, and `ai-runtime`
           rebuilt/restarted for real (2026-09-11)** - the two agents independently
           inserted their new engine classes at the same point in `engines.py` and
