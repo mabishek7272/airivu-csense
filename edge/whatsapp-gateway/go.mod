@@ -18,7 +18,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/swaggo/files v1.0.1
-	github.com/swaggo/gin-swagger v1.6.0
+	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.3
 	github.com/vincent-petithory/dataurl v1.0.0
 	go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b
