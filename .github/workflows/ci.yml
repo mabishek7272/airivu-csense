@@ -110,7 +110,7 @@ jobs:
         # needs GitHub Advanced Security, which a private repo may not have enabled -
         # that 403 is expected and not a CI failure, same non-blocking philosophy as
         # every other scan step in this workflow (see this job's own SCA/SAST TODOs).
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: bandit.sarif
           category: bandit
@@ -236,7 +236,7 @@ jobs:
         continue-on-error: true
         # See the backend job's own comment on this same pattern: needs GitHub Advanced
         # Security, a 403 here on a repo without it is expected, not a real CI failure.
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
@@ -278,7 +278,7 @@ jobs:
         continue-on-error: true
         # See the backend job's own comment on this same pattern: needs GitHub Advanced
         # Security, a 403 here on a repo without it is expected, not a real CI failure.
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
           category: trivy
