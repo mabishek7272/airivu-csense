@@ -9,6 +9,7 @@ export interface AuditEvent {
   tenant_id: string | null;
   actor_type: string;
   actor_id: string | null;
+  actor_display_name: string | null;
   action: string;
   target_type: string | null;
   target_id: string | null;

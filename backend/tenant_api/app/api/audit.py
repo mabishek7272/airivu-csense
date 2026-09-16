@@ -6,10 +6,23 @@ against it. Keyset-paginated the same way `incidents.py`'s own listing already i
 (`(occurred_at, id)`, not offset-based - a row landing mid-scroll must not cause a skip or
 a repeat).
 
-**Actor display is raw** (`actor_type`/`actor_id` as recorded, not joined to a friendly
-user name) - a safe conditional join is possible (Postgres's `CASE WHEN ... THEN
-actor_id::uuid END` idiom avoids a cast error on a non-UUID actor id) but is a real,
-separate enhancement, not done this pass.
+**Actor display name**: `actor_type`/`actor_id` as recorded, joined to a friendly name
+where one exists. A single join to `users` covers *both* `actor_type="user"` and
+`"platform_developer"` - confirmed directly against real data before assuming otherwise:
+`admin_api/app/deps.py` sets `developer_user_id=claims.subject_user_id`, the JWT's own
+subject, which is a `users.id` - **not** `platform_developers.id` (a separate surrogate
+key on a table that merely links `user_id` back to the same `users` row). A first draft
+joined through `platform_developers` on the assumption its own `id` was what got
+recorded; a real audit row's `platform_developer` actor_id matched `users.id` directly
+and had no corresponding `platform_developers.id` at all, catching the mistake before it
+shipped. `"pipeline"` (a system actor, not a real account) has no match, and
+`actor_display_name` is `null` for it - correct, not a join failure. `users` carries no
+RLS (only `memberships`/`membership_resource_scopes`/`audit_events` do - migration 0001),
+so this join is not the same silent-empty-under-RLS trap the reseller child-tenant list
+hit earlier this project. The join compares `actor_id` (untrusted, recorded as free text)
+against `users.id` cast *to text*, not the other way around - casting `actor_id` itself
+to `uuid` would throw on a non-UUID id like a `pipeline`-actor's own identifier; text-to-
+text comparison never does, so this needs no `CASE WHEN` guard at all.
 """
 from __future__ import annotations
 
@@ -38,6 +51,7 @@ class AuditEventOut(BaseModel):
     id: str
     actor_type: str
     actor_id: str | None
+    actor_display_name: str | None
     action: str
     target_type: str | None
     target_id: str | None
@@ -78,27 +92,30 @@ async def list_audit_events(
 ) -> AuditEventPage:
     require_permission(context, "audit.read")
 
+    # Every column referenced here is `ae.`-qualified: the new actor-name joins below add
+    # `users`/`platform_developers`, both of which also have their own `id` column, so an
+    # unqualified `id` (the cursor filter's own column) would become ambiguous otherwise.
     filters = []
     params: dict = {"limit": limit + 1}  # one extra row tells us whether more exist
 
     if action:
-        filters.append("action = :action")
+        filters.append("ae.action = :action")
         params["action"] = action
     if target_type:
-        filters.append("target_type = :target_type")
+        filters.append("ae.target_type = :target_type")
         params["target_type"] = target_type
     if outcome:
-        filters.append("outcome = CAST(:outcome AS audit_outcome)")
+        filters.append("ae.outcome = CAST(:outcome AS audit_outcome)")
         params["outcome"] = outcome
     if since:
-        filters.append("occurred_at >= :since")
+        filters.append("ae.occurred_at >= :since")
         params["since"] = since
     if until:
-        filters.append("occurred_at <= :until")
+        filters.append("ae.occurred_at <= :until")
         params["until"] = until
     if cursor:
         cursor_time, cursor_id = _decode_cursor(cursor)
-        filters.append("(occurred_at, id) < (:cursor_time, :cursor_id)")
+        filters.append("(ae.occurred_at, ae.id) < (:cursor_time, :cursor_id)")
         params["cursor_time"] = cursor_time
         params["cursor_id"] = cursor_id
 
@@ -107,11 +124,15 @@ async def list_audit_events(
         await db.execute(
             text(
                 f"""
-                SELECT id, actor_type, actor_id, action, target_type, target_id,
-                       outcome::text, reason, occurred_at
-                FROM audit_events
+                SELECT ae.id, ae.actor_type, ae.actor_id, actor_user.display_name AS actor_display_name,
+                       ae.action, ae.target_type, ae.target_id,
+                       ae.outcome::text, ae.reason, ae.occurred_at
+                FROM audit_events ae
+                LEFT JOIN users actor_user
+                    ON ae.actor_type IN ('user', 'platform_developer')
+                    AND ae.actor_id = actor_user.id::text
                 {where}
-                ORDER BY occurred_at DESC, id DESC
+                ORDER BY ae.occurred_at DESC, ae.id DESC
                 LIMIT :limit
                 """
             ),
@@ -123,10 +144,10 @@ async def list_audit_events(
     rows = rows[:limit]
     items = [
         AuditEventOut(
-            id=str(r[0]), actor_type=r[1], actor_id=r[2], action=r[3],
-            target_type=r[4], target_id=r[5], outcome=r[6], reason=r[7], occurred_at=r[8],
+            id=str(r[0]), actor_type=r[1], actor_id=r[2], actor_display_name=r[3],
+            action=r[4], target_type=r[5], target_id=r[6], outcome=r[7], reason=r[8], occurred_at=r[9],
         )
         for r in rows
     ]
-    next_cursor = _encode_cursor(rows[-1][8], rows[-1][0]) if has_more and rows else None
+    next_cursor = _encode_cursor(rows[-1][9], rows[-1][0]) if has_more and rows else None
     return AuditEventPage(items=items, next_cursor=next_cursor)

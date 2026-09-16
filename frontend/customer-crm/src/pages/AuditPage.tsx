@@ -106,9 +106,18 @@ export function AuditPage() {
                   <tr key={event.id}>
                     <td title={event.occurred_at}>{relativeTime(event.occurred_at)}</td>
                     <td className="mono">{event.action}</td>
-                    <td className="mono">
-                      {event.actor_type}
-                      {event.actor_id ? ` · ${event.actor_id.slice(0, 8)}…` : ""}
+                    <td>
+                      {event.actor_display_name ? (
+                        <>
+                          {event.actor_display_name}
+                          <span className="mono muted"> · {event.actor_type}</span>
+                        </>
+                      ) : (
+                        <span className="mono">
+                          {event.actor_type}
+                          {event.actor_id ? ` · ${event.actor_id.slice(0, 8)}…` : ""}
+                        </span>
+                      )}
                     </td>
                     <td className="mono">
                       {event.target_type ? `${event.target_type} · ${(event.target_id ?? "").slice(0, 8)}…` : "—"}

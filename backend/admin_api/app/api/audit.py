@@ -7,6 +7,13 @@ tenant-scoped visibility and vice versa. This is the "central" half of CHECKLIST
 "Central append-only audit query/search foundation" line - the tenant-facing one only
 ever sees its own rows (RLS-enforced); this one can see every tenant's, optionally
 narrowed to one via `tenant_id`.
+
+**Actor display name**: see the tenant-facing endpoint's own module docstring for the
+full reasoning (a single `users` join covers both `actor_type="user"` and
+`"platform_developer"` - the real reason why, and the wrong-first-draft join through
+`platform_developers` that a real data check caught, same text-to-text comparison to
+avoid a cast error on a non-UUID `pipeline` actor id, same "`users` carries no RLS" note)
+- not repeated here.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ class AuditEventOut(BaseModel):
     tenant_id: str | None
     actor_type: str
     actor_id: str | None
+    actor_display_name: str | None
     action: str
     target_type: str | None
     target_id: str | None
@@ -77,30 +85,33 @@ async def list_audit_events(
 ) -> AuditEventPage:
     require_permission(context, "audit.read")
 
+    # `ae.`-qualified throughout: the actor-name joins below add `users`/
+    # `platform_developers`, both with their own `id` column, so an unqualified `id`
+    # (the cursor filter's own column) would otherwise be ambiguous.
     filters = []
     params: dict = {"limit": limit + 1}
 
     if tenant_id:
-        filters.append("tenant_id = :tenant_id")
+        filters.append("ae.tenant_id = :tenant_id")
         params["tenant_id"] = tenant_id
     if action:
-        filters.append("action = :action")
+        filters.append("ae.action = :action")
         params["action"] = action
     if target_type:
-        filters.append("target_type = :target_type")
+        filters.append("ae.target_type = :target_type")
         params["target_type"] = target_type
     if outcome:
-        filters.append("outcome = CAST(:outcome AS audit_outcome)")
+        filters.append("ae.outcome = CAST(:outcome AS audit_outcome)")
         params["outcome"] = outcome
     if since:
-        filters.append("occurred_at >= :since")
+        filters.append("ae.occurred_at >= :since")
         params["since"] = since
     if until:
-        filters.append("occurred_at <= :until")
+        filters.append("ae.occurred_at <= :until")
         params["until"] = until
     if cursor:
         cursor_time, cursor_id = _decode_cursor(cursor)
-        filters.append("(occurred_at, id) < (:cursor_time, :cursor_id)")
+        filters.append("(ae.occurred_at, ae.id) < (:cursor_time, :cursor_id)")
         params["cursor_time"] = cursor_time
         params["cursor_id"] = cursor_id
 
@@ -109,11 +120,16 @@ async def list_audit_events(
         await db.execute(
             text(
                 f"""
-                SELECT id, tenant_id, actor_type, actor_id, action, target_type, target_id,
-                       outcome::text, reason, occurred_at
-                FROM audit_events
+                SELECT ae.id, ae.tenant_id, ae.actor_type, ae.actor_id,
+                       actor_user.display_name AS actor_display_name,
+                       ae.action, ae.target_type, ae.target_id,
+                       ae.outcome::text, ae.reason, ae.occurred_at
+                FROM audit_events ae
+                LEFT JOIN users actor_user
+                    ON ae.actor_type IN ('user', 'platform_developer')
+                    AND ae.actor_id = actor_user.id::text
                 {where}
-                ORDER BY occurred_at DESC, id DESC
+                ORDER BY ae.occurred_at DESC, ae.id DESC
                 LIMIT :limit
                 """
             ),
@@ -126,9 +142,10 @@ async def list_audit_events(
     items = [
         AuditEventOut(
             id=str(r[0]), tenant_id=str(r[1]) if r[1] else None, actor_type=r[2], actor_id=r[3],
-            action=r[4], target_type=r[5], target_id=r[6], outcome=r[7], reason=r[8], occurred_at=r[9],
+            actor_display_name=r[4], action=r[5], target_type=r[6], target_id=r[7],
+            outcome=r[8], reason=r[9], occurred_at=r[10],
         )
         for r in rows
     ]
-    next_cursor = _encode_cursor(rows[-1][9], rows[-1][0]) if has_more and rows else None
+    next_cursor = _encode_cursor(rows[-1][10], rows[-1][0]) if has_more and rows else None
     return AuditEventPage(items=items, next_cursor=next_cursor)

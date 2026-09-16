@@ -323,8 +323,31 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         next time, bootstraps a throwaway platform admin, confirms the admin endpoint
         finds the same event when `tenant_id`-filtered with no cross-tenant leakage - full
         PASS against the real running stack.
-  - [ ] **Deliberately deferred**: no friendly actor-name join (actor shown as
-        type + id, not display name); `previous_hash`/`event_hash` hash-chain integrity
+  - [x] **2026-09-16: friendly actor-name join added.** `AuditEventOut.actor_display_name`
+        (both endpoints), rendered in both apps' `/audit` pages (falls back to
+        `type · id` when null - a `pipeline` system actor, or a deleted account). One
+        `LEFT JOIN users` covers *both* `actor_type="user"` and `"platform_developer"` -
+        a real, live-data check caught a wrong first draft that joined through
+        `platform_developers` on the assumption its own `id` was the recorded actor_id;
+        `admin_api/app/deps.py` actually sets `developer_user_id=claims.subject_user_id`
+        (the JWT's own subject - a `users.id` directly), confirmed by querying a real
+        `platform_developer` audit row and finding no matching `platform_developers.id`
+        at all, only a matching `users.id`. Verified for real, not assumed: the query run
+        directly against the live Postgres container resolved a real name
+        ("Validation Runner (service account)") for a real `platform_developer` row, a
+        real name ("Abelamm") for a real `user` row, and correctly `null` for both a
+        `pipeline` system actor and a `user` row whose account no longer exists (not a
+        bug - an append-only audit trail outliving a deleted test account is correct);
+        `scripts/e2e_audit_log.py` full PASS against both endpoints after rebuilding and
+        recreating the real `tenant-api`/`admin-api` containers. **Real environment bug
+        found and fixed along the way, unrelated to this change**: `docker compose`
+        invoked from `infra/` (its own directory) silently resolved every `${VAR}`
+        substitution to a blank string because `.env` lives at the repo root, not in
+        `infra/` - `docker compose ps` was already emitting "variable is not set,
+        defaulting to a blank string" warnings for exactly this reason before this pass
+        touched anything; fixed by invoking compose from the repo root with
+        `-f infra/docker-compose.yml --env-file .env` instead.
+  - [ ] **Still deliberately deferred**: `previous_hash`/`event_hash` hash-chain integrity
         columns remain unpopulated (a pre-existing gap, not introduced or closed this
         slice - tamper-evidence would need a backfill + a hashing point on write, both
         out of scope here).
