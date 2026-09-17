@@ -3,10 +3,11 @@ controls" / "Sensitive mutations support step-up authentication and approval pol
 TRD-SEC-010: "High-risk actions require recent MFA/step-up and create a security audit
 event").
 
-**Scope, stated plainly**: TOTP + hashed single-use recovery codes only this pass -
-WebAuthn/passkeys (TRD §7.1's *preferred* option) needs a browser-side ceremony and a
-relying-party config this pass doesn't build; TOTP is explicitly listed as "supported",
-not merely a fallback. MFA is available and *enforced as a step-up gate on one real
+**Scope, stated plainly**: TOTP + hashed single-use recovery codes, decided as the
+permanent second factor (2026-09-17, account owner) - not merely deferred pending a
+browser-side WebAuthn/passkeys ceremony (TRD §7.1's own *preferred* option). TOTP is
+explicitly listed as "supported", not merely a fallback, and stays the only second
+factor this product ships. MFA is available and *enforced as a step-up gate on one real
 high-risk mutation* (`POST /api/v1/admin/licenses` - see `licensing.py`), proving
 TRD-SEC-010 against something real rather than a strawman endpoint. It is **not yet
 mandatory at login for every platform session** - TRD §6.2's "mandatory" is a real,

@@ -366,9 +366,17 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         `encrypted_secrets` envelope-encryption path every other secret in this codebase
         uses (`tenant_id=NULL` for a platform-owned secret - already-supported, not a new
         capability).
-  - [x] **Scoped to TOTP + recovery codes, stated plainly**: WebAuthn/passkeys (TRD
-        §7.1's *preferred* option) needs a browser-side ceremony this pass doesn't build;
-        TOTP is explicitly "supported", not merely a fallback. Available and enforced as
+  - [x] **2026-09-17: TOTP is the standing, permanent second factor - WebAuthn/passkeys
+        decided out of scope, not left pending.** Originally recorded as "needs a
+        browser-side ceremony this pass doesn't build" (i.e. deferred, revisit later);
+        the account owner has since made the call directly - TOTP stays as the only
+        second factor, WebAuthn is not being built. No code changes needed (WebAuthn was
+        never started), so this closes as a documentation-only decision: removed from
+        the "Deliberately deferred" list below (it's not pending anymore, it's decided),
+        and this line updated to record the real reason plainly rather than leaving the
+        original "not built this pass" phrasing to be misread as still open. TRD §7.1
+        named WebAuthn as its *preferred* option; TOTP was already explicitly built as
+        "supported", not merely a fallback, and remains that. Available and enforced as
         a step-up gate on **one real high-risk mutation** (`POST /api/v1/admin/licenses`)
         proving TRD-SEC-010 against something real, not a strawman endpoint - **not yet
         mandatory at login for every platform session** (TRD §6.2's "mandatory" is a
@@ -404,8 +412,9 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         step-up exists. Full PASS (two transient flakes on a container that had just
         restarted, not reproduced on retry or in isolated manual re-checks - the same
         class of flake the licensing slice already documented, not a code bug).
-  - [ ] **Deliberately deferred**: WebAuthn/passkeys; mandatory-MFA-at-login policy; any
-        other high-risk mutation besides license issuance (model promotion to production,
+  - [ ] **Still open** (WebAuthn/passkeys removed from this list - see the entry above,
+        that one's decided, not pending): mandatory-MFA-at-login policy; any other
+        high-risk mutation besides license issuance (model promotion to production,
         organization creation - same gate, just not wired to them yet); no tenant-side
         mutation gated behind tenant MFA yet either.
 - [x] Vertical-slice test: reseller → child tenant → MFA enrollment → empty dashboard →
