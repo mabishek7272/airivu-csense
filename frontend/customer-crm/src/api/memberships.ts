@@ -7,7 +7,7 @@ export interface Membership {
   user_id: string;
   email: string;
   display_name: string;
-  role_name: "tenant_owner" | "tenant_member";
+  role_name: "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer";
   status: "invited" | "active" | "suspended" | "revoked";
   site_scope_mode: "all" | "selected" | "none";
   invited_at: string | null;
@@ -17,7 +17,7 @@ export interface Membership {
 export interface InviteInput {
   email: string;
   display_name: string;
-  role_name: "tenant_owner" | "tenant_member";
+  role_name: "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer";
   site_scope_mode?: "all" | "none";
 }
 
@@ -28,7 +28,7 @@ export interface InviteResult extends Membership {
 }
 
 export interface MembershipPatch {
-  role_name?: "tenant_owner" | "tenant_member";
+  role_name?: "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer";
   status?: "active" | "suspended" | "revoked";
   site_scope_mode?: "all" | "none";
 }

@@ -231,7 +231,9 @@ function InviteDialog({
 }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [roleName, setRoleName] = useState<"tenant_owner" | "tenant_member">("tenant_member");
+  const [roleName, setRoleName] = useState<
+    "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer"
+  >("tenant_member");
   const [siteScopeMode, setSiteScopeMode] = useState<"all" | "none">("none");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -264,8 +266,17 @@ function InviteDialog({
         </label>
         <label>
           Role
-          <select value={roleName} onChange={(e) => setRoleName(e.target.value as "tenant_owner" | "tenant_member")}>
+          <select
+            value={roleName}
+            onChange={(e) =>
+              setRoleName(
+                e.target.value as "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer",
+              )
+            }
+          >
+            <option value="tenant_viewer">Viewer (read-only)</option>
             <option value="tenant_member">Member</option>
+            <option value="tenant_operator">Operator (cameras, rules, incidents)</option>
             <option value="tenant_owner">Owner</option>
           </select>
         </label>
