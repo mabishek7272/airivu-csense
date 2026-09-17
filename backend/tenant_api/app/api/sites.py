@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.site_scope import site_scope_sql_filter
 from csense_shared.security.tenant_context import TenantContext
 from csense_shared.timezones import OFFERED_TIMEZONES, is_usable_timezone
 
@@ -132,10 +133,11 @@ async def list_sites(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> list[SiteOut]:
     require_permission(context, "site.read")
+    scope_clause, scope_params = site_scope_sql_filter(context, column="s.id")
     rows = (
         await db.execute(
-            text(_SELECT + " WHERE s.deleted_at IS NULL ORDER BY s.name LIMIT :limit"),
-            {"limit": limit},
+            text(f"{_SELECT} WHERE s.deleted_at IS NULL AND {scope_clause} ORDER BY s.name LIMIT :limit"),
+            {"limit": limit, **scope_params},
         )
     ).all()
     return [_to_site(row) for row in rows]
@@ -148,6 +150,12 @@ async def get_site(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> SiteOut:
     require_permission(context, "site.read")
+    if not context.can_access_site(site_id):
+        # Same "not found covers both missing and out-of-scope" shape load_camera's own
+        # docstring already establishes for cross-tenant cameras - a scoped-out site
+        # should look identical to a nonexistent one, not reveal that it exists but is
+        # off-limits.
+        raise NotFoundError("No such site.")
     return await _load(db, site_id)
 
 

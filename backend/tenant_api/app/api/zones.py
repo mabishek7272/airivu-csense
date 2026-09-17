@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import current_tenant_context, db_session_for_tenant
 from csense_shared.errors import ApiError, NotFoundError
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.site_scope import site_scope_sql_filter
 from csense_shared.security.tenant_context import TenantContext
 
 logger = logging.getLogger(__name__)
@@ -183,8 +184,9 @@ async def list_zones(
 ) -> list[ZoneOut]:
     require_permission(context, "zone.read")
 
-    clauses = ["z.status <> 'deleted'"]
-    params: dict = {"limit": limit}
+    scope_clause, scope_params = site_scope_sql_filter(context, column="z.site_id")
+    clauses = ["z.status <> 'deleted'", scope_clause]
+    params: dict = {"limit": limit, **scope_params}
     if site_id:
         clauses.append("z.site_id = :site_id")
         params["site_id"] = site_id

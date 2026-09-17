@@ -105,7 +105,7 @@ async def start_live_session(
     settings: Settings = Depends(get_app_settings),
 ) -> LiveSessionOut:
     require_permission(context, "camera.view_live")
-    camera = await load_camera(db, camera_id)
+    camera = await load_camera(db, camera_id, context)
 
     if camera.status != "ready":
         raise ApiError(

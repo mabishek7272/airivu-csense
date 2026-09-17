@@ -27,6 +27,7 @@ from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.errors import ApiError, ConflictError, NotFoundError
 from csense_shared.pipeline.incidents import InvalidTransitionError, transition_incident
 from csense_shared.security.permissions import require_permission
+from csense_shared.security.site_scope import site_scope_sql_filter
 from csense_shared.security.tenant_context import TenantContext
 
 router = APIRouter(prefix="/api/v1/tenant/incidents", tags=["incidents"])
@@ -123,8 +124,9 @@ async def list_incidents(
 ) -> IncidentPage:
     require_permission(context, "incident.read")
 
-    filters = []
-    params: dict = {"limit": limit + 1}  # one extra row tells us whether more exist
+    scope_clause, scope_params = site_scope_sql_filter(context, column="site_id")
+    filters = [scope_clause]
+    params: dict = {"limit": limit + 1, **scope_params}  # one extra row tells us whether more exist
 
     if status:
         wanted = ACTIVE_STATUSES if status == "active" else tuple(
