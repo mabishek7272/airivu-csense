@@ -14,6 +14,26 @@ import {
 import { useOnlineStatus } from "../hooks/useNetwork";
 import { useResource } from "../hooks/useResource";
 
+/** Labels shown for each role, shared between the invite dialog's role picker and the
+ *  per-row role-change select on this page so the two stay in sync. */
+type RoleName = "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer";
+
+const ROLE_LABELS: Record<RoleName, string> = {
+  tenant_viewer: "Viewer (read-only)",
+  tenant_member: "Member",
+  tenant_operator: "Operator (cameras, rules, incidents)",
+  tenant_owner: "Owner",
+};
+
+/** Short, sentence-friendly form (with article) for the role-change success toast -
+ *  ROLE_LABELS' parenthetical descriptions read fine in a <select> but not mid-sentence. */
+const ROLE_TOAST_PHRASE: Record<RoleName, string> = {
+  tenant_viewer: "a viewer",
+  tenant_member: "a member",
+  tenant_operator: "an operator",
+  tenant_owner: "an owner",
+};
+
 /** Team membership: who has access to this tenant, and what they can do.
  *
  *  `membership.manage` is owner-only, deliberately more restricted than any resource
@@ -49,12 +69,12 @@ export function TeamPage() {
     }
   }
 
-  async function handleRoleChange(member: Membership, role_name: "tenant_owner" | "tenant_member") {
+  async function handleRoleChange(member: Membership, role_name: RoleName) {
     setBusyId(member.id);
     try {
       const updated = await updateMembership(member.id, { role_name });
       members.mutate((current) => (current ?? []).map((m) => (m.id === updated.id ? updated : m)));
-      notify.success(`${member.display_name} is now ${role_name === "tenant_owner" ? "an owner" : "a member"}`);
+      notify.success(`${member.display_name} is now ${ROLE_TOAST_PHRASE[role_name]}`);
     } catch (err) {
       notify.error(
         "Could not change this member's role",
@@ -130,12 +150,12 @@ export function TeamPage() {
                     <select
                       value={member.role_name}
                       disabled={busyId === member.id || !online}
-                      onChange={(e) =>
-                        void handleRoleChange(member, e.target.value as "tenant_owner" | "tenant_member")
-                      }
+                      onChange={(e) => void handleRoleChange(member, e.target.value as RoleName)}
                     >
-                      <option value="tenant_owner">Owner</option>
-                      <option value="tenant_member">Member</option>
+                      <option value="tenant_viewer">{ROLE_LABELS.tenant_viewer}</option>
+                      <option value="tenant_member">{ROLE_LABELS.tenant_member}</option>
+                      <option value="tenant_operator">{ROLE_LABELS.tenant_operator}</option>
+                      <option value="tenant_owner">{ROLE_LABELS.tenant_owner}</option>
                     </select>
                   </td>
                   <td>
@@ -231,9 +251,7 @@ function InviteDialog({
 }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [roleName, setRoleName] = useState<
-    "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer"
-  >("tenant_member");
+  const [roleName, setRoleName] = useState<RoleName>("tenant_member");
   const [siteScopeMode, setSiteScopeMode] = useState<"all" | "none">("none");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -266,18 +284,11 @@ function InviteDialog({
         </label>
         <label>
           Role
-          <select
-            value={roleName}
-            onChange={(e) =>
-              setRoleName(
-                e.target.value as "tenant_owner" | "tenant_operator" | "tenant_member" | "tenant_viewer",
-              )
-            }
-          >
-            <option value="tenant_viewer">Viewer (read-only)</option>
-            <option value="tenant_member">Member</option>
-            <option value="tenant_operator">Operator (cameras, rules, incidents)</option>
-            <option value="tenant_owner">Owner</option>
+          <select value={roleName} onChange={(e) => setRoleName(e.target.value as RoleName)}>
+            <option value="tenant_viewer">{ROLE_LABELS.tenant_viewer}</option>
+            <option value="tenant_member">{ROLE_LABELS.tenant_member}</option>
+            <option value="tenant_operator">{ROLE_LABELS.tenant_operator}</option>
+            <option value="tenant_owner">{ROLE_LABELS.tenant_owner}</option>
           </select>
         </label>
         <label>
