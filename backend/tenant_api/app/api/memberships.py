@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,7 +88,18 @@ class InviteIn(BaseModel):
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=200)
     role_name: str = Field(pattern="^(tenant_owner|tenant_operator|tenant_member|tenant_viewer)$")
-    site_scope_mode: str = Field(default="none", pattern="^(all|none)$")
+    site_scope_mode: str = Field(default="none", pattern="^(all|selected|none)$")
+    site_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("site_ids")
+    @classmethod
+    def _selected_needs_ids_elsewhere(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        # Real cross-field validation (site_scope_mode == "selected" implies len > 0)
+        # happens in invite_member itself, not here - Pydantic v2 field_validators don't
+        # see sibling fields without a model_validator, and the real error needs to name
+        # which sites don't belong to this tenant anyway (a DB check), which can't happen
+        # in a pure field validator.
+        return value
 
 
 class InviteOut(MembershipOut):
@@ -96,6 +107,48 @@ class InviteOut(MembershipOut):
     # reasoning. None (the common case, once Resend is configured) means: it already went
     # out, and this process is not holding onto the token any more.
     invitation_link: str | None = None
+
+
+async def _replace_site_scope(
+    db: AsyncSession, *, tenant_id: uuid.UUID, membership_id: uuid.UUID,
+    site_scope_mode: str, site_ids: list[uuid.UUID],
+) -> None:
+    if site_scope_mode == "selected" and not site_ids:
+        raise ApiError(
+            status_code=422, code="selected_scope_needs_sites",
+            message="Pick at least one site, or choose a different site-access option.",
+        )
+    if site_ids:
+        found = (
+            await db.execute(
+                text("SELECT count(*) FROM sites WHERE id = ANY(:ids) AND deleted_at IS NULL"),
+                {"ids": site_ids},
+            )
+        ).scalar_one()
+        if found != len(set(site_ids)):
+            raise ApiError(
+                status_code=422, code="unknown_site",
+                message="One or more selected sites don't exist in this tenant.",
+            )
+
+    # Full replace, not a diff - the picker UI always submits the complete desired set,
+    # same as how role_name/status are always full replacements in this same endpoint.
+    await db.execute(
+        text(
+            "DELETE FROM membership_resource_scopes "
+            "WHERE membership_id = :mid AND resource_type = 'site'"
+        ),
+        {"mid": membership_id},
+    )
+    for site_id in set(site_ids):
+        await db.execute(
+            text(
+                "INSERT INTO membership_resource_scopes "
+                "(tenant_id, membership_id, resource_type, resource_id, effect) "
+                "VALUES (:tid, :mid, 'site', :sid, 'allow')"
+            ),
+            {"tid": tenant_id, "mid": membership_id, "sid": site_id},
+        )
 
 
 @router.post("", response_model=InviteOut, status_code=201)
@@ -128,6 +181,12 @@ async def invite_member(
         db, tenant_id=context.tenant_id, email=body.email, display_name=body.display_name,
         role=role, site_scope_mode=body.site_scope_mode, invited_by=context.user_id,
     )
+
+    if body.site_scope_mode == "selected":
+        await _replace_site_scope(
+            db, tenant_id=context.tenant_id, membership_id=membership.id,
+            site_scope_mode=body.site_scope_mode, site_ids=body.site_ids,
+        )
 
     await record_audit_and_outbox(
         db,
@@ -197,7 +256,8 @@ class MembershipPatchIn(BaseModel):
         default=None, pattern="^(tenant_owner|tenant_operator|tenant_member|tenant_viewer)$"
     )
     status: str | None = Field(default=None, pattern="^(active|suspended|revoked)$")
-    site_scope_mode: str | None = Field(default=None, pattern="^(all|none)$")
+    site_scope_mode: str | None = Field(default=None, pattern="^(all|selected|none)$")
+    site_ids: list[uuid.UUID] | None = None
 
 
 @router.patch("/{membership_id}", response_model=MembershipOut)
@@ -240,6 +300,10 @@ async def update_membership(
         membership.status = body.status
     if body.site_scope_mode is not None:
         membership.site_scope_mode = body.site_scope_mode
+        await _replace_site_scope(
+            db, tenant_id=context.tenant_id, membership_id=membership.id,
+            site_scope_mode=body.site_scope_mode, site_ids=body.site_ids or [],
+        )
     await db.flush()
 
     await record_audit_and_outbox(
