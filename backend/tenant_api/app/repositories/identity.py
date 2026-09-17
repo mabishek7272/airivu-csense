@@ -105,6 +105,15 @@ async def create_organization_tenant_owner(
         role_id=owner_role.id,
         status="active",
         accepted_at=None,
+        # An owner always gets full access to their own tenant's sites - scoping
+        # yourself out of the sites in the tenant you just created is not a real
+        # scenario (see docs/superpowers/plans/2026-09-17-licensing-rbac-reseller-
+        # features.md, "Before you start"). Without this, the row falls through to
+        # the schema default `site_scope_mode="none"` (zero sites) while
+        # register()'s freshly issued token claims "all" - a mismatch that's
+        # latent today (nothing enforces site scope yet) but becomes a silent
+        # owner lockout the moment site-scope enforcement ships.
+        site_scope_mode="all",
     )
     session.add(membership)
     await session.flush()
