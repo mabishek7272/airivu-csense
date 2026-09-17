@@ -96,6 +96,52 @@ def mask_regions(
     return masked
 
 
+def mask_polygon_region(
+    image: np.ndarray, polygon: tuple[tuple[float, float], ...] | None
+) -> np.ndarray:
+    """Blurs the area inside a normalised polygon (0..1) in a copy of the image.
+
+    Unlike `mask_regions` above (rectangular detection boxes), this blurs a zone's own
+    real shape - used for `sensitive`/`high` privacy zones (CHECKLIST's own
+    "zone-privacy-level gating", `zones.privacy_level`), where the whole configured area
+    is the privacy interest, not only whichever pixels a detection box happened to cover.
+    A zone is rarely a rectangle; approximating it with a bounding box would under-mask
+    the corners a real polygon excludes and over-mask ground the zone was never drawn
+    over. `polygon` is the same normalised `(x, y)` tuple shape
+    `csense_shared.pipeline.rules.Rule.roi_polygon` already carries (parsed by
+    `ingest.py`'s own `_polygon_from_zone` from the zone's stored geometry) - callers pass
+    that straight through, no separate parsing needed here.
+    """
+    import cv2
+
+    if not polygon or len(polygon) < 3:
+        return image.copy()
+
+    height, width = image.shape[:2]
+    points = np.array(
+        [[int(round(x * width)), int(round(y * height))] for x, y in polygon], dtype=np.int32
+    )
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.fillPoly(mask, [points], 255)
+    if not mask.any():
+        # A polygon entirely outside the frame (or too thin to rasterise) leaves nothing
+        # to mask - same no-op-copy behaviour `mask_regions` already returns for a
+        # degenerate box, not a raise.
+        return image.copy()
+
+    # Blur the whole frame once, then composite only the polygon's own pixels from it -
+    # simpler and free of the boundary artefacts a per-region crop-then-blur would have
+    # at the polygon's real (non-rectangular) edge.
+    kernel = _odd(max(MIN_BLUR_KERNEL, min(height, width) // BLUR_KERNEL_DIVISOR))
+    blurred = cv2.GaussianBlur(image, (kernel, kernel), 0)
+
+    result = image.copy()
+    mask_bool = mask.astype(bool)
+    result[mask_bool] = blurred[mask_bool]
+    return result
+
+
 def encode_jpeg(image: np.ndarray, quality: int = 85) -> bytes:
     import cv2
 
@@ -256,6 +302,8 @@ async def capture_evidence(
     mask_boxes: list[tuple[float, float, float, float]] | None = None,
     annotations: list[Annotation] | None = None,
     retention_days: int | None = 90,
+    zone_privacy_level: str | None = None,
+    zone_polygon: tuple[tuple[float, float], ...] | None = None,
 ) -> EvidenceSet:
     """Stores original, masked, and annotated variants.
 
@@ -263,22 +311,50 @@ async def capture_evidence(
     separate, permissioned act (`evidence.download`). The annotated variant is the masked
     image with detection boxes drawn - derived from masked, never from the original, so
     the privacy default holds: the box shows where and what, never who.
+
+    `zone_privacy_level`/`zone_polygon` (`zones.privacy_level`, CHECKLIST's own
+    "zone-privacy-level gating" - wired up here): when the incident's own zone is
+    `sensitive` or `high`, masked/annotated also blur the zone's real polygon shape via
+    `mask_polygon_region`, not only the per-object detection boxes - the privacy interest
+    for a configured zone is the AREA, not only whoever happened to be detected inside it.
+    `high` goes one step further and never writes an unmasked frame to storage at all:
+    the `original` evidence row is a second row over the SAME already-masked object
+    `masked` uses (same reasoning this function already applies below to `annotated` when
+    there are no boxes to draw - reuse rather than duplicate a byte-identical object), not
+    a fresh upload of the raw frame. `evidence.download` still resolves a real,
+    `access_classification='restricted'` row either way (nothing about the read path
+    changes) - it just cannot hand back unmasked bytes for a `high` zone, because none
+    were ever kept. `standard` (the default) and `sensitive` both still store the real,
+    true original - `sensitive` only widens what the routinely-served masked/annotated
+    views cover, it does not restrict `evidence.download` access itself.
     """
     original_id = uuid.uuid4()
     masked_id = uuid.uuid4()
     annotated_id = uuid.uuid4()
     expires_at = capture_time + dt.timedelta(days=retention_days) if retention_days else None
 
-    original_key = evidence_object_key(tenant_id, incident_id, original_id, "original")
-    original_object_id, original_digest, original_size = await _store_object(
-        session, minio, tenant_id=tenant_id, object_key=original_key, payload=encode_jpeg(image)
-    )
-
     masked_image = mask_regions(image, mask_boxes or [])
+    zone_masking_applies = zone_privacy_level in ("sensitive", "high") and zone_polygon
+    if zone_masking_applies:
+        masked_image = mask_polygon_region(masked_image, zone_polygon)
     masked_key = evidence_object_key(tenant_id, incident_id, masked_id, "masked")
     masked_object_id, masked_digest, masked_size = await _store_object(
         session, minio, tenant_id=tenant_id, object_key=masked_key, payload=encode_jpeg(masked_image)
     )
+
+    if zone_privacy_level == "high" and zone_masking_applies:
+        # No unmasked frame is ever written to storage for a `high`-privacy zone - this
+        # IS the actual privacy guarantee, not a labelling difference. The `original`
+        # evidence row points at the SAME object the routinely-served masked variant
+        # does (its own key was already written above), rather than a fresh upload of
+        # the raw frame.
+        original_key = masked_key
+        original_object_id, original_digest, original_size = masked_object_id, masked_digest, masked_size
+    else:
+        original_key = evidence_object_key(tenant_id, incident_id, original_id, "original")
+        original_object_id, original_digest, original_size = await _store_object(
+            session, minio, tenant_id=tenant_id, object_key=original_key, payload=encode_jpeg(image)
+        )
 
     # With no boxes to draw, an annotated variant would be byte-identical to the masked
     # one - a duplicate object and a duplicate row for every capture. Fall back to the

@@ -113,8 +113,14 @@ def _to_site_time(moment: dt.datetime, timezone_name: str | None) -> dt.datetime
 
 async def load_rules(
     session: AsyncSession, *, tenant_id: uuid.UUID, camera_id: uuid.UUID
-) -> list[tuple[Rule, uuid.UUID | None]]:
-    """Active rules for a camera, each paired with the zone it watches.
+) -> list[tuple[Rule, uuid.UUID | None, str | None]]:
+    """Active rules for a camera, each paired with the zone it watches and that zone's own
+    `privacy_level` (CHECKLIST's own "zone-privacy-level gating", `zones.privacy_level` -
+    wired up here so `ingest_detection` can pass it straight through to
+    `capture_evidence`). `None` when the rule has no zone (a site-wide rule with no `z.`
+    row to join) - `capture_evidence` already treats a missing/`None` privacy level as
+    "no extra masking", the same as today's behaviour, so this cannot change anything for
+    a zone-less rule.
 
     Includes site-wide rules (camera_id IS NULL) alongside camera-specific ones: "nobody
     in the yard after 22:00" is configured once for the site, not forty times.
@@ -125,7 +131,8 @@ async def load_rules(
                 """
                 SELECT r.type_code, r.alertable_classes, r.min_confidence, r.severity,
                        r.min_roi_overlap, r.min_consecutive_frames, r.cooldown_seconds,
-                       r.active_from_hour, r.active_to_hour, r.zone_id, z.geometry_json
+                       r.active_from_hour, r.active_to_hour, r.zone_id, z.geometry_json,
+                       z.privacy_level
                 FROM detection_rules r
                 JOIN cameras c ON c.id = :camera_id
                 LEFT JOIN zones z ON z.id = r.zone_id AND z.status = 'active'
@@ -140,7 +147,7 @@ async def load_rules(
         )
     ).all()
 
-    rules: list[tuple[Rule, uuid.UUID | None]] = []
+    rules: list[tuple[Rule, uuid.UUID | None, str | None]] = []
     for row in rows:
         classes = row[1]
         if not isinstance(classes, list) or not classes:
@@ -167,6 +174,7 @@ async def load_rules(
                     active_hours=active_hours,
                 ),
                 row[9],
+                row[11],
             )
         )
     return rules
@@ -218,18 +226,20 @@ async def ingest_detection(
 
     # Evaluate everything before writing anything, so the detection row records what the
     # rules actually concluded rather than being written twice.
-    fired: list[tuple[Rule, uuid.UUID | None, object]] = []
+    fired: list[tuple[Rule, uuid.UUID | None, str | None, object]] = []
     rejected: list[str] = []
-    for rule, zone_id in rules:
+    for rule, zone_id, zone_privacy_level in rules:
         outcome = evaluate(rule, objects, captured_at=local_captured_at)
         if outcome.fired:
-            fired.append((rule, zone_id, outcome))
+            fired.append((rule, zone_id, zone_privacy_level, outcome))
         else:
             rejected.extend(str(reason) for _, reason in outcome.rejected)
 
     primary = fired[0] if fired else None
     event_type = primary[0].type_code if primary else "detection.observed"
-    confidence = primary[2].best.confidence if primary else (
+    # index 3 is `outcome` - `fired` is now a 4-tuple (rule, zone_id, zone_privacy_level,
+    # outcome), not the 3-tuple it was before zone_privacy_level was added.
+    confidence = primary[3].best.confidence if primary else (
         max((o.confidence for o in objects), default=0.0)
     )
 
@@ -278,7 +288,7 @@ async def ingest_detection(
         )
         return result
 
-    rule, zone_id, outcome = primary
+    rule, zone_id, zone_privacy_level, outcome = primary
     record = await upsert_incident_from_match(
         session,
         tenant_id=tenant_id,
@@ -308,6 +318,12 @@ async def ingest_detection(
                 # Every detected person is masked, not only the ones that alerted -
                 # bystanders have the same privacy interest as the subject.
                 mask_boxes=[o.bbox for o in objects if o.class_name == "person"],
+                # zones.privacy_level, wired through from load_rules - see
+                # capture_evidence's own docstring for what sensitive/high actually do.
+                # rule.roi_polygon is the SAME zone polygon already parsed for rule
+                # evaluation (_polygon_from_zone), not re-fetched or re-parsed here.
+                zone_privacy_level=zone_privacy_level,
+                zone_polygon=rule.roi_polygon,
                 annotations=[
                     Annotation(
                         bbox=o.bbox,

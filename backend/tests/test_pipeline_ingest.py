@@ -187,12 +187,54 @@ async def test_rule_polygon_comes_from_its_zone(ctx):
     await add_rule(ctx)
     async with ctx["factory"]() as session:
         await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
-        (rule, zone_id), = await load_rules(
+        (rule, zone_id, zone_privacy_level), = await load_rules(
             session, tenant_id=ctx["tenant_id"], camera_id=ctx["camera_id"]
         )
 
     assert zone_id == ctx["zone_id"]
     assert rule.roi_polygon == ((0.35, 0.3), (1.0, 0.3), (1.0, 1.0), (0.35, 1.0))
+    # The fixture's own zone insert (line ~87-91) never sets privacy_level, so this pins
+    # the real DB default (migration 0009: `privacy_level` server_default 'standard') -
+    # not assumed, confirmed by this test actually reading it back.
+    assert zone_privacy_level == "standard"
+
+
+async def test_rule_polygon_carries_a_sensitive_zones_privacy_level(ctx):
+    """A real, non-default privacy_level - proves load_rules actually reads the column
+    rather than only ever seeing the fixture's own default."""
+    async with ctx["factory"]() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
+        await session.execute(
+            text("UPDATE zones SET privacy_level = 'sensitive' WHERE id = :z"),
+            {"z": ctx["zone_id"]},
+        )
+    await add_rule(ctx)
+
+    async with ctx["factory"]() as session:
+        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
+        (_, _, zone_privacy_level), = await load_rules(
+            session, tenant_id=ctx["tenant_id"], camera_id=ctx["camera_id"]
+        )
+
+    assert zone_privacy_level == "sensitive"
+
+
+async def test_a_rule_with_no_zone_has_no_zone_privacy_level(ctx):
+    """A rule created with no `zone_id` at all has no `zones` row to join - `z.privacy_level`
+    must come back None, not a default like 'standard', so capture_evidence's own
+    `zone_privacy_level in ("sensitive", "high")` check correctly treats it as
+    no-extra-masking rather than reading a fabricated default as real zone config."""
+    await add_rule(ctx, z=None)
+
+    async with ctx["factory"]() as session:
+        await session.execute(text("SELECT set_config('app.is_platform','true',true)"))
+        (rule, zone_id, zone_privacy_level), = await load_rules(
+            session, tenant_id=ctx["tenant_id"], camera_id=ctx["camera_id"]
+        )
+
+    assert zone_id is None
+    assert zone_privacy_level is None
+    assert rule.roi_polygon is None
 
 
 # --- Zone geometry is tenant-editable and must never raise -----------------------------

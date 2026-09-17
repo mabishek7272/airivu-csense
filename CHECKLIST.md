@@ -624,8 +624,56 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         never persisted), runs a real `ffprobe` through the real MediaMTX and confirms
         actual video: the hls path carries real HEVC from the real camera, the webrtc
         path's transcode actually produces real H.264 - not just a plausible-looking config.
-  - [ ] **Deliberately deferred**: zone-privacy-level gating (`zones.privacy_level` is
-        still CRUD-only, read by nothing); a concurrency/CPU guardrail on the WebRTC
+  - [x] **Zone-privacy-level gating wired up (2026-09-18)** - `zones.privacy_level`
+        (`standard`/`sensitive`/`high`) was CRUD-only, read by nothing; now consumed by
+        the real evidence-capture pipeline. `load_rules()`
+        (`csense_shared/pipeline/ingest.py`) joins `zones.privacy_level` alongside the
+        zone's own polygon it already fetched for ROI evaluation, and passes both through
+        to `capture_evidence()` (`csense_shared/pipeline/evidence.py`) unchanged for every
+        other caller (both other real call sites,
+        `scripts/e2e_detection_to_incident.py` and `scripts/seed_demo_tenant.py`, pass
+        neither new kwarg and are unaffected).
+        - `sensitive` and `high` zones get a real polygon-shaped blur
+          (`mask_polygon_region()`, new) over the zone's own area on top of whatever
+          rectangular detection-box masking already applied - `cv2.fillPoly` builds the
+          mask, the whole frame is Gaussian-blurred once, and only the polygon's own
+          pixels are composited from the blurred copy, avoiding both bounding-box
+          over/under-masking and per-region blur-boundary artifacts.
+        - `high` zones go further: no unmasked frame is ever written to storage at all,
+          not merely access-controlled. The `original` evidence row is made to share the
+          exact same `object_id`/stored bytes as `masked` (mirrors an existing precedent
+          in the same function - `annotated` already reuses `masked`'s record when there
+          are no detection boxes to draw). `standard`/`sensitive` zones still store a
+          real, distinct original.
+        - **Verified against real pixels in real storage, not by inspection**:
+          `scripts/e2e_zone_privacy_masking.py` registers a real tenant, creates real
+          `standard`/`high` zones and rules through the real API, feeds a real synthetic
+          frame (per-pixel noise around two distinct means, not a flat colour - see the
+          note below) through the real `ingest_detection()`, then fetches the actual
+          bytes back from real MinIO and confirms: the `standard` zone's stored
+          `original` has its zone-area noise variance essentially unchanged (never
+          touched); the `high` zone's stored `original` has that variance measurably
+          reduced (genuinely blurred) and is pixel-identical to `masked`; a direct DB
+          query confirms both rows share one `object_id`. Run: clean PASS.
+        - **A real testing trap, hit and fixed in this same pass**: the script's first
+          draft used flat/solid BGR fills to mark the zone vs. outside regions. Gaussian
+          blur of a spatially-uniform region is mathematically a no-op (a weighted local
+          average of identical values is that same value), so the "was this blurred"
+          check came back wrong even though the masking/reuse logic itself was already
+          proven correct by two other real checks in the same run. Fixed by switching to
+          real per-pixel noise (seeded, reproducible) and a variance-reduction check
+          instead of a colour match - the same trap `test_pipeline_evidence.py`'s own
+          `noisy_image()` fixture already documents. The variance threshold itself is
+          empirically set (20%, not 50%): JPEG's own lossy round-trip alone, with zero
+          blur applied, measurably reduces this noise's variance to ~45% of the source -
+          confirmed directly against `encode_jpeg()` - while a real Gaussian blur at this
+          codebase's kernel size crushes it under 1%. A naive 50% threshold false-failed
+          the `standard`-zone regression check for this reason before being corrected.
+        - 26 new/changed unit + integration tests, all passing for real against live
+          Postgres+MinIO (`test_pipeline_evidence.py`, `test_pipeline_ingest.py`), plus a
+          full backend regression run (806 passed, 82 skipped, one pre-existing unrelated
+          flake in `test_site_timezones.py` - not touched by this work).
+  - [ ] **Deliberately deferred**: a concurrency/CPU guardrail on the WebRTC
         transcode path (no cap on simultaneous transcodes - a real risk on a fixed-core
         box, not building a limiter without a real policy to build it against); HLS
         fallback via hls.js is built, but no feature-detection fallback exists for a

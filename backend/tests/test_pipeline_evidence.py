@@ -23,6 +23,7 @@ from csense_shared.pipeline.evidence import (
     capture_evidence,
     encode_jpeg,
     evidence_object_key,
+    mask_polygon_region,
     mask_regions,
     presign_evidence,
 )
@@ -171,6 +172,69 @@ def test_empty_box_list_is_a_no_op_copy():
 def test_degenerate_box_is_skipped():
     image = noisy_image()
     masked = mask_regions(image, [(0.5, 0.5, 0.5, 0.5)])
+    assert np.array_equal(image, masked)
+
+
+# --- Zone-shaped masking (CHECKLIST: "zone-privacy-level gating") --------------------
+
+def test_polygon_masking_changes_pixels_inside_the_shape():
+    """Same no-op-detection guard as test_masking_actually_changes_the_region above, for
+    the polygon path - blurring a triangle rather than a rectangle."""
+    image = noisy_image()
+    triangle = ((0.5, 0.1), (0.9, 0.9), (0.1, 0.9))
+    masked = mask_polygon_region(image, triangle)
+
+    height, width = image.shape[:2]
+    # A point well inside the triangle's centroid.
+    cy, cx = int(0.6 * height), int(0.5 * width)
+    region = (slice(cy - 5, cy + 5), slice(cx - 5, cx + 5))
+    assert not np.array_equal(image[region], masked[region])
+    assert masked[region].var() < image[region].var()
+
+
+def test_polygon_masking_leaves_a_point_outside_the_shape_untouched():
+    """A rectangle's own bounding box would over-mask a corner the real polygon
+    excludes - this pins that the mask follows the actual polygon shape, not its
+    bounding rectangle."""
+    image = noisy_image()
+    # A triangle occupying only the lower-left half of the frame.
+    triangle = ((0.0, 1.0), (1.0, 1.0), (0.0, 0.0))
+    masked = mask_polygon_region(image, triangle)
+
+    height, width = image.shape[:2]
+    # The top-right corner is inside the triangle's bounding box (0,0)-(1,1) but well
+    # outside the triangle itself.
+    corner = (slice(0, int(0.1 * height)), slice(int(0.9 * width), width))
+    assert np.array_equal(image[corner], masked[corner])
+
+
+def test_polygon_masking_does_not_mutate_the_original():
+    image = noisy_image()
+    before = image.copy()
+    mask_polygon_region(image, ((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)))
+    assert np.array_equal(image, before)
+
+
+def test_none_polygon_is_a_no_op_copy():
+    image = noisy_image()
+    masked = mask_polygon_region(image, None)
+    assert np.array_equal(image, masked)
+    assert masked is not image
+
+
+def test_too_few_points_is_a_no_op_copy():
+    """A polygon needs at least 3 points to enclose any area - the same MIN_POINTS
+    validation zones.py's own ZoneIn already enforces at the API layer; this is the
+    pipeline-side defensive counterpart for malformed/legacy geometry, matching
+    _polygon_from_zone's own "degrade, don't raise" philosophy in ingest.py."""
+    image = noisy_image()
+    masked = mask_polygon_region(image, ((0.2, 0.2), (0.8, 0.8)))
+    assert np.array_equal(image, masked)
+
+
+def test_polygon_entirely_outside_the_frame_is_a_no_op_copy():
+    image = noisy_image()
+    masked = mask_polygon_region(image, ((1.5, 1.5), (1.6, 1.5), (1.6, 1.6), (1.5, 1.6)))
     assert np.array_equal(image, masked)
 
 
@@ -384,3 +448,175 @@ async def test_no_annotations_reuses_the_masked_variant(tenant_ctx):
         )
     ).scalar_one()
     assert stored == 2, "only original and masked should be written"
+
+
+# --- Zone-privacy-level gating: capture_evidence's own zone_privacy_level/zone_polygon --
+
+ZONE_POLYGON = ((0.1, 0.1), (0.6, 0.1), (0.6, 0.6), (0.1, 0.6))
+
+
+async def test_standard_zone_original_stays_genuinely_unmasked(tenant_ctx):
+    """Regression guard: a `standard` (the default) or missing privacy level must not
+    pick up any zone-wide masking - only `sensitive`/`high` do."""
+    raw = noisy_image()
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=raw,
+        capture_time=CAPTURED_AT,
+        zone_privacy_level="standard",
+        zone_polygon=ZONE_POLYGON,
+    )
+    original = evidence.original
+    response = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, original.object_key)
+    try:
+        payload = response.read()
+    finally:
+        response.close()
+        response.release_conn()
+    assert hashlib.sha256(payload).hexdigest() == hashlib.sha256(encode_jpeg(raw)).hexdigest()
+
+
+async def test_sensitive_zone_masks_the_whole_zone_area_but_keeps_a_real_original(tenant_ctx):
+    """`sensitive`: masked/annotated get zone-wide masking, but the true original is still
+    stored - evidence.download still has something real to return."""
+    raw = noisy_image()
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=raw,
+        capture_time=CAPTURED_AT,
+        zone_privacy_level="sensitive",
+        zone_polygon=ZONE_POLYGON,
+    )
+
+    # The original is the real, unmasked frame.
+    original_resp = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, evidence.original.object_key)
+    try:
+        original_payload = original_resp.read()
+    finally:
+        original_resp.close()
+        original_resp.release_conn()
+    assert hashlib.sha256(original_payload).hexdigest() == hashlib.sha256(encode_jpeg(raw)).hexdigest()
+
+    # The masked variant differs from the raw frame inside the zone's own area (not just
+    # wherever mask_boxes happened to point, since none were passed here at all).
+    masked_resp = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, evidence.masked.object_key)
+    try:
+        masked_payload = masked_resp.read()
+    finally:
+        masked_resp.close()
+        masked_resp.release_conn()
+    assert masked_payload != encode_jpeg(raw)
+    assert evidence.original.evidence_id != evidence.masked.evidence_id
+    assert evidence.original.object_key != evidence.masked.object_key
+
+
+async def test_high_zone_never_stores_an_unmasked_frame(tenant_ctx):
+    """`high`: the real privacy guarantee - no unmasked bytes exist anywhere in storage
+    for this capture, not merely a permission check standing between them and a reader."""
+    raw = noisy_image()
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=raw,
+        capture_time=CAPTURED_AT,
+        zone_privacy_level="high",
+        zone_polygon=ZONE_POLYGON,
+    )
+
+    # "original" is a distinct evidence row (its own id, its own restricted
+    # classification - the read-path contract callers rely on is unchanged)...
+    assert evidence.original.evidence_id != evidence.masked.evidence_id
+    # ...but points at the SAME object as masked: no separate unmasked upload happened.
+    assert evidence.original.object_key == evidence.masked.object_key
+    assert evidence.original.sha256 == evidence.masked.sha256
+
+    # What's actually in storage under that key is provably not the raw frame.
+    response = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, evidence.original.object_key)
+    try:
+        payload = response.read()
+    finally:
+        response.close()
+        response.release_conn()
+    assert hashlib.sha256(payload).hexdigest() != hashlib.sha256(encode_jpeg(raw)).hexdigest()
+
+    # Real row-count check: still exactly 2 evidence rows (original + masked; no
+    # annotations were passed so annotated reuses masked, same as the no-zone case) -
+    # confirming this reuses precedent rather than a hidden third upload.
+    stored = (
+        await tenant_ctx["session"].execute(
+            text("SELECT count(*) FROM evidence WHERE camera_id = :c AND capture_time = :ct"),
+            {"c": tenant_ctx["camera_id"], "ct": CAPTURED_AT},
+        )
+    ).scalar_one()
+    assert stored == 2
+
+    # And genuinely only 2 distinct objects were uploaded to MinIO for this capture - not
+    # 3 duplicate copies of the same masked bytes under different keys.
+    original_row = (
+        await tenant_ctx["session"].execute(
+            text("SELECT object_id FROM evidence WHERE id = :id"), {"id": evidence.original.evidence_id}
+        )
+    ).scalar_one()
+    masked_row = (
+        await tenant_ctx["session"].execute(
+            text("SELECT object_id FROM evidence WHERE id = :id"), {"id": evidence.masked.evidence_id}
+        )
+    ).scalar_one()
+    assert original_row == masked_row
+
+
+async def test_high_zones_original_still_reports_restricted_classification(tenant_ctx):
+    """The evidence.download read-path contract doesn't change shape for a `high` zone -
+    it just cannot return unmasked bytes any more, because none exist."""
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=noisy_image(),
+        capture_time=CAPTURED_AT,
+        zone_privacy_level="high",
+        zone_polygon=ZONE_POLYGON,
+    )
+    classification = (
+        await tenant_ctx["session"].execute(
+            text("SELECT access_classification FROM evidence WHERE id = :id"),
+            {"id": evidence.original.evidence_id},
+        )
+    ).scalar_one()
+    assert classification == "restricted"
+
+
+async def test_a_zone_with_no_polygon_gets_no_extra_masking(tenant_ctx):
+    """A `sensitive`/`high` zone_privacy_level with no polygon (e.g. malformed geometry
+    that _polygon_from_zone in ingest.py already degrades to None) must not crash or
+    silently mask the whole frame - it falls back to whatever mask_boxes alone would
+    have produced, the same as before this feature existed."""
+    raw = noisy_image()
+    evidence = await capture_evidence(
+        tenant_ctx["session"],
+        tenant_ctx["minio"],
+        tenant_id=tenant_ctx["tenant_id"],
+        camera_id=tenant_ctx["camera_id"],
+        image=raw,
+        capture_time=CAPTURED_AT,
+        zone_privacy_level="high",
+        zone_polygon=None,
+    )
+    # No polygon means zone_masking_applies is False even for `high` - the real original
+    # is still stored, exactly like the standard/no-zone case.
+    original_resp = tenant_ctx["minio"].get_object(BUCKET_EVIDENCE, evidence.original.object_key)
+    try:
+        original_payload = original_resp.read()
+    finally:
+        original_resp.close()
+        original_resp.release_conn()
+    assert hashlib.sha256(original_payload).hexdigest() == hashlib.sha256(encode_jpeg(raw)).hexdigest()
