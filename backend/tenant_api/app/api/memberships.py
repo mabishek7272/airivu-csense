@@ -87,7 +87,7 @@ async def list_memberships(
 class InviteIn(BaseModel):
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=200)
-    role_name: str = Field(pattern="^(tenant_owner|tenant_member)$")
+    role_name: str = Field(pattern="^(tenant_owner|tenant_operator|tenant_member|tenant_viewer)$")
     site_scope_mode: str = Field(default="none", pattern="^(all|none)$")
 
 
@@ -193,7 +193,9 @@ async def _send_invitation_email(settings: Settings, *, email: str, link: str) -
 
 
 class MembershipPatchIn(BaseModel):
-    role_name: str | None = Field(default=None, pattern="^(tenant_owner|tenant_member)$")
+    role_name: str | None = Field(
+        default=None, pattern="^(tenant_owner|tenant_operator|tenant_member|tenant_viewer)$"
+    )
     status: str | None = Field(default=None, pattern="^(active|suspended|revoked)$")
     site_scope_mode: str | None = Field(default=None, pattern="^(all|none)$")
 
