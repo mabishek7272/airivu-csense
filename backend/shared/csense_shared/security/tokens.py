@@ -39,6 +39,8 @@ class AccessTokenClaims:
     tenant_id: UUID | None
     membership_id: UUID | None
     permissions: frozenset[str]
+    site_scope_mode: str
+    site_ids: frozenset[UUID]
     jti: str
     session_id: str
 
@@ -52,6 +54,8 @@ def issue_access_token(
     membership_id: UUID | None,
     permissions: frozenset[str],
     session_id: str,
+    site_scope_mode: str = "none",
+    site_ids: frozenset[UUID] = frozenset(),
     key_id: str = "local-dev-1",
 ) -> str:
     now = int(time.time())
@@ -70,6 +74,13 @@ def issue_access_token(
         payload["tenant_id"] = str(tenant_id)
     if membership_id is not None:
         payload["membership_id"] = str(membership_id)
+    if tenant_id is not None:
+        # Only meaningful alongside a real tenant membership - a platform-audience token
+        # (no tenant_id) never carries these at all, matching how tenant_id/membership_id
+        # are already conditionally included above.
+        payload["ssm"] = site_scope_mode
+        if site_ids:
+            payload["sids"] = sorted(str(s) for s in site_ids)
 
     return jwt.encode(
         payload,
@@ -101,6 +112,8 @@ def decode_access_token(
         tenant_id=UUID(tenant_id) if tenant_id else None,
         membership_id=UUID(membership_id) if membership_id else None,
         permissions=frozenset(payload.get("perm", [])),
+        site_scope_mode=payload.get("ssm", "none"),
+        site_ids=frozenset(UUID(s) for s in payload.get("sids", [])),
         jti=payload["jti"],
         session_id=payload["sid"],
     )

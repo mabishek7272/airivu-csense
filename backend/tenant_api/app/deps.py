@@ -70,6 +70,7 @@ async def _elevated_context_from_platform_token(
         membership_id=None,
         token_audience=claims.audience,
         permissions=elevated.permissions,
+        site_scope_mode="all",
         support_grant_id=elevated.grant_id,
         correlation_id=getattr(request.state, "correlation_id", None),
     )
@@ -101,6 +102,8 @@ async def current_tenant_context(
         membership_id=claims.membership_id,
         token_audience=claims.audience,
         permissions=claims.permissions,
+        site_scope_mode=claims.site_scope_mode,
+        site_ids=claims.site_ids,
         correlation_id=getattr(request.state, "correlation_id", None),
     )
 

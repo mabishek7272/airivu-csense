@@ -13,6 +13,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.deps import get_app_settings
@@ -134,6 +135,7 @@ async def register(
     return await _issue_tokens(
         request, response, settings,
         user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
+        site_scope_mode="all", site_ids=frozenset(),
     )
 
 
@@ -200,11 +202,24 @@ async def accept_invitation(
         )
 
         permissions = await get_role_permissions(db, membership.role_id)
+        site_scope_mode = membership.site_scope_mode
+        site_ids = frozenset(
+            row[0] for row in (
+                await db.execute(
+                    text(
+                        "SELECT resource_id FROM membership_resource_scopes "
+                        "WHERE membership_id = :mid AND resource_type = 'site' AND effect = 'allow'"
+                    ),
+                    {"mid": membership.id},
+                )
+            ).all()
+        )
         user_id, tenant_id, membership_id = user.id, membership.tenant_id, membership.id
 
     return await _issue_tokens(
         request, response, settings,
         user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
+        site_scope_mode=site_scope_mode, site_ids=site_ids,
     )
 
 
@@ -239,6 +254,7 @@ async def login(
     return await _issue_tokens(
         request, response, settings,
         user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
+        site_scope_mode=membership.site_scope_mode, site_ids=membership.site_ids,
     )
 
 
@@ -251,6 +267,8 @@ async def _issue_tokens(
     tenant_id: uuid.UUID,
     membership_id: uuid.UUID,
     permissions: frozenset[str],
+    site_scope_mode: str,
+    site_ids: frozenset[uuid.UUID],
 ) -> AuthResponse:
     redis_client = request.app.state.redis
     session_id, refresh_token = await create_session(
@@ -265,6 +283,8 @@ async def _issue_tokens(
         membership_id=membership_id,
         permissions=permissions,
         session_id=session_id,
+        site_scope_mode=site_scope_mode,
+        site_ids=site_ids,
     )
     _set_refresh_cookies(response, session_id=session_id, refresh_token=refresh_token)
     return AuthResponse(
@@ -307,6 +327,8 @@ async def refresh(
         membership_id=membership.membership_id,
         permissions=permissions,
         session_id=session_id,
+        site_scope_mode=membership.site_scope_mode,
+        site_ids=membership.site_ids,
     )
     _set_refresh_cookies(response, session_id=session_id, refresh_token=record["new_refresh_token"])
     return AuthResponse(

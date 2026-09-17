@@ -41,15 +41,18 @@ class ActiveMembership:
     membership_id: UUID
     tenant_id: UUID
     role_id: UUID
+    site_scope_mode: str
+    site_ids: frozenset[UUID]
 
 
 async def get_first_active_membership(session: AsyncSession, user_id: UUID) -> ActiveMembership | None:
     """Resolves the authenticating user's own active membership before tenant scope
-    exists. Backed by a SECURITY DEFINER function (migration 0005) restricted to a single
-    user's own membership — not a general cross-tenant query."""
+    exists. Backed by a SECURITY DEFINER function (migration 0005, extended by 0055 to
+    also return site scope) restricted to a single user's own membership - not a general
+    cross-tenant query."""
     result = await session.execute(
         text(
-            "SELECT membership_id, tenant_id, role_id "
+            "SELECT membership_id, tenant_id, role_id, site_scope_mode, site_ids "
             "FROM csense_active_membership_for_user(:user_id)"
         ),
         {"user_id": str(user_id)},
@@ -57,7 +60,10 @@ async def get_first_active_membership(session: AsyncSession, user_id: UUID) -> A
     row = result.first()
     if row is None:
         return None
-    return ActiveMembership(membership_id=row[0], tenant_id=row[1], role_id=row[2])
+    return ActiveMembership(
+        membership_id=row[0], tenant_id=row[1], role_id=row[2],
+        site_scope_mode=row[3], site_ids=frozenset(row[4] or []),
+    )
 
 
 async def get_role_permissions(session: AsyncSession, role_id: UUID) -> frozenset[str]:
