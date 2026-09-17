@@ -33,6 +33,17 @@ class TenantContext:
         # Deny wins: absence of an explicit allow is a deny. There is no implicit grant.
         return code in self.permissions
 
+    def can_access_site(self, site_id: UUID) -> bool:
+        # 'all'/'none' are unambiguous; 'selected' is the only mode that consults
+        # site_ids at all. See site_scope.py's site_scope_sql_filter for the equivalent
+        # check expressed as a SQL WHERE fragment, used for list endpoints instead of a
+        # per-row Python check.
+        if self.site_scope_mode == "all":
+            return True
+        if self.site_scope_mode == "selected":
+            return site_id in self.site_ids
+        return False
+
 
 @dataclass(frozen=True)
 class PlatformContext:
