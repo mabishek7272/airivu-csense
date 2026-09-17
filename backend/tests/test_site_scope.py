@@ -34,13 +34,18 @@ def test_selected_scope_only_allows_its_own_site_ids():
     assert context.can_access_site(other) is False
 
 
-def test_default_context_is_unrestricted():
-    # The dataclass default (site_scope_mode="none") existed before this feature and is
-    # exercised by any TenantContext built without explicit scope args - e.g. the
-    # support-grant-elevated path in deps.py, which has no real membership row to read a
-    # scope from at all. A platform developer using an approved support grant must not be
-    # silently locked out of every site - that path is a deliberate, separate elevation
-    # mechanism, not a real tenant membership with real scoping.
+def test_default_context_has_none_scope_mode():
+    # The dataclass default is site_scope_mode="none" - the MOST RESTRICTIVE mode (sees
+    # no sites), not "unrestricted". A TenantContext built without explicit scope args
+    # (e.g. by mistake, or by code that forgets to pass one) therefore fails closed: it
+    # sees nothing, rather than everything.
+    #
+    # This is exactly why the support-grant-elevated path in deps.py must NOT rely on
+    # this default. That path has no real membership row to read a scope from, but a
+    # platform developer using an approved support grant must not be silently locked out
+    # of every site either - so deps.py has to explicitly construct that TenantContext
+    # with site_scope_mode="all", rather than omitting the argument and assuming the
+    # default is permissive. It isn't.
     context = TenantContext(
         tenant_id=uuid.uuid4(), user_id=uuid.uuid4(), membership_id=None,
         token_audience="csense-platform", permissions=frozenset(),
