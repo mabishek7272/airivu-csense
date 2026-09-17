@@ -187,7 +187,8 @@ def main() -> int:
         psql(f"SET app.is_platform = true; DELETE FROM tenants WHERE id = '{tid}';")
     for email in (owner_email, viewer_email, operator_email):
         psql(f"SET app.is_platform = true; DELETE FROM users WHERE email_normalized = '{email}';")
-    print("    test tenant and users removed")
+    psql(f"SET app.is_platform = true; DELETE FROM organizations WHERE display_name = 'Finer Roles E2E {suffix}';")
+    print("    test tenant, users, and organization removed")
 
     print()
     if failures:
