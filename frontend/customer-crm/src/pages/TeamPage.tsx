@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Membership } from "../api/memberships";
 import { inviteMember, listMemberships, updateMembership } from "../api/memberships";
+import { listSites, type Site } from "../api/sites";
 import { ApiRequestError } from "../api/client";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { Layout } from "../components/Layout";
@@ -252,16 +253,30 @@ function InviteDialog({
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [roleName, setRoleName] = useState<RoleName>("tenant_member");
-  const [siteScopeMode, setSiteScopeMode] = useState<"all" | "none">("none");
+  const [siteScopeMode, setSiteScopeMode] = useState<"all" | "selected" | "none">("none");
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listSites().then(setSites).catch(() => setSites([]));
+  }, []);
+
+  function toggleSite(id: string) {
+    setSelectedSiteIds((current) =>
+      current.includes(id) ? current.filter((s) => s !== id) : [...current, id],
+    );
+  }
 
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
     try {
       const member = await inviteMember({
-        email, display_name: displayName, role_name: roleName, site_scope_mode: siteScopeMode,
+        email, display_name: displayName, role_name: roleName,
+        site_scope_mode: siteScopeMode,
+        site_ids: siteScopeMode === "selected" ? selectedSiteIds : undefined,
       });
       onInvited(member);
     } catch (err) {
@@ -293,14 +308,30 @@ function InviteDialog({
         </label>
         <label>
           Site access
-          <select value={siteScopeMode} onChange={(e) => setSiteScopeMode(e.target.value as "all" | "none")}>
+          <select
+            value={siteScopeMode}
+            onChange={(e) => setSiteScopeMode(e.target.value as "all" | "selected" | "none")}
+          >
             <option value="none">No sites (assign later)</option>
+            <option value="selected">Selected sites only</option>
             <option value="all">All sites</option>
           </select>
-          {/* Per-site scoping exists in the schema but has no picker UI yet - naming the
-              gap here rather than pretending "None"/"All" is the whole story. */}
-          <small className="muted">Picking specific sites isn't available yet.</small>
         </label>
+        {siteScopeMode === "selected" && (
+          <div className="chip-row">
+            {sites.map((site) => (
+              <label key={site.id} className="chip">
+                <input
+                  type="checkbox"
+                  checked={selectedSiteIds.includes(site.id)}
+                  onChange={() => toggleSite(site.id)}
+                />
+                {site.name}
+              </label>
+            ))}
+            {sites.length === 0 && <small className="muted">No sites exist yet.</small>}
+          </div>
+        )}
 
         {submitting && <InlineSpinner label="Sending invitation…" />}
         {!submitting && error && (
@@ -313,7 +344,10 @@ function InviteDialog({
           <button
             type="button"
             className="primary"
-            disabled={!email || !displayName || submitting}
+            disabled={
+              !email || !displayName || submitting ||
+              (siteScopeMode === "selected" && selectedSiteIds.length === 0)
+            }
             onClick={() => void handleSubmit()}
           >
             Send invitation

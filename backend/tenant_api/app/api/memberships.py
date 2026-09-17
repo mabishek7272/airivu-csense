@@ -61,16 +61,27 @@ class MembershipOut(BaseModel):
     role_name: str
     status: str
     site_scope_mode: str
+    site_ids: list[str]
     invited_at: str | None
     accepted_at: str | None
 
 
 _SELECT = """
     SELECT m.id, m.user_id, u.email_display, u.display_name, r.name, m.status,
-           m.site_scope_mode, m.invited_at, m.accepted_at
+           m.site_scope_mode, m.invited_at, m.accepted_at,
+           array_remove(array_agg(mrs.resource_id), NULL) AS site_ids
     FROM memberships m
     JOIN users u ON u.id = m.user_id
     JOIN roles r ON r.id = m.role_id
+    LEFT JOIN membership_resource_scopes mrs
+           ON mrs.membership_id = m.id AND mrs.resource_type = 'site' AND mrs.effect = 'allow'
+"""
+
+# Appended after any WHERE clause - a WHERE must precede GROUP BY, so callers splice their
+# own filter between _SELECT and _GROUP_BY rather than appending after it.
+_GROUP_BY = """
+    GROUP BY m.id, u.email_display, u.display_name, r.name, m.status,
+             m.site_scope_mode, m.invited_at, m.accepted_at
 """
 
 
@@ -80,6 +91,7 @@ def _to_out(row) -> MembershipOut:
         role_name=row[4], status=row[5], site_scope_mode=row[6],
         invited_at=row[7].isoformat() if row[7] else None,
         accepted_at=row[8].isoformat() if row[8] else None,
+        site_ids=[str(sid) for sid in row[9]],
     )
 
 
@@ -89,7 +101,9 @@ async def list_memberships(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> list[MembershipOut]:
     require_permission(context, "membership.manage")
-    rows = (await db.execute(text(f"{_SELECT} ORDER BY m.created_at"))).all()
+    rows = (
+        await db.execute(text(f"{_SELECT} {_GROUP_BY} ORDER BY m.created_at"))
+    ).all()
     return [_to_out(row) for row in rows]
 
 
@@ -226,7 +240,7 @@ async def invite_member(
     sent = await _send_invitation_email(settings, email=body.email, link=invitation_link)
 
     row = (
-        await db.execute(text(f"{_SELECT} WHERE m.id = :id"), {"id": membership.id})
+        await db.execute(text(f"{_SELECT} WHERE m.id = :id {_GROUP_BY}"), {"id": membership.id})
     ).first()
     # invitation_link stays None once the email actually went out - only surfaced here
     # because there is no other way to reach the invited person otherwise, and the token
@@ -336,5 +350,7 @@ async def update_membership(
         aggregate_id=str(membership_id),
     )
 
-    row = (await db.execute(text(f"{_SELECT} WHERE m.id = :id"), {"id": membership_id})).first()
+    row = (
+        await db.execute(text(f"{_SELECT} WHERE m.id = :id {_GROUP_BY}"), {"id": membership_id})
+    ).first()
     return _to_out(row)
