@@ -3064,11 +3064,52 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           PASS. `e2e_exports.py` (incidents) re-run afterward on the same rebuilt
           container - still full PASS, no regression from the shared `csense_shared.
           exports` package changes.
-  - [ ] **Still deliberately scoped**: audit events and camera health history exports
-        remain unbuilt - the same mechanism would cover them, still just a new
-        `export_type` and query function each. No Developer Console or Customer CRM UI
-        for triggering/downloading *any* export type yet - fully usable and exercised via
-        the API and both e2e scripts.
+  - [x] **2026-09-17: audit-events export added**, closing this line's remaining scope
+        except camera health history (no analogous export need identified for it yet -
+        left unbuilt, not silently dropped). `POST /api/v1/tenant/exports/audit-events`,
+        same mechanism, filter vocabulary mirrors `audit.list_audit_events`'s own
+        (`action`/`target_type`/`outcome`/`since`/`until`) exactly, `actor_display_name`
+        (the friendly-name join added to the audit endpoints themselves) carried through
+        into the CSV since an export is read by a human after the fact - exactly the case
+        that join was built for.
+    - [x] **A real permission question this export type raised that incidents/detections
+          never had to answer, investigated rather than assumed**: `list_exports`/
+          `get_export` read across every export type in one shared place, gated only on
+          `incident.read` before this. A first draft assumed `audit.read` was
+          `tenant_owner`-only (misreading `app.api.audit`'s own docstring - it contrasts
+          the *customer* audience's `tenant_owner` against the *platform* audience's
+          `platform_admin`, not against `tenant_member` within the customer audience) and
+          built a per-export-type permission gate (`_EXPORT_TYPE_PERMISSION`) on that
+          basis. **A real query against the live `role_permissions` table caught the
+          mistake before it shipped as a false claim**: `tenant_member` currently holds
+          both `incident.read` and `audit.read`, so there is no live gap between the
+          export types today. The gate is kept anyway - real correctness insurance for a
+          divergence that doesn't exist *yet*, not a fix for one that does, and every
+          comment claiming otherwise was corrected rather than left standing.
+    - [x] 7 new unit tests (`backend/tests/test_exports_audit_events.py`, mirroring the
+          other two export modules' own structure), alongside the original 15 (6
+          incidents + 9 detections), all still passing - no regression.
+    - [x] **Verified for real, against the live stack**: `scripts/e2e_exports_audit_events.py`
+          - a real `tenant.created` event (registration) and a real `membership.invite`
+            event (a real invite call, not seeded) exported and downloaded correctly with
+            real actor names joined in; an `action` filter narrows correctly; **a real,
+            directly-seeded `tenant_member` (psycopg, a real bcrypt hash, a real active
+            membership) genuinely succeeds** at requesting and completing this export,
+            proving the "no live gap" finding above against actual behavior rather than
+            leaving it as a code comment; a second, unrelated tenant gets a 404 for this
+            tenant's job id (RLS). Full PASS - and the original `e2e_exports.py`/
+            `e2e_exports_detections.py` both re-run afterward on the same rebuilt
+            container, still full PASS, no regression from the shared permission-mapping
+            change. A first version of this script wrongly asserted a `camera.create`
+            audit row and a refused member - both corrected after checking, respectively,
+            which endpoints actually call `record_audit_and_outbox` (`cameras.py`/
+            `sites.py` don't) and the real role-permission grant, rather than shipping
+            assumptions the app itself disproved.
+    - [ ] **Still deliberately scoped**: camera health history export remains unbuilt - the
+          same mechanism would cover it too, still just a new `export_type` and query
+          function. No Developer Console or Customer CRM UI for triggering/downloading
+          *any* export type yet - fully usable and exercised via the API and all three
+          e2e scripts.
 - [x] License grace/restriction + renewal flow
   - [x] `csense_shared.licensing.lifecycle` (new): `sync_license_status` computes and
         persists `active -> grace -> expired` purely against `expires_at`/`grace_ends_at`
