@@ -3,11 +3,20 @@ tenant_viewer (strictly read-only) and tenant_operator (day-to-day operations - 
 and rule management, incident triage - without user/settings/security-policy control).
 
 No new permission codes: every grant below is an existing permissions row (site.read,
-zone.read, camera.read, camera.view_live, camera.manage, camera.probe, rule.read,
-rule.manage, incident.read, incident.acknowledge, incident.assign, audit.read - see
-migrations 0002/0010 and the camera/zone/rule permission migrations for where each was
-first added). This migration only adds `roles` + `role_permissions` rows, following the
-exact idempotent pattern 0002/0010/0037 already established.
+zone.read, camera.read, camera.create, camera.view_live, camera.manage, camera.probe,
+rule.read, rule.manage, incident.read, incident.acknowledge, incident.assign, audit.read
+- see migrations 0002/0010 and the camera/zone/rule permission migrations for where each
+was first added). This migration only adds `roles` + `role_permissions` rows, following
+the exact idempotent pattern 0002/0010/0037 already established.
+
+`tenant_operator` includes `camera.create` alongside `camera.manage`, not just the
+latter: the design decision this migration implements states operators can
+"add/reconfigure cameras" as part of day-to-day operations, and `camera.create` (add a
+new camera, migration 0010) is a distinct permission from `camera.manage` (edit an
+existing one, migration 0021) - `camera.manage` alone lets an operator reconfigure a
+camera that already exists but 403s on POST /api/v1/tenant/cameras itself, which doesn't
+match "add cameras". Caught by scripts/e2e_finer_roles.py Step 5 actually calling that
+endpoint as a real tenant_operator token, not just inspecting the JWT claim.
 
 The resulting hierarchy: tenant_viewer (read-only) is a strict subset of tenant_member
 (adds incident triage), which is a strict subset of tenant_operator (adds camera/rule
@@ -41,9 +50,9 @@ _NEW_ROLES: list[tuple[str, str, list[str]]] = [
         "Day-to-day operations: camera and rule management, live view, incident triage - "
         "without user, settings, or security-policy control.",
         [
-            "site.read", "zone.read", "camera.read", "camera.view_live", "camera.manage",
-            "camera.probe", "rule.read", "rule.manage", "incident.read", "incident.acknowledge",
-            "incident.assign", "audit.read",
+            "site.read", "zone.read", "camera.read", "camera.create", "camera.view_live",
+            "camera.manage", "camera.probe", "rule.read", "rule.manage", "incident.read",
+            "incident.acknowledge", "incident.assign", "audit.read",
         ],
     ),
 ]
