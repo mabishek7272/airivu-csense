@@ -3708,11 +3708,34 @@ first pass (cookie-based refresh, exact DTO shapes) carried forward into the rew
         flakiness this session hit repeatedly), driven with a real Playwright script
         logging in as the real Abelamm pilot-tenant account and screenshotting the
         rendered login page and dashboard - not a static render or a design-tool preview.
-  - [~] **Page-specific layouts not yet done**: the Incidents page's card treatment
-        (evidence-thumbnail scan-sweep, severity chip, sparkline), the Dashboard
-        telemetry rail, and the full Incident Detail page still use their pre-redesign
-        layouts under the new tokens - named explicitly rather than silently left
-        looking "redesigned" when only the shell and colours changed.
+  - [~] **2026-09-17: Dashboard telemetry rail scoped down to what real data actually
+        supports, and built.** `Dashboard.dc.html`'s own mockup wants a live camera wall
+        (real thumbnails), a 24h-detections sparkline, and a "core budget" ring gauge -
+        checked directly against the real `GET /api/v1/tenant/dashboard` response
+        (`sites_count`/`cameras_count`/`incidents_open_count`/`incidents_total_count`/
+        `team_members_count` only) before building anything: none of those three exist as
+        real data today, and no time-bucketed detections-count endpoint or per-camera
+        live-thumbnail path exists to build them against honestly. Built the one rail
+        element real data already supports instead - a "Recent activity" panel reading
+        the real `audit_events` history (the same friendly `actor_display_name` join just
+        added to the audit endpoints themselves, since an activity feed is read by a
+        human after the fact, exactly that join's use case), styled to the design
+        system's own instrument-panel language (mono label, hairline-separated rows,
+        relative time, a red rail on a `failure`-outcome row). `listAuditEvents`'s CRM
+        client gained a `limit` param (the backend already supported it; nothing in the
+        frontend had exposed it) rather than fetching more rows than the panel shows.
+  - [x] Verified for real: `tsc`/`eslint`/`vite build` all clean; the rebuilt
+        `customer-crm` container's real dashboard, screenshotted via Playwright against a
+        real authenticated session (the real Abelamm tenant), shows real recorded history
+        - `Abelamm · tenant.created`, `Abelamm · pipeline.assignment.create`,
+        `system · detection_rule.create`, `system · user.password_reset`,
+        `pipeline · incident.created` - not placeholder rows, with real relative
+        timestamps ("3 days ago", "last week") and a working "View full audit log" link
+        to `/audit`.
+  - [ ] **Still not done, correctly scoped out rather than faked**: the Incidents page's
+        card treatment (evidence-thumbnail scan-sweep, severity chip, sparkline), the
+        live camera wall, and the full Incident Detail page redesign still use their
+        pre-redesign layouts under the new tokens.
 
 - [x] **2026-09-14: "Technical Atmosphere" theme applied to the mobile app** (same
       token-swap approach used for `frontend/customer-crm` directly above), plus the

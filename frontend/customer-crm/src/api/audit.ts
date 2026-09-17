@@ -25,12 +25,14 @@ export function listAuditEvents(params: {
   target_type?: string;
   outcome?: string;
   cursor?: string;
+  limit?: number;
 } = {}) {
   const search = new URLSearchParams();
   if (params.action) search.set("action", params.action);
   if (params.target_type) search.set("target_type", params.target_type);
   if (params.outcome) search.set("outcome", params.outcome);
   if (params.cursor) search.set("cursor", params.cursor);
+  if (params.limit) search.set("limit", String(params.limit));
   const qs = search.toString();
   return apiFetch<AuditEventPage>(`/api/v1/tenant/audit-events${qs ? `?${qs}` : ""}`);
 }
