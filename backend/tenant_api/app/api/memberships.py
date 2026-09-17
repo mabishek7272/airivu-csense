@@ -5,10 +5,19 @@ The schema for this (`memberships`, `status: invited/active/suspended/revoked`,
 API built against it. One permission, `membership.manage`, `tenant_owner`-only - this is
 identity/access control, the thing every other permission is downstream of.
 
-**Site scopes: `all`/`none` only.** `selected` (per-site scoping via
-`membership_resource_scopes`) is real schema, deliberately not wired up here - it needs a
-real multi-site picker UI this pass doesn't build. Requesting it is refused with a clear
-reason, not silently downgraded to `none`.
+**All three site scopes are wired up and real.** `all`/`selected`/`none` are all accepted
+by both `invite_member` and `update_membership`; `selected` writes real rows to
+`membership_resource_scopes` (see `_replace_site_scope`). `selected` requires a non-empty
+`site_ids` list - 422 `selected_scope_needs_sites` otherwise - and every id must be a real,
+non-deleted site in this tenant - 422 `unknown_site` otherwise. Each write is a full
+replace of that membership's site scope rows, not a diff, same as how `role_name`/`status`
+are always full replacements in this same endpoint.
+
+**What's still missing is the picker UI, not the API.** Nothing in the invite/edit dialog
+yet lets an owner actually choose sites - that's a separate, later task in the same plan
+(`docs/superpowers/plans/2026-09-17-licensing-rbac-reseller-features.md`, Feature A Task
+6). Until that lands, a caller wanting `selected` scope has to pass `site_ids` directly
+against the API.
 
 **The zero-owners lockout guard**: nothing else in this schema stops a tenant revoking or
 demoting its last active `tenant_owner`, which would lock the tenant out of its own
