@@ -13,11 +13,13 @@ non-deleted site in this tenant - 422 `unknown_site` otherwise. Each write is a 
 replace of that membership's site scope rows, not a diff, same as how `role_name`/`status`
 are always full replacements in this same endpoint.
 
-**What's still missing is the picker UI, not the API.** Nothing in the invite/edit dialog
-yet lets an owner actually choose sites - that's a separate, later task in the same plan
-(`docs/superpowers/plans/2026-09-17-licensing-rbac-reseller-features.md`, Feature A Task
-6). Until that lands, a caller wanting `selected` scope has to pass `site_ids` directly
-against the API.
+**The picker UI has shipped too.** `TeamPage.tsx`'s `InviteDialog` has a real site
+multi-select (a chip-row checkbox list, loaded from `listSites()`) that lets an owner
+choose sites for `selected` scope directly in the invite dialog - this was the last piece
+of `docs/superpowers/plans/2026-09-17-licensing-rbac-reseller-features.md`, Feature A Task
+6. The membership list endpoint (`GET /memberships`) also reads real `site_ids` back per
+member now, not just accepting them on write, so the UI can reflect actual scope rather
+than only setting it blind.
 
 **The zero-owners lockout guard**: nothing else in this schema stops a tenant revoking or
 demoting its last active `tenant_owner`, which would lock the tenant out of its own

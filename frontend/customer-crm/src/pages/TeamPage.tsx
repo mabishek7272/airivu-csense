@@ -162,7 +162,7 @@ export function TeamPage() {
                   <td>
                     <MembershipStatusBadge status={member.status} />
                   </td>
-                  <td className="muted">{member.site_scope_mode === "all" ? "All sites" : "None"}</td>
+                  <td className="muted">{scopeLabel(member)}</td>
                   <td className="row-actions">
                     {member.status === "active" && (
                       <button
@@ -234,6 +234,16 @@ export function TeamPage() {
       />
     </Layout>
   );
+}
+
+/** Scope column text for a member's row. "selected" shows a count, not names - this table
+ *  doesn't otherwise fetch the site list (only the invite dialog does, for its picker),
+ *  and a per-row site-name lookup isn't worth the extra fetch just for this column. */
+function scopeLabel(member: Membership): string {
+  if (member.site_scope_mode === "all") return "All sites";
+  if (member.site_scope_mode === "none") return "No sites";
+  const count = member.site_ids.length;
+  return `${count} site${count === 1 ? "" : "s"}`;
 }
 
 function MembershipStatusBadge({ status }: { status: Membership["status"] }) {
