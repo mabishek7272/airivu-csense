@@ -106,6 +106,65 @@ async def list_child_tenants(
     ]
 
 
+class ChildTenantRollupOut(BaseModel):
+    tenant_id: str
+    display_name: str
+    tenant_status: str
+    site_count: int
+    camera_count: int
+    active_incident_count: int
+    license_status: str | None
+
+
+class RollupSummaryOut(BaseModel):
+    child_tenant_count: int
+    total_sites: int
+    total_cameras: int
+    total_active_incidents: int
+    tenants: list[ChildTenantRollupOut]
+
+
+@router.get("/rollup", response_model=RollupSummaryOut)
+async def get_child_tenant_rollup(
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> RollupSummaryOut:
+    """Aggregate counts across every active child tenant - the real cross-RLS-boundary
+    read _LIST_SQL's own docstring explains this endpoint's sibling (list_child_tenants)
+    deliberately avoids. reseller_child_tenant_rollup() (migration 0056) is the narrow,
+    parameterized SECURITY DEFINER function built for exactly this - see its own
+    docstring in that migration for why an ordinary RLS-scoped query can't do this at
+    all (it would return every child tenant with a real count of zero, silently)."""
+    require_permission(context, "reseller.view_rollup")
+    parent_organization_id = await _require_reseller_organization(db, context.tenant_id)
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT tenant_id, display_name, tenant_status, site_count, camera_count, "
+                "active_incident_count, license_status "
+                "FROM reseller_child_tenant_rollup(:parent_id)"
+            ),
+            {"parent_id": parent_organization_id},
+        )
+    ).all()
+
+    tenants = [
+        ChildTenantRollupOut(
+            tenant_id=str(r[0]), display_name=r[1], tenant_status=r[2],
+            site_count=r[3], camera_count=r[4], active_incident_count=r[5], license_status=r[6],
+        )
+        for r in rows
+    ]
+    return RollupSummaryOut(
+        child_tenant_count=len(tenants),
+        total_sites=sum(t.site_count for t in tenants),
+        total_cameras=sum(t.camera_count for t in tenants),
+        total_active_incidents=sum(t.active_incident_count for t in tenants),
+        tenants=tenants,
+    )
+
+
 class CreateChildTenantIn(BaseModel):
     organization_name: str = Field(min_length=2, max_length=200)
     owner_email: EmailStr
