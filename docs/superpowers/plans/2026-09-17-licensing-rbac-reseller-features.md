@@ -2840,7 +2840,8 @@ def upgrade() -> None:
                 (SELECT count(*) FROM cameras c WHERE c.tenant_id = t.id AND c.deleted_at IS NULL),
                 (
                     SELECT count(*) FROM incidents i
-                    WHERE i.tenant_id = t.id AND i.status NOT IN ('closed', 'dismissed')
+                    WHERE i.tenant_id = t.id
+                      AND i.status IN ('open', 'acknowledged', 'investigating', 'escalated')
                 ),
                 (
                     SELECT l.status::text FROM licenses l
@@ -2869,13 +2870,16 @@ def downgrade() -> None:
     op.execute("DELETE FROM permissions WHERE code = 'reseller.view_rollup'")
 ```
 
-**Note on the real incident-status values used above** (`'closed', 'dismissed'`): verify
-these against `incidents.status`'s actual enum values at implementation time (grep
-`VALID_STATUSES`/`ACTIVE_STATUSES` in `backend/tenant_api/app/api/incidents.py`, already
-referenced in that file's own `list_incidents` — reuse the exact same "active" set that
-endpoint's own `status=active` query param already resolves to, rather than
-re-guessing it here, so the rollup's "active incidents" count means the same thing the
-rest of the product already means by that word).
+**Note on the real incident-status values used above (already corrected in the code
+block, this note records why)**: an earlier draft of this migration guessed `status NOT
+IN ('closed', 'dismissed')`. Verified against `backend/tenant_api/app/api/incidents.py`
+when this task actually ran — `ACTIVE_STATUSES = ("open", "acknowledged",
+"investigating", "escalated")`, and the real `incidents.status` Postgres enum
+(migration 0009) is `["open", "acknowledged", "investigating", "escalated",
+"resolved", "dismissed"]` — **there is no `'closed'` value in the enum at all** (the
+guessed literal would have failed outright, `invalid input value for enum
+incident_status`), and the real "active" set also deliberately excludes `'resolved'`.
+The code block above already reflects the corrected, verified set.
 
 - [ ] **Step 2: Run the migration**
 
