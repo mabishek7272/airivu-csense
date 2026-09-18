@@ -231,6 +231,44 @@ async def _load_entitlements(db: AsyncSession, *, license_id: uuid.UUID) -> dict
     return entitlements
 
 
+async def _provision_entitlements(
+    db: AsyncSession, *, tenant_id: uuid.UUID, license_id: uuid.UUID,
+    merged: dict[str, EntitlementSpec], starts_at: dt.datetime, expires_at: dt.datetime | None,
+) -> None:
+    """Writes license_entitlements + quota_ledgers rows for a license - shared by
+    issue_license (a brand-new license) and change_plan (a license superseding an old
+    one). Always starts quota_ledgers fresh (consumed_value defaults to 0 via the
+    column's own server default) - a deliberate choice, not an oversight: usage counted
+    against a different plan's terms should not silently carry over to a new one."""
+    for code, spec in merged.items():
+        await db.execute(
+            text(
+                "INSERT INTO license_entitlements "
+                "(tenant_id, license_id, entitlement_code, value_type, limit_numeric, enabled_boolean, value_json) "
+                "VALUES (:tenant_id, :license_id, :code, :value_type, :limit_numeric, :enabled_boolean, "
+                "CAST(:value_json AS jsonb))"
+            ),
+            {
+                "tenant_id": tenant_id, "license_id": license_id, "code": code,
+                "value_type": spec.value_type, "limit_numeric": spec.limit_numeric,
+                "enabled_boolean": spec.enabled_boolean,
+                "value_json": json.dumps(spec.value_json) if spec.value_json is not None else None,
+            },
+        )
+        if spec.value_type == "limit_numeric" and spec.limit_numeric is not None:
+            await db.execute(
+                text(
+                    "INSERT INTO quota_ledgers "
+                    "(tenant_id, license_id, quota_code, period_start, period_end, limit_value) "
+                    "VALUES (:tenant_id, :license_id, :code, :period_start, :period_end, :limit_value)"
+                ),
+                {
+                    "tenant_id": tenant_id, "license_id": license_id, "code": code,
+                    "period_start": starts_at, "period_end": expires_at, "limit_value": spec.limit_numeric,
+                },
+            )
+
+
 @router.post("/licenses", response_model=LicenseOut, status_code=201)
 async def issue_license(
     body: IssueLicenseIn,
@@ -312,33 +350,10 @@ async def issue_license(
     ).first()
     license_id, starts_at = license_id[0], license_id[1]
 
-    for code, spec in merged.items():
-        await db.execute(
-            text(
-                "INSERT INTO license_entitlements "
-                "(tenant_id, license_id, entitlement_code, value_type, limit_numeric, enabled_boolean, value_json) "
-                "VALUES (:tenant_id, :license_id, :code, :value_type, :limit_numeric, :enabled_boolean, "
-                "CAST(:value_json AS jsonb))"
-            ),
-            {
-                "tenant_id": body.tenant_id, "license_id": license_id, "code": code,
-                "value_type": spec.value_type, "limit_numeric": spec.limit_numeric,
-                "enabled_boolean": spec.enabled_boolean,
-                "value_json": json.dumps(spec.value_json) if spec.value_json is not None else None,
-            },
-        )
-        if spec.value_type == "limit_numeric" and spec.limit_numeric is not None:
-            await db.execute(
-                text(
-                    "INSERT INTO quota_ledgers "
-                    "(tenant_id, license_id, quota_code, period_start, period_end, limit_value) "
-                    "VALUES (:tenant_id, :license_id, :code, :period_start, :period_end, :limit_value)"
-                ),
-                {
-                    "tenant_id": body.tenant_id, "license_id": license_id, "code": code,
-                    "period_start": starts_at, "period_end": body.expires_at, "limit_value": spec.limit_numeric,
-                },
-            )
+    await _provision_entitlements(
+        db, tenant_id=body.tenant_id, license_id=license_id,
+        merged=merged, starts_at=starts_at, expires_at=body.expires_at,
+    )
 
     await record_audit_and_outbox(
         db,
