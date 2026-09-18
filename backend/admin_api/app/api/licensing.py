@@ -491,3 +491,133 @@ async def renew_license(
         grace_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
         entitlements=entitlements,
     )
+
+
+class ChangeLicensePlanIn(BaseModel):
+    new_plan_code: str
+    expires_at: dt.datetime | None = None
+    grace_days: int = Field(default=DEFAULT_GRACE_DAYS, ge=0, le=365)
+    entitlement_overrides: dict[str, EntitlementSpec] = Field(default_factory=dict)
+
+
+@router.post("/licenses/{license_id}/change-plan", response_model=LicenseOut)
+async def change_license_plan(
+    license_id: uuid.UUID,
+    body: ChangeLicensePlanIn,
+    request: Request,
+    context: PlatformContext = Depends(current_platform_context),
+    db: AsyncSession = Depends(platform_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> LicenseOut:
+    """Moves a tenant from its current plan to a different one without hand-editing the
+    database - the real gap issue_license's own refusal names ("Upgrade/downgrade/
+    replace is a real, separate flow... not built this pass"). Supersedes rather than
+    mutates in place: the existing license row is marked revoked (a real terminal status
+    this schema already has - see the licenses table's own status enum) and a brand-new
+    license row is created under the new plan, provisioned exactly like a fresh
+    issue_license call (_provision_entitlements). Quota usage does not carry over - see
+    _provision_entitlements's own docstring for why that's a deliberate choice."""
+    require_permission(context, "license.manage")
+
+    if not await has_recent_step_up(
+        request.app.state.redis, settings, scope=STEP_UP_SCOPE, principal_id=context.developer_user_id
+    ):
+        raise ApiError(
+            status_code=403, code="step_up_required",
+            message="Changing a license's plan requires a recent MFA verification. "
+            "Call POST /api/v1/admin/auth/mfa/verify, then retry.",
+        )
+
+    old_row = (
+        await db.execute(
+            text(
+                "SELECT l.tenant_id, l.organization_id, l.status::text, p.code "
+                "FROM licenses l JOIN license_plans p ON p.id = l.plan_id "
+                "WHERE l.id = :id FOR UPDATE"
+            ),
+            {"id": license_id},
+        )
+    ).first()
+    if old_row is None:
+        raise NotFoundError("No such license.")
+    tenant_id, organization_id, old_status, old_plan_code = old_row
+    if old_status == "revoked":
+        raise ConflictError("A revoked license cannot be changed - issue a new one instead.")
+    if old_plan_code == body.new_plan_code:
+        raise ConflictError(f"This tenant is already on plan '{body.new_plan_code}'.")
+
+    new_plan_row = (
+        await db.execute(
+            text("SELECT id, default_entitlements FROM license_plans WHERE code = :code AND status = 'active'"),
+            {"code": body.new_plan_code},
+        )
+    ).first()
+    if new_plan_row is None:
+        raise NotFoundError(f"No active license plan with code '{body.new_plan_code}'.")
+    new_plan_id, default_entitlements = new_plan_row
+
+    await db.execute(
+        text("UPDATE licenses SET status = 'revoked', version = version + 1, updated_at = now() WHERE id = :id"),
+        {"id": license_id},
+    )
+
+    merged: dict[str, EntitlementSpec] = {
+        code: EntitlementSpec(**spec) for code, spec in default_entitlements.items()
+    }
+    merged.update(body.entitlement_overrides)
+    grace_ends_at = (
+        body.expires_at + dt.timedelta(days=body.grace_days) if body.expires_at is not None else None
+    )
+
+    new_license_row = (
+        await db.execute(
+            text(
+                "INSERT INTO licenses "
+                "(tenant_id, organization_id, plan_id, parent_license_id, expires_at, grace_ends_at) "
+                "VALUES (:tenant_id, :organization_id, :plan_id, :parent_license_id, :expires_at, :grace_ends_at) "
+                "RETURNING id, starts_at"
+            ),
+            {
+                "tenant_id": tenant_id, "organization_id": organization_id,
+                "plan_id": new_plan_id, "parent_license_id": license_id,
+                "expires_at": body.expires_at, "grace_ends_at": grace_ends_at,
+            },
+        )
+    ).first()
+    new_license_id, starts_at = new_license_row[0], new_license_row[1]
+
+    await _provision_entitlements(
+        db, tenant_id=tenant_id, license_id=new_license_id,
+        merged=merged, starts_at=starts_at, expires_at=body.expires_at,
+    )
+
+    await record_audit_and_outbox(
+        db,
+        tenant_id=tenant_id,
+        actor_type="platform_developer",
+        actor_id=str(context.developer_user_id),
+        action="license.change_plan",
+        outcome="success",
+        target_type="license",
+        target_id=str(new_license_id),
+        reason=f"Changed plan from '{old_plan_code}' to '{body.new_plan_code}'",
+        before_patch={"license_id": str(license_id), "plan_code": old_plan_code},
+        after_patch={"license_id": str(new_license_id), "plan_code": body.new_plan_code},
+        correlation_id=uuid.UUID(context.correlation_id) if context.correlation_id else None,
+        event_type="license.plan_changed.v1",
+        event_payload={
+            "old_license_id": str(license_id), "new_license_id": str(new_license_id),
+            "tenant_id": str(tenant_id), "old_plan_code": old_plan_code, "new_plan_code": body.new_plan_code,
+        },
+        aggregate_type="license",
+        aggregate_id=str(new_license_id),
+    )
+
+    entitlements = await _load_entitlements(db, license_id=new_license_id)
+    return LicenseOut(
+        id=str(new_license_id), tenant_id=str(tenant_id), plan_code=body.new_plan_code,
+        status="active", starts_at=starts_at.isoformat(),
+        expires_at=body.expires_at.isoformat() if body.expires_at else None,
+        grace_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
+        entitlements=entitlements,
+    )
