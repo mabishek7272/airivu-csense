@@ -60,6 +60,23 @@ export interface RenewLicenseInput {
   grace_days?: number;
 }
 
+export interface ChangeLicensePlanInput {
+  new_plan_code: string;
+  expires_at?: string;
+  grace_days?: number;
+  entitlement_overrides?: Record<string, EntitlementSpec>;
+}
+
+/** Supersedes the tenant's current license with a new one under a different plan - the
+ *  real "no more manual DB edits" path issueLicense's own refusal (an already-active
+ *  tenant can't be re-issued) names as missing. Same step-up gate as issueLicense. */
+export function changeLicensePlan(licenseId: string, body: ChangeLicensePlanInput) {
+  return apiFetch<License>(`/api/v1/admin/licenses/${licenseId}/change-plan`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** Extends an existing license's term and restores it to active - the way out of
  *  grace/expired/suspended (not revoked, a deliberate terminal state). Same step-up
  *  gate as issueLicense. No dedicated dialog yet (API-only this pass, same deferral

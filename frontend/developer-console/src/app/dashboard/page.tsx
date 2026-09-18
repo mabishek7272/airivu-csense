@@ -7,6 +7,7 @@ import type { CreatedOrganization } from "@/api/organizations";
 import { listOrganizations } from "@/api/organizations";
 import type { License, LicensePlan } from "@/api/licensing";
 import { listLicensePlans, listLicenses } from "@/api/licensing";
+import { ChangeLicensePlanDialog } from "@/components/ChangeLicensePlanDialog";
 import { CreateLicensePlanDialog } from "@/components/CreateLicensePlanDialog";
 import { CreateOrganizationDialog } from "@/components/CreateOrganizationDialog";
 import { IssueLicenseDialog } from "@/components/IssueLicenseDialog";
@@ -38,6 +39,7 @@ export default function DashboardPage() {
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [issuingLicense, setIssuingLicense] = useState(false);
+  const [changingPlan, setChangingPlan] = useState<License | null>(null);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -72,6 +74,11 @@ export default function DashboardPage() {
   function handleLicenseIssued(license: License) {
     licenses.mutate((current) => [...(current ?? []), license]);
     notify.success("License issued");
+  }
+
+  function handlePlanChanged(license: License) {
+    licenses.mutate((current) => (current ?? []).map((l) => (l.id === license.id ? license : l)));
+    notify.success("License plan changed");
   }
 
   return (
@@ -181,7 +188,7 @@ export default function DashboardPage() {
       </div>
 
       {licenses.loading ? (
-        <LoadingRows rows={2} columns={4} />
+        <LoadingRows rows={2} columns={5} />
       ) : licenses.error && !licenses.data ? (
         <FailureState error={licenses.error} online={online} onRetry={licenses.reload} entity="licenses" />
       ) : licenses.data && licenses.data.length === 0 ? (
@@ -198,6 +205,7 @@ export default function DashboardPage() {
                 <th scope="col">Plan</th>
                 <th scope="col">Status</th>
                 <th scope="col">Starts</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -209,6 +217,11 @@ export default function DashboardPage() {
                     <span className="pill">{license.status}</span>
                   </td>
                   <td>{new Date(license.starts_at).toLocaleDateString()}</td>
+                  <td>
+                    <button type="button" disabled={!online} onClick={() => setChangingPlan(license)}>
+                      Change plan
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -224,6 +237,14 @@ export default function DashboardPage() {
           plans={plans.data ?? []}
           onClose={() => setIssuingLicense(false)}
           onIssued={handleLicenseIssued}
+        />
+      )}
+      {changingPlan && (
+        <ChangeLicensePlanDialog
+          license={changingPlan}
+          plans={plans.data ?? []}
+          onClose={() => setChangingPlan(null)}
+          onChanged={handlePlanChanged}
         />
       )}
     </Layout>
