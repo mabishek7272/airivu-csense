@@ -218,13 +218,18 @@ def _to_rule(row) -> RuleOut:
     )
 
 
-async def _load(db: AsyncSession, rule_id: uuid.UUID) -> RuleOut:
+async def _load(db: AsyncSession, rule_id: uuid.UUID, context: TenantContext) -> RuleOut:
     row = (
         await db.execute(text(_SELECT + " WHERE r.id = :id"), {"id": rule_id})
     ).first()
     if row is None:
         raise NotFoundError("No such rule.")
-    return _to_rule(row)
+    rule = _to_rule(row)
+    # Same "not found covers both missing and out-of-scope" shape as
+    # cameras.py's load_camera / zones.py's _load.
+    if not context.can_access_site(rule.site_id):
+        raise NotFoundError("No such rule.")
+    return rule
 
 
 async def _check_references(
@@ -233,6 +238,7 @@ async def _check_references(
     site_id: uuid.UUID,
     camera_id: uuid.UUID | None,
     zone_id: uuid.UUID | None,
+    context: TenantContext,
 ) -> None:
     """Confirms the site, camera and zone exist and belong together.
 
@@ -243,6 +249,12 @@ async def _check_references(
     if (
         await db.execute(text("SELECT 1 FROM sites WHERE id = :id"), {"id": site_id})
     ).first() is None:
+        raise NotFoundError("No such site.")
+    if not context.can_access_site(site_id):
+        # Same "not found covers both" shape - a selected-scoped member pointing a new
+        # or updated rule at a site outside their scope sees an identical response to
+        # that site not existing, rather than a confusing 201/200 followed by a 404 the
+        # moment the response tries to load the rule back.
         raise NotFoundError("No such site.")
 
     if camera_id is not None:
@@ -322,7 +334,7 @@ async def get_rule(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> RuleOut:
     require_permission(context, "rule.read")
-    return await _load(db, rule_id)
+    return await _load(db, rule_id, context)
 
 
 @router.post("", response_model=RuleOut, status_code=201)
@@ -333,7 +345,7 @@ async def create_rule(
 ) -> RuleOut:
     require_permission(context, "rule.manage")
     await _check_references(
-        db, site_id=body.site_id, camera_id=body.camera_id, zone_id=body.zone_id
+        db, site_id=body.site_id, camera_id=body.camera_id, zone_id=body.zone_id, context=context
     )
 
     rule_id = (
@@ -380,7 +392,7 @@ async def create_rule(
             "scope": "camera" if body.camera_id else "site",
         },
     )
-    return await _load(db, rule_id)
+    return await _load(db, rule_id, context)
 
 
 @router.patch("/{rule_id}", response_model=RuleOut)
@@ -391,7 +403,7 @@ async def update_rule(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> RuleOut:
     require_permission(context, "rule.manage")
-    existing = await _load(db, rule_id)
+    existing = await _load(db, rule_id, context)
 
     changes = body.model_dump(exclude_unset=True)
     if not changes:
@@ -402,6 +414,7 @@ async def update_rule(
         site_id=existing.site_id,
         camera_id=changes.get("camera_id", existing.camera_id),
         zone_id=changes.get("zone_id", existing.zone_id),
+        context=context,
     )
 
     assignments = []
@@ -433,7 +446,7 @@ async def update_rule(
         "detection_rule_updated",
         extra={"rule_id": str(rule_id), "fields": sorted(changes)},
     )
-    return await _load(db, rule_id)
+    return await _load(db, rule_id, context)
 
 
 @router.delete("/{rule_id}", status_code=204)
@@ -450,7 +463,7 @@ async def delete_rule(
     option and it is one field away.
     """
     require_permission(context, "rule.manage")
-    rule = await _load(db, rule_id)
+    rule = await _load(db, rule_id, context)
 
     await db.execute(text("DELETE FROM detection_rules WHERE id = :id"), {"id": rule_id})
     # "name" is reserved on LogRecord (it is the logger's own name) - passing it in

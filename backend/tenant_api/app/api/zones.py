@@ -166,13 +166,20 @@ def _to_zone(row) -> ZoneOut:
     )
 
 
-async def _load(db: AsyncSession, zone_id: uuid.UUID) -> ZoneOut:
+async def _load(db: AsyncSession, zone_id: uuid.UUID, context: TenantContext) -> ZoneOut:
     row = (
         await db.execute(text(_SELECT + " WHERE z.id = :id"), {"id": zone_id})
     ).first()
     if row is None:
         raise NotFoundError("No such zone.")
-    return _to_zone(row)
+    zone = _to_zone(row)
+    # Same "not found covers both missing and out-of-scope" shape cameras.py's
+    # load_camera already established - a selected-scoped member fetching, updating, or
+    # deleting a real zone outside their assigned sites should see the same response as
+    # a genuinely nonexistent one.
+    if not context.can_access_site(zone.site_id):
+        raise NotFoundError("No such zone.")
+    return zone
 
 
 @router.get("", response_model=list[ZoneOut])
@@ -207,7 +214,7 @@ async def get_zone(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> ZoneOut:
     require_permission(context, "zone.read")
-    return await _load(db, zone_id)
+    return await _load(db, zone_id, context)
 
 
 @router.post("", response_model=ZoneOut, status_code=201)
@@ -222,6 +229,12 @@ async def create_zone(
         await db.execute(text("SELECT 1 FROM sites WHERE id = :id"), {"id": body.site_id})
     ).first()
     if site is None:
+        raise NotFoundError("No such site.")
+    if not context.can_access_site(body.site_id):
+        # Same "not found covers both" shape as the check above - a selected-scoped
+        # member creating a zone under a site outside their scope sees an identical
+        # response to that site not existing at all, rather than a confusing 201
+        # followed by a 404 the moment the response tries to load the zone back.
         raise NotFoundError("No such site.")
 
     zone_id = (
@@ -251,7 +264,7 @@ async def create_zone(
         extra={"zone_id": str(zone_id), "points": len(body.polygon),
                "area": round(polygon_area(body.polygon), 4)},
     )
-    return await _load(db, zone_id)
+    return await _load(db, zone_id, context)
 
 
 @router.patch("/{zone_id}", response_model=ZoneOut)
@@ -262,7 +275,7 @@ async def update_zone(
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> ZoneOut:
     require_permission(context, "zone.manage")
-    existing = await _load(db, zone_id)
+    existing = await _load(db, zone_id, context)
 
     changes = body.model_dump(exclude_unset=True)
     if not changes:
@@ -299,7 +312,7 @@ async def update_zone(
                 "area_after": round(polygon_area(changes["polygon"]), 5),
             },
         )
-    return await _load(db, zone_id)
+    return await _load(db, zone_id, context)
 
 
 @router.delete("/{zone_id}", status_code=204)
@@ -317,7 +330,7 @@ async def delete_zone(
     everything the camera can see.
     """
     require_permission(context, "zone.manage")
-    zone = await _load(db, zone_id)
+    zone = await _load(db, zone_id, context)
 
     if zone.rule_count:
         raise ApiError(

@@ -214,6 +214,11 @@ async def get_incident(
     # be used to probe for the existence of other tenants' records.
     if row is None:
         raise NotFoundError("Incident not found.")
+    # Same "not found covers both" shape, now also covering a real incident outside a
+    # selected-scoped member's assigned sites - see sites.py/cameras.py/zones.py/
+    # rules.py's own identical checks.
+    if not context.can_access_site(row[8]):
+        raise NotFoundError("Incident not found.")
 
     events = (
         await db.execute(
@@ -264,6 +269,16 @@ async def _transition(
     reason: str | None,
     resolution_code: str | None = None,
 ) -> dict:
+    # Same "not found covers both" shape get_incident already applies - a
+    # selected-scoped member acknowledging/investigating/resolving/dismissing an
+    # incident outside their assigned sites sees the same response as a genuinely
+    # missing one, checked before any state actually changes.
+    site_row = (
+        await db.execute(text("SELECT site_id FROM incidents WHERE id = :id"), {"id": incident_id})
+    ).first()
+    if site_row is not None and not context.can_access_site(site_row[0]):
+        raise NotFoundError("Incident not found.")
+
     correlation_id = getattr(request.state, "correlation_id", None)
     try:
         previous = await transition_incident(

@@ -162,9 +162,24 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         claims (computed at all 4 token-issuance call sites in `auth.py`), `TenantContext.
         can_access_site()` and a shared `site_scope_sql_filter()` helper
         (`csense_shared/security/site_scope.py`, 8 unit tests) enforce it on
-        `sites`/`cameras`/`zones`/`incidents`/`rules` list endpoints plus single-resource
-        `GET` on sites/cameras (zones/rules/incidents single-item `GET` stays
-        tenant-only - a named, deliberate boundary, not a silent gap). The invite dialog
+        `sites`/`cameras`/`zones`/`incidents`/`rules` list endpoints, single-resource
+        `GET` on all of sites/cameras/zones/rules/incidents, `PATCH`/`DELETE` on
+        zones/rules (via the same shared `_load()` each already funneled through -
+        matching `cameras.py`'s own `load_camera` precedent), incident state transitions
+        (`acknowledge`/`investigate`/`resolve`/`dismiss`, via `_transition`), and even
+        zone/rule *creation* targeting a site outside the caller's scope (refused
+        up front, not a confusing 201 followed by a 404 the moment the response tries
+        to load it back). **What was initially shipped and named as a deliberate
+        boundary (single-item `GET`/mutation on zones/rules/incidents) was closed the
+        same day**, once review pointed out mutation was the more consequential half of
+        that gap - a scoped-out member could otherwise still acknowledge/resolve/
+        dismiss a real incident, or edit/delete a real zone or rule, just by knowing or
+        guessing its UUID. Verified for real:
+        `scripts/e2e_site_scoping_single_item.py` - a `selected`-scoped member's
+        `GET`/`PATCH` on an out-of-scope zone/rule real-404s, creating a zone under an
+        out-of-scope site real-404s, and a real incident (created via `ingest_detection()`,
+        not a fixture) both real-404s on `GET` and on `acknowledge`, with the owner
+        confirmed unaffected throughout. Full PASS. The invite dialog
         (`TeamPage.tsx`) has a real chip-row site picker, matching the existing
         object-class/channel picker pattern elsewhere in the app; the member table now
         shows real per-member site counts instead of a stale "None".
