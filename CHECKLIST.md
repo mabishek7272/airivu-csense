@@ -156,11 +156,50 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         confirms the new member can log in independently, confirms a reused token is
         refused (401), and confirms the lockout guard both blocks and un-blocks correctly
         over real HTTP calls.
-  - [ ] **Deliberately deferred**: `site_scope_mode: selected` (per-site scoping via
-        `membership_resource_scopes` - real schema, no picker UI); finer role granularity
-        than the existing `tenant_owner`/`tenant_member` pair; a separate read permission
-        for members who aren't owners to see their own team roster (today `membership.
-        manage` gates both read and write).
+  - [x] **Per-site membership scoping, wired up for real (2026-09-18)** -
+        `site_scope_mode: selected` (via `membership_resource_scopes`) went from real
+        schema with no consumer to fully enforced: the JWT now carries `ssm`/`sids`
+        claims (computed at all 4 token-issuance call sites in `auth.py`), `TenantContext.
+        can_access_site()` and a shared `site_scope_sql_filter()` helper
+        (`csense_shared/security/site_scope.py`, 8 unit tests) enforce it on
+        `sites`/`cameras`/`zones`/`incidents`/`rules` list endpoints plus single-resource
+        `GET` on sites/cameras (zones/rules/incidents single-item `GET` stays
+        tenant-only - a named, deliberate boundary, not a silent gap). The invite dialog
+        (`TeamPage.tsx`) has a real chip-row site picker, matching the existing
+        object-class/channel picker pattern elsewhere in the app; the member table now
+        shows real per-member site counts instead of a stale "None".
+        **A real, consequential decision made along the way**: `site_scope_mode='none'`
+        means "sees no sites" (confirmed by the invite form's own pre-existing "No sites
+        (assign later)" label) - turning on enforcement was not a no-op for existing
+        data, since every membership until now silently behaved as unrestricted
+        regardless of its stored value. Migration 0055 backfills every currently-active
+        `none`-scoped membership to `all` first (181 real rows on this deployment), so
+        nothing that worked before this shipped silently broke; only new invitations get
+        the real, enforced `none` default going forward. A related latent bug was caught
+        by review and fixed before shipping: a self-registered tenant owner's token
+        claimed `site_scope_mode="all"` but their persisted membership row defaulted to
+        `"none"`, which would have silently locked owners out of their own tenant on
+        their very next login once enforcement went live.
+        Verified for real: `scripts/e2e_site_scoping.py` - a `selected`-scoped member
+        sees only their own site/camera/zone/rule (`incidents` deliberately not
+        independently HTTP-tested here, since it calls the identical, already-unit-tested
+        filter function - see the script's own docstring), a `none`-scoped invite sees
+        zero sites/cameras, the owner has no regression, out-of-scope `GET` real-404s
+        rather than 403ing. Full PASS.
+  - [x] **Finer role granularity (2026-09-18)** - two new fixed system roles,
+        `tenant_viewer` (strictly read-only: site/zone/camera/rule/incident/audit read)
+        and `tenant_operator` (day-to-day ops: adds camera/rule management, live view,
+        incident triage - still no user/settings/security-policy control), slotting into
+        a real hierarchy: `tenant_viewer` ⊂ `tenant_member` ⊂ `tenant_operator` ⊂
+        `tenant_owner`. No new permission codes needed - migration 0054 only grants
+        existing ones. Offered in both the invite dialog and the existing-member role
+        editor (`TeamPage.tsx`). Verified for real: `scripts/e2e_finer_roles.py` -
+        real JWTs decoded and checked for the right permission sets, plus a real HTTP
+        403/201 boundary (a viewer's camera-create call is refused, an operator's
+        succeeds). Full PASS.
+  - [ ] **Still deliberately deferred**: a separate read permission for members who
+        aren't owners to see their own team roster (today `membership.manage` gates both
+        read and write).
 - [~] Reseller relationship + child tenant foundation
   - [x] Schema needed no migration (`organization_relationships`, `organization_type`'s
         `reseller`/`reseller_customer` values - migration 0001); this shipped its first
@@ -200,11 +239,44 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         create children of its own, an ordinary `direct_customer` tenant is refused the
         same way, and the `organization_relationships` row is confirmed by direct query.
         Full PASS.
-  - [ ] **Deliberately deferred, and not silently**: no UI yet for any of this - the two
-        related, still-open CHECKLIST lines below (`Principal Administrator org/license
-        screens`, `Customer guided onboarding`) are exactly where that belongs, not
-        duplicated here. No reseller aggregate rollups (usage/billing across children) -
-        blocked on the licensing/quota item below existing first.
+  - [x] **Reseller aggregate rollup, wired up for real (2026-09-18)** - a real
+        `GET /api/v1/tenant/child-tenants/rollup` (`reseller.view_rollup`, granted to
+        `tenant_owner`) returns genuine per-child-tenant counts (sites, cameras, active
+        incidents, license status) plus tenant-wide totals. This crosses the exact RLS
+        boundary the child-tenant *list* endpoint's own docstring already warned about
+        (`sites`/`cameras`/`incidents` are strictly per-tenant RLS'd, with no exception
+        for "I am this tenant's reseller parent" - an ordinary query under the reseller's
+        own session would return every child tenant with a real count of **zero**,
+        silently, not an error). Migration 0056 adds
+        `reseller_child_tenant_rollup(parent_organization_id)`, a narrow, parameterized
+        `SECURITY DEFINER` function modeled directly on the existing
+        `edge_vpn_pool_snapshot()` (migration 0029) precedent - takes only the caller's
+        own organization id (never an attacker-suppliable child id), returns only counts
+        never row-level detail, and can only ever return tenants the caller is already
+        the authorized `organization_relationships` parent of (the same boundary
+        `_LIST_SQL` already uses). Customer CRM: a real `/child-tenants/rollup` page
+        (`ResellerRollupPage.tsx`, summary tiles + a per-tenant table), nav entry
+        alongside Team - shown unconditionally (a non-reseller sees the backend's real
+        `403 not_a_reseller` rendered through the existing failure-state UI, matching
+        `TeamPage`'s own "the backend enforces, the page doesn't hide itself" convention).
+        **A real bug caught before shipping**: the migration's first draft guessed
+        `status NOT IN ('closed', 'dismissed')` for "active incidents" - `'closed'` isn't
+        a real value in the `incident_status` enum at all (would have failed the
+        migration outright), and the guess would also have miscounted `'resolved'` as
+        active. Corrected to the same `ACTIVE_STATUSES` set `incidents.py`'s own
+        `status=active` query param already uses, so "active incidents" means the same
+        thing everywhere in the product.
+        Verified for real: `scripts/e2e_reseller_rollup.py` - real data (sites, cameras)
+        populated inside two real child tenants under their OWN tenant sessions (never
+        inserted "as the reseller"), then confirmed the rollup's per-tenant counts
+        genuinely match (camera_count=2 and =1 for the two children, not the silent zero
+        a naive cross-tenant query would produce), plus the real `403 not_a_reseller`
+        refusal for a non-reseller caller. Full PASS.
+  - [ ] **Still deliberately deferred, and not silently**: no UI yet for creating a
+        reseller organization itself or its child tenants (belongs to the two related,
+        still-open CHECKLIST lines below - `Principal Administrator org/license
+        screens`, `Customer guided onboarding`); usage/billing rollups (dollars, not
+        counts) stay out of scope, blocked on the licensing/quota item below.
 - [~] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
   - [x] No schema existed for this before now (unlike memberships/reseller) - migration
@@ -247,13 +319,35 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         two cameras with no restriction at all - the regression check. Full PASS (one
         transient flake on a container that had just restarted, not reproduced on retry,
         confirmed correct by both a manual re-check and a full clean second run).
-  - [ ] **Deliberately deferred**: no UI (belongs to the two still-open lines below); no
-        license upgrade/downgrade/supersede flow (a second license for an already-licensed
-        tenant is refused outright, not migrated); no reseller-allocation
-        (`parent_license_id`) flow wired to anything yet - the column exists, nothing
-        issues through it; the two-phase `reserved_value` → `consumed_value` path and
-        `quota_reservations` rows stay unused - real schema for a future long-running
-        create, not needed by the one synchronous flow (`camera.count`) this pass gates.
+  - [x] **Admin-initiated license plan change, wired up for real (2026-09-18)** - the
+        real gap `issue_license`'s own refusal named ("Upgrade/downgrade/replace is a
+        real, separate flow... not built this pass") is closed:
+        `POST /api/v1/admin/licenses/{license_id}/change-plan` (`license.manage`, same
+        step-up MFA gate as `issue_license`/`renew_license`) supersedes an existing
+        license - the old row is marked `revoked` (a real terminal status this schema
+        already had), a brand-new row is created under the new plan and real-provisioned
+        via `_provision_entitlements()` (extracted from `issue_license`'s own inline
+        logic, so both paths share one implementation rather than duplicating it). This
+        also closes the *other* named gap from this same line: the new row's
+        `parent_license_id` genuinely points at the superseded license - the column
+        existed with nothing issuing through it before this shipped. **Quota usage does
+        not carry over to the new license, deliberately** - `quota_ledgers.consumed_value`
+        starts fresh, the same as any brand-new license, so a tenant never inherits usage
+        counted against a different plan's terms; documented in `_provision_entitlements`'s
+        own docstring, not left implicit. Developer Console: a real "Change plan" dialog
+        per license row, modeled directly on the existing `IssueLicenseDialog`'s
+        step-up-then-submit shape. Verified for real:
+        `scripts/e2e_license_change_plan.py` - issues a small-quota plan
+        (`camera.count=2`), confirms a real `402` on the 3rd camera, calls the real
+        change-plan endpoint to move to a larger plan, confirms via direct DB query that
+        the old license row is genuinely `revoked` and the new one is genuinely `active`
+        under the new plan, then confirms the previously-refused 3rd camera now succeeds
+        under the new license's own real `quota_ledgers` row. Full PASS.
+  - [ ] **Still deliberately deferred**: no UI for the two related, still-open lines
+        below (organization/license *creation* screens, guided onboarding); the two-phase
+        `reserved_value` → `consumed_value` path and `quota_reservations` rows stay
+        unused - real schema for a future long-running create, not needed by the one
+        synchronous flow (`camera.count`) this pass gates.
 - [x] Principal Administrator org/license screens (Developer Console)
   - [x] `/dashboard` rebuilt from its Phase 1 placeholder into three real sections:
         Organizations (list + "Create organization" - both `direct_customer` and
