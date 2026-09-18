@@ -179,7 +179,26 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         `GET`/`PATCH` on an out-of-scope zone/rule real-404s, creating a zone under an
         out-of-scope site real-404s, and a real incident (created via `ingest_detection()`,
         not a fixture) both real-404s on `GET` and on `acknowledge`, with the owner
-        confirmed unaffected throughout. Full PASS. The invite dialog
+        confirmed unaffected throughout. Full PASS.
+        **The same gap survived one more spot, caught by re-running old e2e scripts
+        rather than trusting a "pre-existing and unrelated" characterization of their
+        failure (2026-09-18)**: `cameras.py`'s `create_camera` had the identical
+        201-then-404 shape zones/rules' create endpoints were already fixed for - its
+        final line already called the scope-checked `load_camera()`, but nothing
+        checked `can_access_site(body.site_id)` before the `INSERT`, so a scoped-out
+        creator got a request that looked like it succeeded and then 404'd building its
+        own response. Never caught earlier because no e2e script had a scoped-out
+        member create a camera. Fixed the same way as zones/rules: refuse up front.
+        Found because re-running `scripts/e2e_finer_roles.py` (from the earlier
+        role-granularity work) started failing once real site-scope enforcement
+        shipped - its invited operator got the real `none` default and tripped this
+        exact bug; fixed the script itself too (invites with `site_scope_mode="all"`
+        now, since that script's own subject is role permissions, not site scope).
+        `scripts/e2e_reseller.py` was separately failing for an unrelated, genuinely
+        pre-existing reason - its Redis invitation lookup assumed exactly one key would
+        ever be in Redis, which finally broke once this session's many e2e runs left 12
+        stale keys behind; hardened to the same scan-and-match-by-email pattern already
+        used elsewhere. Both scripts verified passing again. The invite dialog
         (`TeamPage.tsx`) has a real chip-row site picker, matching the existing
         object-class/channel picker pattern elsewhere in the app; the member table now
         shows real per-member site counts instead of a stale "None".
