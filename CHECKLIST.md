@@ -3982,10 +3982,35 @@ first pass (cookie-based refresh, exact DTO shapes) carried forward into the rew
         `pipeline · incident.created` - not placeholder rows, with real relative
         timestamps ("3 days ago", "last week") and a working "View full audit log" link
         to `/audit`.
-  - [ ] **Still not done, correctly scoped out rather than faked**: the Incidents page's
-        card treatment (evidence-thumbnail scan-sweep, severity chip, sparkline), the
-        live camera wall, and the full Incident Detail page redesign still use their
-        pre-redesign layouts under the new tokens.
+  - [x] **2026-09-19: evidence thumbnail + severity color bar added to the Incidents
+        page, and a real live camera wall added to the dashboard** - closing the two
+        biggest gaps named directly above, once the missing piece (a per-incident,
+        per-camera thumbnail endpoint) was actually built rather than assumed absent.
+        `IncidentSummary.thumbnail_url` (new `_thumbnails_for()` in `incidents.py`) and
+        the new `GET /api/v1/tenant/dashboard/camera-thumbnails` endpoint both read the
+        same `evidence` table the detections listing already uses - masked variant
+        preferred over annotated, most recent capture, real presigned MinIO URLs, not
+        placeholders. A camera with no evidence yet still gets a tile (placeholder icon)
+        rather than being dropped from the wall. New index `ix_evidence_camera_capture`
+        (migration 0061) backs both queries.
+        **Verified for real**, not by inspection: ran `scripts/e2e_detection_to_incident.py`
+        against the live stack to create a real tenant/camera/incident with real
+        masked/annotated/original evidence in MinIO; fetched the returned
+        `thumbnail_url` directly (200, real 810×1080 JPEG matching the logged evidence
+        byte count); Playwright screenshots of the real authenticated session show the
+        dashboard camera wall and the incident card both rendering that real snapshot,
+        plus the new Cameras page table/grid toggle in both states.
+        **Two real bugs found only by actually running the migration** (not by review or
+        `py_compile`): migration 0060 first tried `COMMENT ON TABLE ... IS 'a' || 'b'`,
+        which Postgres's `COMMENT` statement does not accept (single literal only -
+        fixed via Postgres's own newline-adjacent-literal concatenation); and it guessed
+        wrong column names entirely (`outbox_events.processed_at` and
+        `processed_events.created_at` do not exist - the real columns are
+        `published_at` and `processed_at` respectively), corrected after checking the
+        live schema directly.
+        **Still not done, correctly scoped out rather than faked**: the evidence-
+        thumbnail *scan-sweep* animation and sparkline from the original mockup, and the
+        full Incident Detail page redesign, still use their pre-redesign treatment.
 
 - [x] **2026-09-14: "Technical Atmosphere" theme applied to the mobile app** (same
       token-swap approach used for `frontend/customer-crm` directly above), plus the
