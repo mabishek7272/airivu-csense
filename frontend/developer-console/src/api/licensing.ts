@@ -21,6 +21,11 @@ export interface LicensePlan {
   billing_period: string;
   default_entitlements: Record<string, EntitlementSpec>;
   status: string;
+  /** List price only - no payment/invoicing system exists to know what was actually
+   *  billed. `null` means "no price on record" (e.g. a plan created before this field
+   *  existed), not "$0". */
+  price_cents: number | null;
+  currency: string;
 }
 
 export interface CreateLicensePlanInput {
@@ -29,6 +34,8 @@ export interface CreateLicensePlanInput {
   license_type: string;
   billing_period: "quarterly" | "half_yearly" | "yearly";
   default_entitlements: Record<string, EntitlementSpec>;
+  price_cents?: number | null;
+  currency?: string;
 }
 
 export interface License {

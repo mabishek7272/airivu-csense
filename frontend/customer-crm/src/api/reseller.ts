@@ -11,6 +11,11 @@ export interface ChildTenantRollup {
   camera_count: number;
   active_incident_count: number;
   license_status: string | null;
+  // List price only - no payment/invoicing system exists to know what was actually
+  // billed (see migration 0058/0059). `null` means no active/grace license, or a
+  // license whose plan has no price on record - not "$0".
+  list_price_cents: number | null;
+  currency: string | null;
 }
 
 export interface RollupSummary {
@@ -18,6 +23,8 @@ export interface RollupSummary {
   total_sites: number;
   total_cameras: number;
   total_active_incidents: number;
+  // Sum of every child's list_price_cents, NULLs counted as 0.
+  total_monthly_list_price_cents: number;
   tenants: ChildTenantRollup[];
 }
 

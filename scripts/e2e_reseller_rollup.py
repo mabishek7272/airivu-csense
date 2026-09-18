@@ -16,6 +16,11 @@ specifically proves the thing a naive cross-tenant query would get wrong:
      return (the exact failure this feature's migration docstring names).
   5. Confirm a non-reseller tenant's own call to the same endpoint gets a real
      403 not_a_reseller - the same guard list_child_tenants already enforces.
+  6. List-price rollup (migrations 0058/0059): create a real priced license plan through
+     the real admin API, issue it to ONE child (child A) only, leave child B unlicensed,
+     and confirm the real rollup response shows total_monthly_list_price_cents equal to
+     exactly that one plan's price - not double-counted, not including the unlicensed
+     child - and that child B's own row reports list_price_cents: null.
 
 Run from the repo root with the stack up:
     python scripts/e2e_reseller_rollup.py
@@ -32,14 +37,17 @@ import uuid
 import psycopg
 from csense_shared.config import get_settings
 from csense_shared.security.passwords import hash_password
+from csense_shared.security.totp import totp_now
 
 API = "http://localhost:8080"
 RESELLER_OWNER_PASSWORD = "RollupE2EReseller!Pass123"
 CHILD_OWNER_PASSWORD = "RollupE2EChild!Pass456"
+PLATFORM_ADMIN_PASSWORD = "RollupE2EPlatform!Pass789"
+PRICED_PLAN_PRICE_CENTS = 9900
 
 
-def api(path, payload=None, token=None, method="POST", expect=(200, 201, 204)):
-    headers = {"Content-Type": "application/json", "Host": "app.localhost"}
+def api(path, payload=None, token=None, method="POST", expect=(200, 201, 204), host="app.localhost"):
+    headers = {"Content-Type": "application/json", "Host": host}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
@@ -111,6 +119,53 @@ def bootstrap_reseller_owner(suffix: str) -> tuple[str, str, str]:
         )
         conn.commit()
     return email, str(tenant_id), str(organization_id)
+
+
+def bootstrap_platform_admin(suffix: str) -> tuple[str, str]:
+    """A real platform admin, needed to create a priced license plan and issue it through
+    the real admin API (not a direct DB write - the plan says "creates a priced license
+    plan via the real admin API"). Mirrors scripts/e2e_licensing.py's own
+    bootstrap_platform_admin exactly. Returns (email, user_id)."""
+    settings = get_settings()
+    email = f"rollup-e2e-platform-{suffix}@platform.dev"
+    dsn = (
+        f"host=localhost port=5432 dbname={settings.postgres_db} "
+        f"user={settings.postgres_user} password={settings.postgres_password}"
+    )
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT set_config('app.is_platform', 'true', false)")
+        cur.execute(
+            "INSERT INTO users (email_normalized, email_display, password_hash, status, display_name) "
+            "VALUES (%s, %s, %s, 'active', 'Rollup E2E Platform Admin') RETURNING id",
+            (email, email, hash_password(PLATFORM_ADMIN_PASSWORD, settings)),
+        )
+        user_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO platform_developers (user_id, status) VALUES (%s, 'active') RETURNING id",
+            (user_id,),
+        )
+        developer_id = cur.fetchone()[0]
+        cur.execute(
+            "SELECT id FROM roles WHERE tenant_id IS NULL AND name = 'platform_admin' AND audience = 'platform'"
+        )
+        role_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO platform_role_assignments (platform_developer_id, role_id, status) "
+            "VALUES (%s, %s, 'active')",
+            (developer_id, role_id),
+        )
+        conn.commit()
+    return email, str(user_id)
+
+
+def mfa_step_up(admin_token: str) -> None:
+    """License issuance is step-up-gated (TRD-SEC-010) - see scripts/e2e_licensing.py's
+    own mfa_step_up for the same minimal enroll -> confirm -> verify round trip."""
+    _, enrolled = api("/api/v1/admin/auth/mfa/totp/enroll", token=admin_token, host="console.localhost", expect=(201,))
+    code = totp_now(enrolled["secret"])
+    api("/api/v1/admin/auth/mfa/totp/confirm", {"code": code}, admin_token, host="console.localhost", expect=(200,))
+    code = totp_now(enrolled["secret"])
+    api("/api/v1/admin/auth/mfa/verify", {"code": code}, admin_token, host="console.localhost", expect=(200,))
 
 
 def _redis_password() -> str:
@@ -222,7 +277,63 @@ def main() -> int:
     status, body = api("/api/v1/tenant/child-tenants/rollup", token=child_a_token, method="GET", expect=(200, 403))
     check(status == 403 and body.get("code") == "not_a_reseller", f"non-reseller call is refused with not_a_reseller (got {status}, {body.get('code')})", failures)
 
-    step(6, "Clean up")
+    step(6, "List-price rollup: create a priced plan via the real admin API, issue it to child A only")
+    admin_email, admin_user_id = bootstrap_platform_admin(suffix)
+    _, admin_auth = api(
+        "/api/v1/admin/auth/login", {"email": admin_email, "password": PLATFORM_ADMIN_PASSWORD},
+        host="console.localhost",
+    )
+    admin_token = admin_auth["access_token"]
+    mfa_step_up(admin_token)  # license issuance is step-up-gated (TRD-SEC-010)
+
+    plan_code = f"rollup-e2e-priced-{suffix}"
+    status, priced_plan = api(
+        "/api/v1/admin/license-plans",
+        {
+            "code": plan_code, "name": "E2E Priced Plan", "license_type": "standard",
+            "billing_period": "yearly", "default_entitlements": {},
+            "price_cents": PRICED_PLAN_PRICE_CENTS,
+        },
+        admin_token, host="console.localhost", expect=(201,),
+    )
+    check(status == 201, "the platform admin can create a priced plan", failures)
+    check(priced_plan.get("price_cents") == PRICED_PLAN_PRICE_CENTS, "the created plan echoes back its own price_cents", failures)
+
+    status, _license = api(
+        "/api/v1/admin/licenses",
+        {"tenant_id": child_a_tenant_id, "plan_code": plan_code},
+        admin_token, host="console.localhost", expect=(201,),
+    )
+    check(status == 201, "the priced plan issues successfully to child A only (child B stays unlicensed)", failures)
+
+    status, priced_rollup = api("/api/v1/tenant/child-tenants/rollup", token=reseller_token, method="GET", expect=(200,))
+    check(status == 200, f"rollup call succeeds after issuing the priced license (got {status})", failures)
+    check(
+        priced_rollup.get("total_monthly_list_price_cents") == PRICED_PLAN_PRICE_CENTS,
+        "total_monthly_list_price_cents equals exactly the one priced plan's price - not double-counted, "
+        f"not including the unlicensed child (got {priced_rollup.get('total_monthly_list_price_cents')})",
+        failures,
+    )
+    priced_by_id = {t["tenant_id"]: t for t in priced_rollup["tenants"]}
+    check(
+        priced_by_id.get(child_a_tenant_id, {}).get("list_price_cents") == PRICED_PLAN_PRICE_CENTS,
+        f"child A's own row reports list_price_cents={PRICED_PLAN_PRICE_CENTS} "
+        f"(got {priced_by_id.get(child_a_tenant_id, {}).get('list_price_cents')})",
+        failures,
+    )
+    check(
+        priced_by_id.get(child_a_tenant_id, {}).get("currency") == "USD",
+        f"child A's own row reports currency='USD' (got {priced_by_id.get(child_a_tenant_id, {}).get('currency')})",
+        failures,
+    )
+    check(
+        child_b_tenant_id in priced_by_id and priced_by_id[child_b_tenant_id]["list_price_cents"] is None,
+        "child B (unlicensed) reports list_price_cents: null, not 0 or missing "
+        f"(got {priced_by_id.get(child_b_tenant_id, {}).get('list_price_cents')})",
+        failures,
+    )
+
+    step(7, "Clean up")
     # Tenant deletion cascades to sites/cameras/incidents (ondelete=CASCADE on tenant_id,
     # migration 0009), but organization_relationships has no cascade from organizations
     # (migration 0001's plain sa.ForeignKey with no ondelete) - it must be deleted
@@ -245,7 +356,13 @@ def main() -> int:
     )
     for email in (reseller_email, child_a_email, child_b_email):
         psql(f"SET app.is_platform = true; DELETE FROM users WHERE email_normalized = '{email}';")
-    print("    test tenants, organizations, and users removed")
+    # The priced plan and its issued license - the license row itself is already gone via
+    # the child A tenant's own CASCADE above (licenses.tenant_id ondelete=CASCADE,
+    # migration 0038), so only the plan itself (uniquely code-named per run) needs its own
+    # explicit delete, matching scripts/e2e_licensing.py's own cleanup pattern.
+    psql(f"SET app.is_platform = true; DELETE FROM license_plans WHERE code = '{plan_code}';")
+    psql(f"SET app.is_platform = true; DELETE FROM users WHERE id = '{admin_user_id}';")
+    print("    test tenants, organizations, license plan, and users removed")
 
     print()
     if failures:

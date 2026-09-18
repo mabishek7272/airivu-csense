@@ -60,6 +60,11 @@ class LicensePlanIn(BaseModel):
     license_type: str = Field(min_length=2, max_length=64)
     billing_period: str = Field(pattern="^(quarterly|half_yearly|yearly)$")
     default_entitlements: dict[str, EntitlementSpec] = Field(default_factory=dict)
+    # List price only - see migration 0058's own docstring for why this can never mean
+    # "revenue"/"billed amount" (no payment or invoicing system exists in this codebase).
+    # Nullable: omitted means "no price on record", not "$0".
+    price_cents: int | None = None
+    currency: str = "USD"
 
 
 class LicensePlanOut(BaseModel):
@@ -70,6 +75,8 @@ class LicensePlanOut(BaseModel):
     billing_period: str
     default_entitlements: dict
     status: str
+    price_cents: int | None = None
+    currency: str = "USD"
 
 
 @router.get("/license-plans", response_model=list[LicensePlanOut])
@@ -81,7 +88,8 @@ async def list_license_plans(
     rows = (
         await db.execute(
             text(
-                "SELECT id, code, name, license_type, billing_period, default_entitlements, status "
+                "SELECT id, code, name, license_type, billing_period, default_entitlements, status, "
+                "price_cents, currency "
                 "FROM license_plans ORDER BY created_at DESC"
             )
         )
@@ -89,7 +97,7 @@ async def list_license_plans(
     return [
         LicensePlanOut(
             id=str(r[0]), code=r[1], name=r[2], license_type=r[3], billing_period=r[4],
-            default_entitlements=r[5], status=r[6],
+            default_entitlements=r[5], status=r[6], price_cents=r[7], currency=r[8],
         )
         for r in rows
     ]
@@ -113,14 +121,17 @@ async def create_license_plan(
     plan_id = (
         await db.execute(
             text(
-                "INSERT INTO license_plans (code, name, license_type, billing_period, default_entitlements) "
-                "VALUES (:code, :name, :license_type, :billing_period, CAST(:entitlements AS jsonb)) "
+                "INSERT INTO license_plans "
+                "(code, name, license_type, billing_period, default_entitlements, price_cents, currency) "
+                "VALUES (:code, :name, :license_type, :billing_period, CAST(:entitlements AS jsonb), "
+                ":price_cents, :currency) "
                 "RETURNING id"
             ),
             {
                 "code": body.code, "name": body.name, "license_type": body.license_type,
                 "billing_period": body.billing_period,
                 "entitlements": json.dumps(default_entitlements),
+                "price_cents": body.price_cents, "currency": body.currency,
             },
         )
     ).scalar_one()
@@ -147,6 +158,7 @@ async def create_license_plan(
     return LicensePlanOut(
         id=str(plan_id), code=body.code, name=body.name, license_type=body.license_type,
         billing_period=body.billing_period, default_entitlements=default_entitlements, status="active",
+        price_cents=body.price_cents, currency=body.currency,
     )
 
 

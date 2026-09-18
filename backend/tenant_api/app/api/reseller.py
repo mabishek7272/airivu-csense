@@ -114,6 +114,10 @@ class ChildTenantRollupOut(BaseModel):
     camera_count: int
     active_incident_count: int
     license_status: str | None
+    # List price only - see migration 0058/0059's own docstrings. NULL when there's no
+    # active/grace license, or when there is but its plan has no price on record.
+    list_price_cents: int | None
+    currency: str | None
 
 
 class RollupSummaryOut(BaseModel):
@@ -121,6 +125,9 @@ class RollupSummaryOut(BaseModel):
     total_sites: int
     total_cameras: int
     total_active_incidents: int
+    # Sum of every child's list_price_cents, treating NULL as 0 - a child with no priced
+    # plan contributes nothing to this total rather than nulling out the whole sum.
+    total_monthly_list_price_cents: int
     tenants: list[ChildTenantRollupOut]
 
 
@@ -142,7 +149,7 @@ async def get_child_tenant_rollup(
         await db.execute(
             text(
                 "SELECT tenant_id, display_name, tenant_status, site_count, camera_count, "
-                "active_incident_count, license_status "
+                "active_incident_count, license_status, list_price_cents, currency "
                 "FROM reseller_child_tenant_rollup(:parent_id)"
             ),
             {"parent_id": parent_organization_id},
@@ -153,6 +160,7 @@ async def get_child_tenant_rollup(
         ChildTenantRollupOut(
             tenant_id=str(r[0]), display_name=r[1], tenant_status=r[2],
             site_count=r[3], camera_count=r[4], active_incident_count=r[5], license_status=r[6],
+            list_price_cents=r[7], currency=r[8],
         )
         for r in rows
     ]
@@ -161,6 +169,7 @@ async def get_child_tenant_rollup(
         total_sites=sum(t.site_count for t in tenants),
         total_cameras=sum(t.camera_count for t in tenants),
         total_active_incidents=sum(t.active_incident_count for t in tenants),
+        total_monthly_list_price_cents=sum(t.list_price_cents or 0 for t in tenants),
         tenants=tenants,
     )
 

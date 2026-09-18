@@ -212,10 +212,17 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         real JWTs decoded and checked for the right permission sets, plus a real HTTP
         403/201 boundary (a viewer's camera-create call is refused, an operator's
         succeeds). Full PASS.
-  - [ ] **Still deliberately deferred**: a separate read permission for members who
-        aren't owners to see their own team roster (today `membership.manage` gates both
-        read and write).
-- [~] Reseller relationship + child tenant foundation
+  - [x] **`membership.read`: team roster visible to every member, not just owners
+        (2026-09-18)** - a separate, broadly-granted permission (migration 0057, all four
+        customer roles) so `GET /api/v1/tenant/memberships` no longer requires
+        `membership.manage`; invite/edit/revoke stay `membership.manage`-only
+        (`tenant_owner`, unchanged). `TeamPage.tsx` needed no change - it already fails
+        gracefully client-side on the write endpoints per its own documented convention.
+        Verified for real: `scripts/e2e_membership_read.py` - invited a `tenant_viewer`,
+        accepted via the real Redis-backed token, logged in, confirmed `GET /memberships`
+        now `200`s (previously `403`) while `POST /memberships` still `403`s for that
+        viewer. Full PASS.
+- [x] Reseller relationship + child tenant foundation
   - [x] Schema needed no migration (`organization_relationships`, `organization_type`'s
         `reseller`/`reseller_customer` values - migration 0001); this shipped its first
         API + real provisioning mechanism against it. New: migration 0037 -
@@ -287,12 +294,53 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         genuinely match (camera_count=2 and =1 for the two children, not the silent zero
         a naive cross-tenant query would produce), plus the real `403 not_a_reseller`
         refusal for a non-reseller caller. Full PASS.
-  - [ ] **Still deliberately deferred, and not silently**: no UI yet for creating a
-        reseller organization itself or its child tenants (belongs to the two related,
-        still-open CHECKLIST lines below - `Principal Administrator org/license
-        screens`, `Customer guided onboarding`); usage/billing rollups (dollars, not
-        counts) stay out of scope, blocked on the licensing/quota item below.
-- [~] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
+  - [x] **Child-tenant creation UI, Customer CRM (2026-09-18)** - the real remaining gap
+        (a reseller organization itself is still created by a platform admin via the
+        Developer Console's existing `CreateOrganizationDialog`, unchanged): a "Create
+        child tenant" dialog on `ResellerRollupPage.tsx`, modeled on that same dialog's
+        owner-provisioning field set, calling the already-e2e-verified
+        `POST /api/v1/tenant/child-tenants` for the first time from any frontend. Shows
+        the real `invitation_link` inline (via `Form.tsx`'s existing `SuccessPanel`) when
+        the invite email fails to send, reloads the rollup on success so the new tenant
+        appears immediately. A non-reseller caller's real `403 not_a_reseller` surfaces
+        through the same `applyServerError` path every other form already uses. Frontend-
+        only; `npm run build` compiles cleanly (no browser E2E harness in active use this
+        session, matching the plan's own stated bar for this item).
+  - [x] **List-price billing rollup (2026-09-18)** - the real "dollars, not counts" gap:
+        `license_plans` gains nullable `price_cents`/`currency` (migration 0058; `NULL`
+        means "no price on record", never a fabricated `$0`). Named "list price"
+        throughout, deliberately not "revenue"/"billed amount" - no payment or invoicing
+        system exists anywhere in this codebase to know what was actually charged or
+        collected; this is honestly the sum of each child tenant's current plan's sticker
+        price, nothing more. `reseller_child_tenant_rollup()` gains two trailing columns,
+        `list_price_cents`/`currency` (migration 0059), sourced from the tenant's current
+        active/grace license's plan. **A real bug caught by the live stack, not by
+        inspection**: the plan's own sketch assumed `CREATE OR REPLACE FUNCTION` could add
+        a trailing column to a `RETURNS TABLE` function without a `DROP` first, by analogy
+        to migration 0055's note about DROP+CREATE being needed only when
+        removing/reordering columns. Postgres refused it outright
+        (`InvalidFunctionDefinition: cannot change return type of existing function`) -
+        its own documented rule is stricter for `RETURNS TABLE`/OUT-parameter functions:
+        *any* change to the OUT parameter list, including an addition, needs a real
+        `DROP FUNCTION` first. Migration 0059 does that drop (and re-issues
+        `REVOKE`/`GRANT` after, matching this codebase's established convention that
+        grants aren't assumed to persist across a function replace). Developer Console:
+        `CreateLicensePlanDialog.tsx` gets an optional "Monthly price (USD)" field,
+        converting a human-typed dollar amount to `price_cents` on submit. Customer CRM:
+        a 5th `SummaryTile` ("Est. monthly list price") and a "List price" table column,
+        explicitly showing "—" (not "$0.00") when `list_price_cents` is `null` so an
+        unpriced plan reads as unknown, not free.
+        Verified for real: extended `scripts/e2e_reseller_rollup.py` - creates a priced
+        plan (`price_cents=9900`) via the real admin API, issues it to one of the two
+        child tenants created earlier in the same script, leaves the other unlicensed,
+        confirms the real rollup's `total_monthly_list_price_cents` equals exactly `9900`
+        (not double-counted, not including the unlicensed child) and that the unlicensed
+        child's own row reports `list_price_cents: null`. Full PASS, run twice against the
+        live stack with zero leaked data confirmed both times (organizations/users/
+        license plan all cleaned up). Full backend `pytest tests/ -q` re-run clean: 574
+        passed, only the pre-existing `test_site_timezones.py` `asia/kolkata` flake
+        failing. Both frontend apps (`developer-console`, `customer-crm`) build cleanly.
+- [x] License plans, terms, entitlements, quota ledgers, concurrent reservation (row-lock
       pattern from [docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md](docs/02_TECHNICAL_REQUIREMENTS_DOCUMENT.md) §9)
   - [x] No schema existed for this before now (unlike memberships/reseller) - migration
         0038 adds `license_plans` (platform-global), `licenses`, `license_entitlements`,
@@ -358,11 +406,28 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
         the old license row is genuinely `revoked` and the new one is genuinely `active`
         under the new plan, then confirms the previously-refused 3rd camera now succeeds
         under the new license's own real `quota_ledgers` row. Full PASS.
-  - [ ] **Still deliberately deferred**: no UI for the two related, still-open lines
-        below (organization/license *creation* screens, guided onboarding); the two-phase
-        `reserved_value` → `consumed_value` path and `quota_reservations` rows stay
-        unused - real schema for a future long-running create, not needed by the one
-        synchronous flow (`camera.count`) this pass gates.
+  - [x] **Two-phase quota reservation primitive (2026-09-18)** - activates the
+        `quota_ledgers.reserved_value`/`quota_reservations` schema migration 0038 already
+        created but left unused (`reserve_quota()` only ever wrote `consumed_value`
+        directly, matching its own docstring's admission). New in
+        `csense_shared.licensing.quota`: `reserve_quota_two_phase` (same row-locked
+        capacity check as `reserve_quota`, but increments only `reserved_value` and
+        inserts a real `quota_reservations` row, `status='reserved'`, without creating the
+        resource itself), `commit_reservation` (moves the quantity from `reserved_value`
+        to `consumed_value`, flips to `committed`), `release_reservation` (returns the
+        quantity to the ledger without touching `consumed_value`, flips to `released`).
+        Both `commit`/`release` are idempotent no-ops on an already-terminal reservation,
+        and `idempotency_key` on `reserve_quota_two_phase` returns an existing `reserved`
+        row instead of double-reserving on a retried call. `reserve_quota()` itself is
+        untouched - still the right choice for a synchronous, single-transaction create
+        like `camera.count`; no genuine long-running reservation-worthy flow exists in
+        this codebase yet to wire these into, so this ships as a tested primitive rather
+        than inventing a fake consumer for it. Covered by
+        `backend/tests/test_quota_reservations.py` (9 tests, modeled on
+        `test_license_lifecycle.py`'s real-Postgres fixture), verified against the live
+        Docker Postgres stack. Full backend suite re-run clean: 834 passed, 71 skipped,
+        only the pre-existing `test_site_timezones.py` `asia/kolkata` flake failing -
+        `reserve_quota()`'s own coverage (`scripts/e2e_licensing.py`) unaffected.
 - [x] Principal Administrator org/license screens (Developer Console)
   - [x] `/dashboard` rebuilt from its Phase 1 placeholder into three real sections:
         Organizations (list + "Create organization" - both `direct_customer` and

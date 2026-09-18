@@ -7,6 +7,10 @@ import { Dialog } from "./Dialog";
 import { ErrorSummary, Field, FormActions, combine, maxLength, onSubmitHandler, pattern, required, useForm } from "./Form";
 
 const CODE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+// Optional - a human types dollars-and-cents ("99", "99.00", "99.5"); pattern() already
+// treats a blank value as valid (not required), so leaving it empty means "no price on
+// record", not "$0" - see licensing.py's own price_cents=None default.
+const PRICE_PATTERN = /^\d+(\.\d{1,2})?$/;
 
 interface EntitlementRow {
   code: string;
@@ -42,6 +46,10 @@ export function CreateLicensePlanDialog({
     name: { initial: "", label: "Name", validate: combine(required("Name"), maxLength(200, "Name")) },
     license_type: { initial: "standard", label: "License type", validate: required("License type") },
     billing_period: { initial: "yearly", label: "Billing period" },
+    monthly_price: {
+      initial: "", label: "Monthly price (USD)",
+      validate: pattern(PRICE_PATTERN, "Enter a dollar amount like 99 or 99.00."),
+    },
   });
 
   function updateRow(index: number, patch: Partial<EntitlementRow>) {
@@ -65,6 +73,12 @@ export function CreateLicensePlanDialog({
       default_entitlements[row.code.trim()] = { value_type: "limit_numeric", limit_numeric: numeric };
     }
 
+    // "99.00" -> 9900. Blank stays null (no price on record), never a fabricated 0 -
+    // mirrors price_cents' own nullable contract on the backend.
+    const price_cents = form.values.monthly_price.trim()
+      ? Math.round(Number(form.values.monthly_price) * 100)
+      : null;
+
     try {
       const created = await createLicensePlan({
         code: form.values.code,
@@ -72,6 +86,8 @@ export function CreateLicensePlanDialog({
         license_type: form.values.license_type,
         billing_period: form.values.billing_period as "quarterly" | "half_yearly" | "yearly",
         default_entitlements,
+        price_cents,
+        currency: "USD",
       });
       onCreated(created);
       onClose();
@@ -98,6 +114,12 @@ export function CreateLicensePlanDialog({
             { value: "half_yearly", label: "Half-yearly" },
             { value: "yearly", label: "Yearly" },
           ]}
+        />
+        <Field
+          {...form.field("monthly_price")}
+          label="Monthly price (USD)"
+          placeholder="99.00"
+          hint="Optional - the plan's list price, not what any tenant was actually billed. Leave blank if unknown."
         />
 
         <div className="field">

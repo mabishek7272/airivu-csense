@@ -60,6 +60,10 @@ export function ResellerRollupPage() {
             <SummaryTile label="Total sites" value={rollup.data.total_sites} />
             <SummaryTile label="Total cameras" value={rollup.data.total_cameras} />
             <SummaryTile label="Active incidents" value={rollup.data.total_active_incidents} />
+            <SummaryTile
+              label="Est. monthly list price"
+              value={formatCents(rollup.data.total_monthly_list_price_cents)}
+            />
           </div>
 
           <div style={{ overflowX: "auto", marginTop: "var(--space-4)" }}>
@@ -73,6 +77,7 @@ export function ResellerRollupPage() {
                   <th scope="col">Cameras</th>
                   <th scope="col">Active incidents</th>
                   <th scope="col">License</th>
+                  <th scope="col">List price</th>
                 </tr>
               </thead>
               <tbody>
@@ -84,6 +89,11 @@ export function ResellerRollupPage() {
                     <td>{tenant.camera_count}</td>
                     <td>{tenant.active_incident_count}</td>
                     <td className="muted">{tenant.license_status ?? "none"}</td>
+                    {/* "—" (not "$0.00") when list_price_cents is null - an unpriced plan
+                        reads as "unknown," not "free". */}
+                    <td className="muted">
+                      {tenant.list_price_cents == null ? "—" : formatCents(tenant.list_price_cents)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -102,13 +112,19 @@ export function ResellerRollupPage() {
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: number }) {
+function SummaryTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="stat-tile card">
       <span className="stat-tile-value">{value}</span>
       <span className="stat-tile-label">{label}</span>
     </div>
   );
+}
+
+/** cents -> "$99.00". List price only - see ChildTenantRollup's own docstring in
+ *  api/reseller.ts for why this can never mean "billed amount". */
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 /** Provisions a new child tenant under this reseller organization - mirrors
