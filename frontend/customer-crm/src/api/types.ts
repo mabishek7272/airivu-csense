@@ -94,6 +94,8 @@ export interface IncidentSummary {
   first_detected_at: string;
   last_detected_at: string;
   acknowledged_at: string | null;
+  // Presigned, short-lived (~10 minutes) — refetch the list rather than caching this URL.
+  thumbnail_url: string | null;
 }
 
 export interface IncidentEvent {

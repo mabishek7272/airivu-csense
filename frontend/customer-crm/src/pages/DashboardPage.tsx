@@ -2,8 +2,9 @@ import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import type { AuditEvent } from "../api/audit";
 import { listAuditEvents } from "../api/audit";
-import { getDashboard } from "../api/dashboard";
+import { getCameraThumbnails, getDashboard } from "../api/dashboard";
 import { getMfaStatus } from "../api/mfa";
+import { DashboardCameraWall } from "../components/DashboardCameraWall";
 import { Layout, relativeTime } from "../components/Layout";
 import { FailureState, LoadingRows } from "../components/States";
 import { useOnlineStatus } from "../hooks/useNetwork";
@@ -20,6 +21,7 @@ export function DashboardPage() {
   const dashboard = useResource(getDashboard, []);
   const mfa = useResource(getMfaStatus, []);
   const activity = useResource(() => listAuditEvents({ limit: 6 }), []);
+  const cameraWall = useResource(() => getCameraThumbnails(12), []);
 
   const loading = dashboard.loading || mfa.loading;
   const error = dashboard.error ?? mfa.error;
@@ -45,6 +47,12 @@ export function DashboardPage() {
             <StatTile label="Open incidents" value={dashboard.data.incidents_open_count} to="/incidents" />
             <StatTile label="Team members" value={dashboard.data.team_members_count} to="/team" />
           </div>
+
+          {dashboard.data.cameras_count > 0 && (
+            <div style={{ marginTop: "var(--space-4)" }}>
+              <DashboardCameraWall tiles={cameraWall.data?.tiles ?? null} loading={cameraWall.loading} />
+            </div>
+          )}
 
           <div className="dashboard-lower" style={{ display: "flex", gap: "var(--space-4)", marginTop: "var(--space-4)", alignItems: "flex-start" }}>
             <OnboardingChecklist

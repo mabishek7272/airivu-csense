@@ -11,6 +11,7 @@ import {
 import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { LiveViewDialog } from "../components/LiveViewDialog";
 import { NvrDiscoveryDialog } from "../components/NvrDiscoveryDialog";
+import { CameraGrid } from "../components/CameraGrid";
 import {
   ErrorSummary,
   Field,
@@ -64,6 +65,7 @@ export function CamerasPage() {
   const [probing, setProbing] = useState<string | null>(null);
   const [watching, setWatching] = useState<Camera | null>(null);
   const [discoveringNvr, setDiscoveringNvr] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "grid">("table");
 
   const cameras = useResource(() => listCameras({ status: statusFilter || undefined }), [
     statusFilter,
@@ -158,6 +160,26 @@ export function CamerasPage() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          {cameras.data && cameras.data.length > 0 && (
+            <>
+              <button
+                type="button"
+                className={viewMode === "table" ? "btn-quiet" : "btn-quiet"}
+                onClick={() => setViewMode("table")}
+                title="Table view"
+              >
+                ≡ Table
+              </button>
+              <button
+                type="button"
+                className={viewMode === "grid" ? "btn-quiet" : "btn-quiet"}
+                onClick={() => setViewMode("grid")}
+                title="Grid view"
+              >
+                ⊞ Grid
+              </button>
+            </>
+          )}
           <button type="button" className="btn-quiet" onClick={() => setDiscoveringNvr(true)} disabled={!online}>
             Discover from NVR
           </button>
@@ -242,6 +264,17 @@ export function CamerasPage() {
             for a camera on a private network, add an edge device first.
           </p>
         </EmptyPanel>
+      ) : viewMode === "grid" ? (
+        <CameraGrid
+          cameras={visible}
+          onProbe={handleProbe}
+          onWatch={(camera) => setWatching(camera)}
+          onEditCredentials={(camera) => setCredentialsFor(camera)}
+          onEdit={(camera) => setEditing(camera)}
+          onDelete={(camera) => setDeleting(camera)}
+          probingId={probing}
+          disabled={!online}
+        />
       ) : (
         <div className="card">
           <table className="data-table">

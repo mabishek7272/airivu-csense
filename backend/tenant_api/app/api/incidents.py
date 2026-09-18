@@ -29,10 +29,14 @@ from csense_shared.pipeline.incidents import InvalidTransitionError, transition_
 from csense_shared.security.permissions import require_permission
 from csense_shared.security.site_scope import site_scope_sql_filter
 from csense_shared.security.tenant_context import TenantContext
+from csense_shared.storage.objects import create_presign_client
 
 router = APIRouter(prefix="/api/v1/tenant/incidents", tags=["incidents"])
 
 MAX_PAGE_SIZE = 100
+# Short-lived: a list view is refetched often, so there is little value in a longer TTL
+# and no reason to hand out a longer-lived signed URL than the page actually needs.
+THUMBNAIL_URL_TTL = dt.timedelta(minutes=10)
 
 # Statuses that still represent work in front of a human. An acknowledged or escalated
 # incident is not finished - filtering the inbox to `open` alone makes an incident vanish
@@ -55,6 +59,10 @@ class IncidentSummary(BaseModel):
     first_detected_at: dt.datetime
     last_detected_at: dt.datetime
     acknowledged_at: dt.datetime | None
+    # Presigned, short-lived (see THUMBNAIL_URL_TTL). Masking-on-by-default (CLARIFICATIONS
+    # #8) means this always prefers the masked variant over the unmasked original, the same
+    # privacy default the detections listing already applies.
+    thumbnail_url: str | None = None
 
 
 class IncidentPage(BaseModel):
@@ -106,8 +114,55 @@ def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
         ) from exc
 
 
+async def _thumbnails_for(
+    db: AsyncSession, request: Request, incident_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """One presigned thumbnail URL per incident, for a card/grid view.
+
+    `DISTINCT ON` picks exactly one evidence row per incident: masked over annotated (this
+    is a list thumbnail, not the download/investigation view that can ask for more), and
+    the most recent capture within whichever variant is available. A missing evidence row
+    for an incident is not an error - not every incident type carries a snapshot.
+    """
+    if not incident_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT DISTINCT ON (e.incident_id)
+                    e.incident_id, so.bucket, so.object_key
+                FROM evidence e
+                JOIN stored_objects so ON so.id = e.object_id
+                WHERE e.incident_id = ANY(:ids)
+                  AND e.privacy_variant::text IN ('masked', 'annotated')
+                ORDER BY e.incident_id,
+                    CASE e.privacy_variant::text WHEN 'masked' THEN 0 ELSE 1 END,
+                    e.capture_time DESC
+                """
+            ),
+            {"ids": incident_ids},
+        )
+    ).all()
+
+    minio = create_presign_client(request.app.state.settings)
+    thumbnails: dict[uuid.UUID, str] = {}
+    for incident_id, bucket, object_key in rows:
+        try:
+            thumbnails[incident_id] = minio.presigned_get_object(
+                bucket, object_key, expires=THUMBNAIL_URL_TTL
+            )
+        except Exception:
+            # A missing/unreachable object should not blank the whole listing - the card
+            # just renders without a thumbnail, same failure shape as _evidence_for above.
+            continue
+    return thumbnails
+
+
 @router.get("", response_model=IncidentPage)
 async def list_incidents(
+    request: Request,
     status: str | None = Query(
         default=None,
         description=(
@@ -175,12 +230,13 @@ async def list_incidents(
 
     has_more = len(rows) > limit
     rows = rows[:limit]
+    thumbnails = await _thumbnails_for(db, request, [r[0] for r in rows])
     items = [
         IncidentSummary(
             id=str(r[0]), incident_number=r[1], type_code=r[2], severity=r[3], status=r[4],
             title=r[5], summary=r[6], camera_id=str(r[7]), site_id=str(r[8]),
             detection_count=r[9], first_detected_at=r[10], last_detected_at=r[11],
-            acknowledged_at=r[12],
+            acknowledged_at=r[12], thumbnail_url=thumbnails.get(r[0]),
         )
         for r in rows
     ]

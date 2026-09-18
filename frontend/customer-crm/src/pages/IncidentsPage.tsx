@@ -27,43 +27,81 @@ const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 
 function IncidentRow({ incident }: { incident: IncidentSummary }) {
   return (
-    <article className="card" style={{ padding: "var(--space-4)" }}>
-      <div className="detection-title">
-        <h2 style={{ flex: 1 }}>
-          <Link to={`/incidents/${incident.id}`}>
-            #{incident.incident_number} · {incident.title}
-          </Link>
-        </h2>
-        <SeverityBadge severity={incident.severity} />
-        <StatusBadge status={incident.status} />
-      </div>
-
-      {incident.summary && (
-        <p style={{ margin: "0 0 var(--space-2)", color: "var(--text-muted)" }}>
-          {incident.summary}
-        </p>
-      )}
-
+    <article
+      className="card"
+      style={{
+        display: "flex",
+        gap: 0,
+        padding: 0,
+        overflow: "hidden",
+        // Severity is legible at a glance without reading the badge - never the sole
+        // signal (the text badge below still carries the word), just a faster scan.
+        borderLeft: `4px solid var(--${incident.severity})`,
+      }}
+    >
       <div
         style={{
+          flexShrink: 0,
+          width: 96,
+          aspectRatio: "4 / 3",
+          background: "var(--surface-sunken)",
           display: "flex",
-          gap: "var(--space-4)",
-          flexWrap: "wrap",
           alignItems: "center",
-          color: "var(--text-muted)",
-          fontSize: 13,
+          justifyContent: "center",
+          overflow: "hidden",
         }}
       >
-        <CountBadge count={incident.detection_count} noun="detection" />
-        <span>
-          First seen <strong>{relativeTime(incident.first_detected_at)}</strong>
-        </span>
-        <span>
-          Last seen <strong>{relativeTime(incident.last_detected_at)}</strong>
-        </span>
-        {incident.acknowledged_at && (
-          <span>Acknowledged {relativeTime(incident.acknowledged_at)}</span>
+        {incident.thumbnail_url ? (
+          <img
+            src={incident.thumbnail_url}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <span aria-hidden="true" style={{ fontSize: "1.5rem", color: "var(--ink-faint)" }}>
+            ⌸
+          </span>
         )}
+      </div>
+
+      <div style={{ flex: 1, padding: "var(--space-4)", minWidth: 0 }}>
+        <div className="detection-title">
+          <h2 style={{ flex: 1 }}>
+            <Link to={`/incidents/${incident.id}`}>
+              #{incident.incident_number} · {incident.title}
+            </Link>
+          </h2>
+          <SeverityBadge severity={incident.severity} />
+          <StatusBadge status={incident.status} />
+        </div>
+
+        {incident.summary && (
+          <p style={{ margin: "0 0 var(--space-2)", color: "var(--text-muted)" }}>
+            {incident.summary}
+          </p>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--space-4)",
+            flexWrap: "wrap",
+            alignItems: "center",
+            color: "var(--text-muted)",
+            fontSize: 13,
+          }}
+        >
+          <CountBadge count={incident.detection_count} noun="detection" />
+          <span>
+            First seen <strong>{relativeTime(incident.first_detected_at)}</strong>
+          </span>
+          <span>
+            Last seen <strong>{relativeTime(incident.last_detected_at)}</strong>
+          </span>
+          {incident.acknowledged_at && (
+            <span>Acknowledged {relativeTime(incident.acknowledged_at)}</span>
+          )}
+        </div>
       </div>
     </article>
   );
