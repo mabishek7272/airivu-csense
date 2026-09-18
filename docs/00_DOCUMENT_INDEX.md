@@ -31,6 +31,7 @@ alongside it for the same reason: real guidance for real operation, not aspirati
 | [08_API_GUIDE.md](08_API_GUIDE.md) | Authentication, permissions, scoped API keys, error format, pagination, webhooks, and real-time — the concepts that don't fit in the auto-generated OpenAPI documents |
 | [09_INCIDENT_RUNBOOKS.md](09_INCIDENT_RUNBOOKS.md) | Ten numbered runbooks (service down, database/Redis outages, license/quota issues, security incidents, failed migrations, storage issues, notification failures, real disaster recovery) — Detect/Diagnose/Mitigate/Resolve/Prevent, each with real commands |
 | [10_PRODUCTION_DEPLOYMENT_GUIDE.md](10_PRODUCTION_DEPLOYMENT_GUIDE.md) | What only a human/business can decide (domain, cloud host, secrets, vendor accounts) versus the real, tested mechanism (`docker-compose.prod.yml`, TLS via Traefik/Let's Encrypt) that uses those decisions once made |
+| [11_CAMERA_HEALTH_FMEA.md](11_CAMERA_HEALTH_FMEA.md) | Failure Mode and Effects Analysis for the two camera health use cases deliberately not built (`obstruction`, `glare/night-vision`) — failure modes, severity/occurrence/detection scoring, and a validation-data-gated build order, requested as the alternative to guessing detection thresholds |
 
 ## Approved Architecture Baseline
 
