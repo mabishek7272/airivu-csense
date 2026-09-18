@@ -2,8 +2,12 @@
 
 The schema for this (`memberships`, `status: invited/active/suspended/revoked`,
 `site_scope_mode: all/selected/none`) has existed since migration 0001; this is the first
-API built against it. One permission, `membership.manage`, `tenant_owner`-only - this is
-identity/access control, the thing every other permission is downstream of.
+API built against it. Writes (`invite_member`, `update_membership`) require
+`membership.manage`, `tenant_owner`-only - this is identity/access control, the thing
+every other permission is downstream of. `list_memberships` only requires the separate,
+broadly-granted `membership.read` (migration 0057) - reading who else is on the team
+carries none of the risk that inviting/editing/revoking does, so every customer role can
+see the roster even though only an owner can change it.
 
 **All three site scopes are wired up and real.** `all`/`selected`/`none` are all accepted
 by both `invite_member` and `update_membership`; `selected` writes real rows to
@@ -102,7 +106,7 @@ async def list_memberships(
     context: TenantContext = Depends(current_tenant_context),
     db: AsyncSession = Depends(db_session_for_tenant),
 ) -> list[MembershipOut]:
-    require_permission(context, "membership.manage")
+    require_permission(context, "membership.read")
     rows = (
         await db.execute(text(f"{_SELECT} {_GROUP_BY} ORDER BY m.created_at"))
     ).all()
