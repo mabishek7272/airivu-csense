@@ -1,19 +1,37 @@
 """End-to-end verification of per-site membership scoping (migrations 0055, the JWT
-ssm/sids claims, and the five enforced list endpoints). Proves against the real running
+ssm/sids claims, and the site-scoped list endpoints). Proves against the real running
 stack:
 
-  1. Register a tenant, create two real sites (A, B), one camera on each.
+  1. Register a tenant, create two real sites (A, B), one camera, one zone, and one rule
+     on each.
   2. Invite a real member scoped to site A only ("selected"), accept the invitation for
      real, log in for real.
   3. Confirm that member's real JWT carries ssm="selected" and sids=[site_a_id] - not by
      inspection of the DB, by decoding the actual token this login call returned.
-  4. Confirm the real, enforced HTTP behaviour: GET /api/v1/tenant/sites returns only
-     site A; GET /api/v1/tenant/cameras returns only site A's camera; GET
-     /api/v1/tenant/sites/{site_b_id} 404s (not 403 - scoped-out looks like nonexistent).
-  5. Confirm the owner (site_scope_mode="all") still sees both sites and both cameras -
-     regression check, this feature must not narrow the owner's own view.
+  4. Confirm the real, enforced HTTP behaviour on all FOUR of the five enforced list
+     endpoints that don't need a synthetic detection to populate (sites, cameras, zones,
+     rules - see the note below on why `incidents` isn't also driven through HTTP here):
+     GET /api/v1/tenant/sites returns only site A; .../cameras, .../zones, .../rules
+     each return only site A's own row; GET /api/v1/tenant/sites/{site_b_id} 404s (not
+     403 - scoped-out looks like nonexistent).
+  5. Confirm the owner (site_scope_mode="all") still sees everything on all four
+     endpoints - regression check, this feature must not narrow the owner's own view.
   6. Confirm a 'none'-scoped invite (the new real default) sees zero sites and zero
      cameras.
+
+**Why `incidents` isn't independently driven through HTTP here**: populating a real
+incident needs a synthetic detection fed through `ingest_detection()` directly (the
+machinery `scripts/e2e_zone_privacy_masking.py` already built for exactly this), which
+is disproportionate machinery to duplicate in a script whose actual subject is the
+scoping filter itself, not incident creation. That filter is not incident-specific
+code, though: `incidents.py list_incidents` calls the exact same
+`site_scope_sql_filter()` function (`csense_shared/security/site_scope.py`) that
+sites/cameras/zones/rules all call, with the same three-mode behaviour already proven
+correct in isolation by `backend/tests/test_site_scope.py`'s 8 unit tests, and
+`incidents.py`'s own call site was read and confirmed correct line-by-line during this
+feature's own code review (Task 5). Real HTTP coverage on 4 of 5 endpoints plus a
+unit-proven, line-reviewed 5th is the deliberate scope of this script - a named
+boundary, not a silent gap.
 
 Invitation tokens are read straight out of Redis (`invitation_tickets.py`'s own key
 format, `cs:{environment}:invitation:{token}`) rather than needing an inbox to check -
@@ -123,7 +141,7 @@ def main() -> int:
     suffix = uuid.uuid4().hex[:8]
     failures: list[str] = []
 
-    step(1, "Register a tenant, create sites A and B, one camera on each")
+    step(1, "Register a tenant, create sites A and B, one camera+zone+rule on each")
     owner_email = f"scope-owner-{suffix}@example.com"
     _, auth = api("/api/v1/auth/register", {
         "organization_name": f"Site Scoping E2E {suffix}",
@@ -138,8 +156,29 @@ def main() -> int:
     _, camera_a = api("/api/v1/tenant/cameras", {
         "site_id": site_a_id, "name": "Cam A", "code": f"cam-a-{suffix}",
     }, owner_token, expect=(201,))
-    api("/api/v1/tenant/cameras", {
+    _, camera_b = api("/api/v1/tenant/cameras", {
         "site_id": site_b_id, "name": "Cam B", "code": f"cam-b-{suffix}",
+    }, owner_token, expect=(201,))
+
+    polygon = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+    _, zone_a = api("/api/v1/tenant/zones", {
+        "site_id": site_a_id, "name": "Zone A", "zone_type": "general",
+        "privacy_level": "standard", "polygon": polygon,
+    }, owner_token, expect=(201,))
+    _, zone_b = api("/api/v1/tenant/zones", {
+        "site_id": site_b_id, "name": "Zone B", "zone_type": "general",
+        "privacy_level": "standard", "polygon": polygon,
+    }, owner_token, expect=(201,))
+
+    _, rule_a = api("/api/v1/tenant/rules", {
+        "site_id": site_a_id, "camera_id": camera_a["id"], "zone_id": zone_a["id"],
+        "name": "Rule A", "type_code": "zone.intrusion", "alertable_classes": ["person"],
+        "min_confidence": 0.5, "min_roi_overlap": 0.1,
+    }, owner_token, expect=(201,))
+    api("/api/v1/tenant/rules", {
+        "site_id": site_b_id, "camera_id": camera_b["id"], "zone_id": zone_b["id"],
+        "name": "Rule B", "type_code": "zone.intrusion", "alertable_classes": ["person"],
+        "min_confidence": 0.5, "min_roi_overlap": 0.1,
     }, owner_token, expect=(201,))
 
     step(2, "Invite a member scoped to Site A only, accept and log in for real")
@@ -158,7 +197,7 @@ def main() -> int:
     check(claims.get("ssm") == "selected", f"real token has ssm=selected (got {claims.get('ssm')})", failures)
     check(claims.get("sids") == [site_a_id], f"real token has sids=[site A] (got {claims.get('sids')})", failures)
 
-    step(4, "Confirm real, enforced HTTP behaviour for the scoped member")
+    step(4, "Confirm real, enforced HTTP behaviour for the scoped member (4 of 5 endpoints)")
     _, sites_seen = api("/api/v1/tenant/sites", token=scoped_token, method="GET", expect=(200,))
     check([s["id"] for s in sites_seen] == [site_a_id], "scoped member's site list contains only Site A", failures)
 
@@ -168,16 +207,32 @@ def main() -> int:
         "scoped member's camera list contains only Site A's camera", failures,
     )
 
+    _, zones_seen = api("/api/v1/tenant/zones", token=scoped_token, method="GET", expect=(200,))
+    check(
+        [z["id"] for z in zones_seen] == [zone_a["id"]],
+        "scoped member's zone list contains only Site A's zone", failures,
+    )
+
+    _, rules_seen = api("/api/v1/tenant/rules", token=scoped_token, method="GET", expect=(200,))
+    check(
+        [r["id"] for r in rules_seen] == [rule_a["id"]],
+        "scoped member's rule list contains only Site A's rule", failures,
+    )
+
     status, _ = api(f"/api/v1/tenant/sites/{site_b_id}", token=scoped_token, method="GET", expect=(200, 404))
     check(status == 404, f"scoped member's GET on Site B real-404s, not 403 (got {status})", failures)
 
-    step(5, "Confirm the owner still sees both sites and both cameras (no regression)")
+    step(5, "Confirm the owner still sees everything on all four endpoints (no regression)")
     _, owner_sites = api("/api/v1/tenant/sites", token=owner_token, method="GET", expect=(200,))
     check(len(owner_sites) == 2, f"owner still sees both sites (got {len(owner_sites)})", failures)
     _, owner_cameras = api("/api/v1/tenant/cameras", token=owner_token, method="GET", expect=(200,))
     check(len(owner_cameras) == 2, f"owner still sees both cameras (got {len(owner_cameras)})", failures)
+    _, owner_zones = api("/api/v1/tenant/zones", token=owner_token, method="GET", expect=(200,))
+    check(len(owner_zones) == 2, f"owner still sees both zones (got {len(owner_zones)})", failures)
+    _, owner_rules = api("/api/v1/tenant/rules", token=owner_token, method="GET", expect=(200,))
+    check(len(owner_rules) == 2, f"owner still sees both rules (got {len(owner_rules)})", failures)
 
-    step(6, "Confirm a 'none'-scoped invite (the new real default) sees zero sites")
+    step(6, "Confirm a 'none'-scoped invite (the new real default) sees zero sites and zero cameras")
     none_email = f"none-{suffix}@example.com"
     api("/api/v1/tenant/memberships", {
         "email": none_email, "display_name": "NoAccess", "role_name": "tenant_member",
@@ -185,17 +240,21 @@ def main() -> int:
     none_ticket = redis_get_invitation_token(none_email)
     api("/api/v1/auth/accept-invitation", {"token": none_ticket, "password": PASSWORD}, expect=(200,))
     _, none_auth = api("/api/v1/auth/login", {"email": none_email, "password": PASSWORD})
-    _, none_sites = api("/api/v1/tenant/sites", token=none_auth["access_token"], method="GET", expect=(200,))
+    none_token = none_auth["access_token"]
+    _, none_sites = api("/api/v1/tenant/sites", token=none_token, method="GET", expect=(200,))
     check(none_sites == [], f"a fresh 'none'-scoped invite (the real default) sees zero sites (got {len(none_sites)})", failures)
+    _, none_cameras = api("/api/v1/tenant/cameras", token=none_token, method="GET", expect=(200,))
+    check(none_cameras == [], f"a fresh 'none'-scoped invite sees zero cameras (got {len(none_cameras)})", failures)
 
     step(7, "Clean up")
     tenant_id = auth["tenant_id"]
     tid = psql(f"SET app.is_platform = true; SELECT id FROM tenants WHERE id = '{tenant_id}';")
     if tid:
         psql(f"SET app.is_platform = true; DELETE FROM tenants WHERE id = '{tid}';")
+    psql(f"SET app.is_platform = true; DELETE FROM organizations WHERE display_name = 'Site Scoping E2E {suffix}';")
     for email in (owner_email, scoped_email, none_email):
         psql(f"SET app.is_platform = true; DELETE FROM users WHERE email_normalized = '{email}';")
-    print("    test tenant and users removed")
+    print("    test tenant, organization, and users removed")
 
     print()
     if failures:
