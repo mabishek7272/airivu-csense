@@ -16,6 +16,7 @@ import { IncidentsPage } from "./pages/IncidentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
+import { ResellerRollupPage } from "./pages/ResellerRollupPage";
 import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -70,6 +71,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <AuditPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/child-tenants/rollup"
+        element={
+          <RequireAuth>
+            <ResellerRollupPage />
           </RequireAuth>
         }
       />

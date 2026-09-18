@@ -12,6 +12,7 @@ import {
   NotifyIcon,
   PipelineIcon,
   RecipientIcon,
+  ResellerIcon,
   RuleIcon,
   SearchIcon,
   SettingsIcon,
@@ -25,10 +26,11 @@ import {
  *  Intelligence / Alerting, replacing a flat top nav. Grouping isn't cosmetic: it's the
  *  same order an operator actually works through a site - watch queue, then the
  *  infrastructure feeding it, then the intelligence driving detections, then who gets
- *  told. `Icons.tsx`'s `webhook`/`team` entries aren't in the design system's own 24-icon
- *  sheet (System.dc.html §03 didn't need them - "Webhooks"/"Team" are CRM-specific pages
- *  that sheet never enumerated) - drawn in the same 20px/1.4-stroke style to extend the
- *  set consistently rather than reach for a mismatched icon elsewhere. */
+ *  told. `Icons.tsx`'s `webhook`/`team`/`reseller` entries aren't in the design system's
+ *  own 24-icon sheet (System.dc.html §03 didn't need them - "Webhooks"/"Team"/"Child
+ *  tenants" are CRM-specific pages that sheet never enumerated) - drawn in the same
+ *  20px/1.4-stroke style to extend the set consistently rather than reach for a
+ *  mismatched icon elsewhere. */
 const NAV_GROUPS: { label: string; items: { to: string; label: string; Icon: typeof DashboardIcon }[] }[] = [
   {
     label: "Operations",
@@ -66,6 +68,7 @@ const NAV_GROUPS: { label: string; items: { to: string; label: string; Icon: typ
     label: "Administration",
     items: [
       { to: "/team", label: "Team", Icon: TeamIcon },
+      { to: "/child-tenants/rollup", label: "Child tenants", Icon: ResellerIcon },
       { to: "/audit", label: "Audit", Icon: AuditIcon },
       { to: "/settings", label: "Settings", Icon: SettingsIcon },
     ],

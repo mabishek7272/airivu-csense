@@ -323,6 +323,23 @@ export function TeamIcon(props: IconProps) {
   );
 }
 
+export function ResellerIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="10" cy="3.6" r="2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="3.6" cy="16.4" r="2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="10" cy="16.4" r="2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="16.4" cy="16.4" r="2" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M3.6 14.4V11a1.6 1.6 0 0 1 1.6-1.6h9.6A1.6 1.6 0 0 1 16.4 11v3.4M10 9.4V5.6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </Icon>
+  );
+}
+
 export const NAV_ICONS = {
   dashboard: DashboardIcon,
   incident: IncidentIcon,
@@ -351,4 +368,5 @@ export const NAV_ICONS = {
   kitchenSafety: KitchenSafetyIcon,
   webhook: WebhookIcon,
   team: TeamIcon,
+  reseller: ResellerIcon,
 } as const;
