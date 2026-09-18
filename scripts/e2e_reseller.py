@@ -70,19 +70,30 @@ def _redis_password() -> str:
     raise RuntimeError("REDIS_PASSWORD not found in .env")
 
 
-def read_invitation_token() -> str:
-    """Mirrors e2e_memberships.py's own helper - see that file's docstring for why
-    reading Redis directly is the intended verification path, not a workaround."""
+def read_invitation_token(email: str) -> str:
+    """Scans every cs:local:invitation:* key and returns the token of whichever key's
+    stored JSON payload actually contains this email - not "the only key found". A
+    shared dev Redis commonly carries several stale, unexpired invitation keys left
+    over from other e2e runs (invitations live a week), so assuming this script's own
+    invite is the only one present is fragile in exactly the way this function used to
+    be (matches the pattern already established in scripts/e2e_site_scoping.py and
+    scripts/e2e_finer_roles.py, applied here after that exact fragility caused a real
+    false failure once the shared Redis accumulated 12 stale keys)."""
     password = _redis_password()
     result = subprocess.run(
         ["docker", "compose", "--env-file", "../.env", "exec", "-T", "redis",
          "redis-cli", "-a", password, "--no-auth-warning", "KEYS", "cs:local:invitation:*"],
         cwd="infra", capture_output=True, text=True, check=True,
     )
-    keys = [k for k in result.stdout.strip().splitlines() if k]
-    if len(keys) != 1:
-        raise RuntimeError(f"Expected exactly one invitation key, found {len(keys)}: {keys}")
-    return keys[0].rsplit(":", 1)[-1]
+    for key in [k for k in result.stdout.strip().splitlines() if k]:
+        value = subprocess.run(
+            ["docker", "compose", "--env-file", "../.env", "exec", "-T", "redis",
+             "redis-cli", "-a", password, "--no-auth-warning", "GET", key],
+            cwd="infra", capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if email in value:
+            return key.rsplit(":", 1)[-1]
+    raise RuntimeError(f"No invitation token found in Redis for {email}")
 
 
 def bootstrap_platform_admin() -> tuple[str, str]:
@@ -158,7 +169,7 @@ def main() -> int:
     reseller_tenant_id = org["tenant_id"]
 
     step(2, "The reseller owner accepts their invitation and lands in the reseller tenant")
-    token = read_invitation_token()
+    token = read_invitation_token(f"reseller-owner-{suffix}@northwind.example")
     status, accepted = api("/api/v1/auth/accept-invitation", {
         "token": token, "password": RESELLER_OWNER_PASSWORD,
     }, expect=(200,))
@@ -195,7 +206,7 @@ def main() -> int:
     )
 
     step(6, "The child's invited owner accepts independently and lands in the CHILD tenant, not the reseller's")
-    token = read_invitation_token()
+    token = read_invitation_token(f"child-owner-{suffix}@northwind.example")
     status, child_accepted = api("/api/v1/auth/accept-invitation", {
         "token": token, "password": CHILD_OWNER_PASSWORD,
     }, expect=(200,))

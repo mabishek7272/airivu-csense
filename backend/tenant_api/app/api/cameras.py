@@ -235,6 +235,13 @@ async def create_camera(
         # site" or "not yours" - and those must be indistinguishable, or the API becomes a
         # way to enumerate other tenants' site ids.
         raise NotFoundError("No such site.")
+    if not context.can_access_site(body.site_id):
+        # Same "not found covers both" shape as the check above, and the same fix
+        # zones.py/rules.py's own create endpoints already apply - refusing up front
+        # here instead of letting the INSERT below succeed and then having the
+        # load_camera() call at the end of this function 404 on its own freshly-created
+        # row (a confusing 201-that-reads-as-404, not a clean refusal).
+        raise NotFoundError("No such site.")
 
     existing = (
         await db.execute(

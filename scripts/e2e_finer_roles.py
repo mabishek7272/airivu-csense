@@ -135,13 +135,21 @@ def main() -> int:
     site_id = site["id"]
 
     step(2, "Invite one tenant_viewer and one tenant_operator through the real API")
+    # site_scope_mode="all" for both invites - this script's own subject is role-based
+    # PERMISSION boundaries (viewer vs. operator vs. owner), not site scoping (that's
+    # scripts/e2e_site_scoping.py's job). Since a real invite defaults to site_scope_
+    # mode="none" (sees zero sites - migration 0055's own real default), leaving that
+    # unset here would fail this script's own camera-create checks below for a reason
+    # unrelated to what this script is actually testing.
     viewer_email = f"viewer-{suffix}@example.com"
     operator_email = f"operator-{suffix}@example.com"
     api("/api/v1/tenant/memberships", {
         "email": viewer_email, "display_name": "Viewer", "role_name": "tenant_viewer",
+        "site_scope_mode": "all",
     }, owner_token, expect=(201,))
     api("/api/v1/tenant/memberships", {
         "email": operator_email, "display_name": "Operator", "role_name": "tenant_operator",
+        "site_scope_mode": "all",
     }, owner_token, expect=(201,))
     print(f"    invited viewer={viewer_email} operator={operator_email}")
 
