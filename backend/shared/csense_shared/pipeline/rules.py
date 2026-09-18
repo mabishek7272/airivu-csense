@@ -11,7 +11,10 @@ Four filters, applied in order, cheapest first:
      emits `maskon` and `glove` (compliant) alongside `no_glove` (a violation). Alerting on
      compliance would make the feature unusable.
   2. **Confidence threshold** - per rule, since a fire model at 0.3 and a person detector
-     at 0.3 do not carry the same weight.
+     at 0.3 do not carry the same weight. **Note:** night/IR cameras produce lower
+     confidence (0.09-0.21 measured on reference camera) than daylight; separate rules with
+     lower thresholds are required for night scenes. See CLAUDE.md "Night/IR detection"
+     section for tuning guidance.
   3. **Region of interest** - was the object inside the zone that matters? A person in the
      corridor is not a person in the restricted area.
   4. **Minimum duration** - did it persist? A single frame is usually noise; requiring N

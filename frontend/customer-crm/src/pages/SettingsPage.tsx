@@ -250,16 +250,24 @@ function RemoveMfaDialog({ onClose, onRemoved }: { onClose: () => void; onRemove
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stepUpRequired, setStepUpRequired] = useState(false);
 
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
     try {
+      // First: verify MFA code for step-up
       await verifyMfa({ code });
+      // Second: remove MFA (this can now proceed with step-up verified)
       await removeTotp();
       onRemoved();
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.body.message : "Could not turn off two-factor authentication.");
+      if (err instanceof ApiRequestError && err.status === 403 && err.body.code === "step_up_required") {
+        setStepUpRequired(true);
+        setError("Step-up verification required. Enter your MFA code again.");
+      } else {
+        setError(err instanceof ApiRequestError ? err.body.message : "Could not turn off two-factor authentication.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -269,6 +277,11 @@ function RemoveMfaDialog({ onClose, onRemoved }: { onClose: () => void; onRemove
     <Dialog open title="Turn off two-factor authentication" onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <p>Confirm with a current code from your authenticator app to turn this off.</p>
+        {stepUpRequired && (
+          <p className="muted" style={{ fontSize: "0.9em" }}>
+            This is a sensitive operation and requires recent authentication verification.
+          </p>
+        )}
         <label>
           6-digit code
           <input
@@ -276,6 +289,8 @@ function RemoveMfaDialog({ onClose, onRemoved }: { onClose: () => void; onRemove
             maxLength={6}
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000"
+            autoFocus
           />
         </label>
 

@@ -139,6 +139,60 @@ A held delivery is delayed until the window ends (`quiet_hours_end` in `schedule
 never dropped — consistent with the platform's general "late alert beats no alert" stance
 (`MAX_DELAY_SECONDS`, the escalation ladder design).
 
+## Night/IR detection: Confidence thresholds and tuning
+
+The pipeline's detection models (especially `yolov8n-general`) produce significantly lower
+confidence scores under night/IR lighting than under daylight. This is **not a bug** — it is
+expected behavior for neural networks under poor lighting. However, it requires operators
+to understand and tune thresholds accordingly.
+
+**Measured on the reference camera (Autotek Dorani NVR, IR greyscale night footage):**
+- `yolov8n-general` (object detection): 0.09–0.21 confidence for valid detections (monitors, people)
+- `yolov8n-person`: unvalidated; likely similar range
+- Substream (704x576): worse confidence than mainstream; skipped from night processing
+
+**Default pipeline behavior:**
+The pipeline runtime uses `camera_assignment.min_confidence` (per-rule, defaults to 0.5) as
+a filter. A detection with 0.15 confidence against a 0.5 threshold is **silently discarded**
+at filter time — the frame is marked "clean" even though valid objects were detected.
+
+**How operators should tune:**
+1. Create a separate rule for night cameras with `min_confidence: 0.15` (or lower, up to 0.09)
+2. Test against real night footage from that camera (not assumptions)
+3. Monitor false-positive rate; adjust threshold up if too noisy, down if missing detections
+4. Do NOT set a single global threshold for all cameras — day/night split is essential
+
+**Schema reference:**
+- `pipelines.rules[].min_confidence: float` (defaults to 0.5, no lower bound enforced at schema level)
+- Per-camera rule matching: `backend/shared/csense_shared/pipeline/rules.py`, line 17
+
+**Example rule (via API):**
+```json
+POST /api/v1/tenant/rules
+{
+  "name": "night_perimeter_intrusion",
+  "model_name": "yolov8n-general",
+  "site_id": "...",
+  "camera_ids": ["night_cam_id"],
+  "min_confidence": 0.15,
+  "classes": ["person"],
+  "zone_ids": ["perimeter_zone"]
+}
+```
+
+**Why this design:**
+- Thresholds are **per-rule**, not per-camera or per-model, because the same camera may
+  have different confidence requirements for different use cases (intrusion detection can
+  tolerate lower confidence; PPE or face detection cannot).
+- No automatic night-mode detection exists because "night" is not a camera property; it's
+  a time-of-day property that varies by geography/season/weather. The operator knows their
+  deployment best.
+
+**Known limitation:** These thresholds are **unvalidated by this build's own harness** —
+they are based on spot measurement against one camera's night footage, not a golden dataset.
+A future Phase 4 validation pass will re-tune these against a real night validation set
+if one becomes available.
+
 ## Working conventions this session established
 
 - **Verify for real, not by inspection.** Every feature in `CHECKLIST.md` marked `[x]`
