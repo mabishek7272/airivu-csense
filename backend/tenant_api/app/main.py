@@ -9,6 +9,7 @@ from app.api import (
     api_clients,
     audit,
     auth,
+    branding,
     cameras,
     dashboard,
     detections,
@@ -24,6 +25,7 @@ from app.api import (
     notification_policies,
     nvr,
     pipeline_assignments,
+    public_branding,
     realtime,
     recipient_groups,
     reseller,
@@ -101,6 +103,8 @@ app.include_router(health.router)
 app.include_router(dashboard.router)
 app.include_router(audit.router)
 app.include_router(auth.router)
+app.include_router(public_branding.router)
+app.include_router(branding.router)
 app.include_router(incidents.router)
 app.include_router(detections.router)
 app.include_router(ingest.router)
