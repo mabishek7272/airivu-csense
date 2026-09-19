@@ -75,6 +75,7 @@ from .logbuf import RingBufferLogHandler
 from .source import LocalHttpSource
 from .spool import Spool
 from .sync import SyncEngine, TransportError, raise_for_batch_response
+from .wireguard import WireGuardKeypair, load_or_create_keypair
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,9 @@ def save_credential(path: Path, credential: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-async def enrol(client: httpx.AsyncClient, settings: AgentSettings) -> dict[str, Any]:
+async def enrol(
+    client: httpx.AsyncClient, settings: AgentSettings, wireguard_keypair: WireGuardKeypair
+) -> dict[str, Any]:
     """Redeems the enrolment token and returns the credential to keep.
 
     The serial is what the server pins the token to, so a token copied off one box cannot
@@ -178,6 +181,7 @@ async def enrol(client: httpx.AsyncClient, settings: AgentSettings) -> dict[str,
             "os_name": platform.system(),
             "os_version": platform.release(),
             "agent_version": AGENT_VERSION,
+            "wireguard_public_key": wireguard_keypair.public_key_b64,
         },
     )
     if response.status_code >= 400:
@@ -600,6 +604,26 @@ async def amain() -> None:
     runtime_config = RuntimeConfig.from_settings(settings)
 
     key = load_or_create_device_key(settings.device_key_path)
+    wireguard_keypair = load_or_create_keypair(settings.wireguard_key_path)
+    # The private half never travels past this line - only wireguard_keypair.public_key_b64
+    # goes anywhere near the network (see enrol()). Logged, not just written to the key
+    # file, because the whole point of generating it here instead of asking the operator
+    # to run `wg genkey` themselves is that they still need to see it once, to paste into
+    # the `PrivateKey =` line of the config CSense's own vpn-provision renders - the file
+    # at wireguard_key_path (first line) is the durable copy; this line is the convenient
+    # one for the person standing at this device right now.
+    logger.info(
+        "wireguard_identity_ready",
+        extra={
+            "public_key": wireguard_keypair.public_key_b64,
+            "private_key_file": str(settings.wireguard_key_path),
+            "note": (
+                "Private key is line 1 of private_key_file - paste it as this device's "
+                "PrivateKey in the WireGuard config after running vpn-provision. It is "
+                "never sent anywhere by this agent."
+            ),
+        },
+    )
     spool = Spool(
         settings.spool_path,
         key,
@@ -621,7 +645,7 @@ async def amain() -> None:
     try:
         credential = load_credential(settings.credential_path)
         if credential is None:
-            credential = await enrol(client, settings)
+            credential = await enrol(client, settings, wireguard_keypair)
             save_credential(settings.credential_path, credential)
         client.headers["Authorization"] = f"Bearer {credential['agent_token']}"
         logger.info("agent_identity_loaded", extra={"device_id": credential.get("device_id")})

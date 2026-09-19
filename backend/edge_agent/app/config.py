@@ -81,6 +81,9 @@ class AgentSettings:
     # one: a file can be mode-restricted, stays out of `docker inspect` and out of any
     # child process's environment, and can be replaced without a rebuild.
     credential_path: Path
+    # This device's WireGuard identity (see wireguard.py) - generated on first run,
+    # persisted here, and never transmitted as anything but its public half.
+    wireguard_key_path: Path
 
     # --- The spool ---
     spool_path: Path
@@ -133,6 +136,7 @@ class AgentSettings:
             enrolment_token=_optional(env, "CSENSE_ENROLMENT_TOKEN"),
             serial_number=_optional(env, "CSENSE_SERIAL_NUMBER"),
             credential_path=Path(env.get("CSENSE_CREDENTIAL_PATH", f"{state_dir}/agent.credential")),
+            wireguard_key_path=Path(env.get("CSENSE_WIREGUARD_KEY_PATH", f"{state_dir}/wireguard.key")),
             spool_path=Path(env.get("CSENSE_SPOOL_PATH", f"{state_dir}/spool.sqlite3")),
             device_key_path=Path(env.get("CSENSE_DEVICE_KEY_PATH", f"{state_dir}/device.key")),
             spool_max_rows=_int(env, "CSENSE_SPOOL_MAX_ROWS", 50_000, *SPOOL_MAX_ROWS_BOUNDS),
