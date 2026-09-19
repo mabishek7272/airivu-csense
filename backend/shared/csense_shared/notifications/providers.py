@@ -72,6 +72,15 @@ class Message:
     # Idempotency key. Providers that support it will not double-send on our retry.
     idempotency_key: str | None = None
     metadata: dict = field(default_factory=dict)
+    # White-label branding (all optional; None means "use the default CSense look").
+    # Populated by notification_worker's process_delivery() from org_branding_resolve()
+    # when the tenant this delivery belongs to has branding configured - see that
+    # module's own docstring for why the lookup happens there and not in dispatcher.py.
+    # Only ResendEmailProvider consumes these today (channels without a "from name" or
+    # a template header concept simply ignore them).
+    from_name: str | None = None
+    brand_logo_url: str | None = None
+    brand_footer_text: str | None = None
 
 
 @dataclass(frozen=True)

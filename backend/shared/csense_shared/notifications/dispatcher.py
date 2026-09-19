@@ -405,6 +405,14 @@ async def send_delivery(
     media_urls: list[str] | None = None,
     attachments: list[Attachment] | None = None,
     now: dt.datetime | None = None,
+    # White-label branding for this delivery's tenant, if any configured. A dumb
+    # pass-through, same as every other parameter here - the lookup itself belongs to
+    # the caller (notification_worker's process_delivery(), which already has
+    # delivery["tenant_id"] in scope), not to this function, which doesn't otherwise
+    # know anything about tenants beyond the `delivery` dict it's handed.
+    from_name: str | None = None,
+    brand_logo_url: str | None = None,
+    brand_footer_text: str | None = None,
 ) -> str:
     """Sends one delivery and records the outcome. Returns the resulting status.
 
@@ -446,6 +454,9 @@ async def send_delivery(
         # double-send if our own write fails after their accept.
         idempotency_key=f"{delivery['delivery_id']}",
         metadata={"delivery": str(delivery["delivery_id"])[:32]},
+        from_name=from_name,
+        brand_logo_url=brand_logo_url,
+        brand_footer_text=brand_footer_text,
     )
 
     result = await provider.send(message)

@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import html
 import logging
+from email.utils import parseaddr
 from typing import Any
 
 import httpx
@@ -69,9 +70,20 @@ class ResendEmailProvider:
         # authority. This only catches obvious nonsense before spending an API call.
         return "@" in recipient and "." in recipient.split("@")[-1] and " " not in recipient
 
+    def _from_header(self, message: Message) -> str:
+        """The sending *address* is always the one configured process-wide (shared
+        Resend domain, no per-brand SPF/DKIM needed) - only the display *name* varies
+        per message. `parseaddr` handles `self._from` being configured either as a bare
+        address or an already-"Name <addr>" string, so a global default name/address
+        keeps working unchanged when `message.from_name` is absent."""
+        if not message.from_name:
+            return self._from
+        _, address = parseaddr(self._from)
+        return f"{message.from_name} <{address or self._from}>"
+
     async def send(self, message: Message) -> SendResult:
         payload: dict[str, Any] = {
-            "from": self._from,
+            "from": self._from_header(message),
             "to": [message.recipient],
             "subject": message.subject or "CSense alert",
             "html": self._render_html(message),
@@ -177,6 +189,14 @@ class ResendEmailProvider:
 
         Snapshots are referenced by `cid:` against the attachments, never by external URL,
         so nothing here depends on publicly reachable storage.
+
+        `brand_logo_url`, unlike the snapshot images above, IS a plain external URL, not
+        a `cid:` attachment - deliberately: it points at `BUCKET_BRANDING`, which is
+        public-read specifically so a logo in a months-old alert email keeps rendering
+        long after any presigned URL would have expired (see objects.py's own module
+        docstring for the full reasoning). `brand_footer_text` replaces the hardcoded
+        AIRIVU/CSense credit for a branded tenant - for the default (unbranded) case
+        both are `None` and this renders exactly as it always has.
         """
         body_html = html.escape(message.body).replace("\n", "<br>")
         images = "".join(
@@ -184,12 +204,21 @@ class ResendEmailProvider:
             f'style="max-width:100%;border-radius:6px;margin-top:16px">'
             for attachment in message.attachments[:3]
         )
+        logo_html = (
+            f'<img src="{html.escape(message.brand_logo_url)}" alt="" '
+            f'style="max-height:32px;margin-bottom:16px">'
+            if message.brand_logo_url
+            else ""
+        )
+        footer_text = html.escape(
+            message.brand_footer_text
+            or "Sent by AIRIVU CSense. Reply to this message to acknowledge the incident."
+        )
         return (
             '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
             'font-size:15px;line-height:1.55;color:#14181f;max-width:600px">'
+            f"{logo_html}"
             f"<p>{body_html}</p>{images}"
             '<hr style="border:none;border-top:1px solid #d5d9e0;margin:24px 0">'
-            '<p style="font-size:12px;color:#545c6a">'
-            "Sent by AIRIVU CSense. Reply to this message to acknowledge the incident."
-            "</p></div>"
+            f'<p style="font-size:12px;color:#545c6a">{footer_text}</p></div>'
         )

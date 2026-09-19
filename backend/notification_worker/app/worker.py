@@ -35,9 +35,11 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from csense_shared.config import get_settings
 from csense_shared.notifications.dispatcher import claim_due_deliveries, send_delivery
-from csense_shared.notifications.providers import Attachment, ProviderRegistry
+from csense_shared.notifications.providers import Attachment, Channel, ProviderRegistry
 from csense_shared.pipeline.incidents import STOPS_ESCALATION
+from csense_shared.storage.objects import public_branding_url
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +252,55 @@ async def load_media_urls(
     return [url]
 
 
+async def load_branding(
+    session: AsyncSession, tenant_id: uuid.UUID | None
+) -> tuple[str | None, str | None, str | None]:
+    """White-label branding for an email delivery: `(from_name, logo_url, footer_text)`,
+    all `None` for the default (unbranded) case. Same "must never lose the alert over
+    this" discipline as `load_media_urls` above: best-effort, log-and-continue on any
+    failure rather than letting a branding lookup block a real incident notification.
+
+    `org_branding_resolve` (not `_resolve_by_slug`) - this already has a verified
+    `tenant_id` from the claimed delivery row, never a client-supplied slug.
+    """
+    if tenant_id is None:
+        return None, None, None
+    try:
+        organization_id = (
+            await session.execute(
+                text("SELECT organization_id FROM tenants WHERE id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            )
+        ).scalar_one_or_none()
+        if organization_id is None:
+            return None, None, None
+
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT ob.display_name, ob.email_from_name, so.object_key
+                    FROM org_branding_resolve(:organization_id) r
+                    JOIN org_branding ob ON ob.organization_id = r.source_organization_id
+                    LEFT JOIN stored_objects so ON so.id = r.logo_object_id
+                    """
+                ),
+                {"organization_id": organization_id},
+            )
+        ).first()
+        if row is None:
+            return None, None, None
+
+        display_name, email_from_name, object_key = row
+        settings = get_settings()
+        logo_url = public_branding_url(settings, object_key) if object_key else None
+        footer_text = f"Sent by {display_name}."
+        return email_from_name, logo_url, footer_text
+    except Exception as exc:  # noqa: BLE001 - never lose the alert over branding
+        logger.warning("branding_lookup_failed", extra={"tenant_id": str(tenant_id), "error": str(exc)[:200]})
+        return None, None, None
+
+
 async def process_delivery(
     session: AsyncSession,
     registry: ProviderRegistry,
@@ -288,6 +339,15 @@ async def process_delivery(
         session, object_store, incident_id=content["incident_id"]
     )
 
+    # Only email consumes from_name/brand_logo_url/brand_footer_text today (see
+    # Message's own docstring) - skip the lookup entirely for every other channel
+    # rather than spending a query on fields the provider would just ignore.
+    from_name = brand_logo_url = brand_footer_text = None
+    if delivery["channel"] == Channel.EMAIL:
+        from_name, brand_logo_url, brand_footer_text = await load_branding(
+            session, delivery.get("tenant_id")
+        )
+
     return await send_delivery(
         session,
         registry,
@@ -297,6 +357,9 @@ async def process_delivery(
         attachments=attachments,
         media_urls=media_urls,
         now=moment,
+        from_name=from_name,
+        brand_logo_url=brand_logo_url,
+        brand_footer_text=brand_footer_text,
     )
 
 
