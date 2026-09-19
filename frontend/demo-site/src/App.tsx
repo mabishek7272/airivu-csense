@@ -11,6 +11,19 @@ const CONTACT_HREF = `mailto:${CONTACT_EMAILS.join(",")}?subject=${encodeURIComp
   "CSense demo",
 )}`;
 
+// A dedicated tenant ("CSense Demo"), not a real customer's account - anyone who logs in
+// here sees only sample data, never a real org's. Deliberately unbranded (no org_branding
+// row): this is the product's own default look, not any customer's white-label identity.
+//
+// The credentials themselves are a Vite build-time env var (see the Dockerfile's own
+// comment), not a literal here - this page is public and is *meant* to show them to any
+// visitor, but the value still shouldn't sit in tracked source/git history where rotating
+// it means another commit and the old one never really goes away. `.env` on the server
+// holds the real value and is itself not committed.
+const LIVE_DEMO_EMAIL = import.meta.env.VITE_LIVE_DEMO_EMAIL as string | undefined;
+const LIVE_DEMO_PASSWORD = import.meta.env.VITE_LIVE_DEMO_PASSWORD as string | undefined;
+const LIVE_DEMO_LOGIN_URL = "https://app.3rdi.in/login";
+
 export default function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [failed, setFailed] = useState(false);
@@ -83,6 +96,24 @@ export default function App() {
             <ModelShowcase category={active} images={manifest![active.id] ?? []} />
           </main>
         </>
+      )}
+
+      {LIVE_DEMO_EMAIL && LIVE_DEMO_PASSWORD && (
+        <section className="cta live-demo-cta" aria-labelledby="live-demo-heading">
+          <h2 id="live-demo-heading">Want to click around the real product?</h2>
+          <p>
+            Log in to a live sandbox account — real dashboard, cameras, incidents, the
+            whole thing, just with sample data instead of a real site.
+          </p>
+          <a className="cta-button" href={LIVE_DEMO_LOGIN_URL} target="_blank" rel="noreferrer">
+            Log in to the live demo
+          </a>
+          <p className="live-demo-creds">
+            <span>{LIVE_DEMO_EMAIL}</span>
+            <span aria-hidden="true"> · </span>
+            <span>{LIVE_DEMO_PASSWORD}</span>
+          </p>
+        </section>
       )}
 
       <section className="cta" aria-labelledby="cta-heading">

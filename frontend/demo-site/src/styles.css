@@ -343,6 +343,14 @@ body {
   background: var(--accent-hover);
 }
 
+.live-demo-creds {
+  margin: var(--space-3) 0 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  color: var(--text-muted);
+  user-select: all;
+}
+
 /* --- Footer ------------------------------------------------------------------ */
 
 .footer {

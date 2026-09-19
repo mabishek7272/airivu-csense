@@ -421,6 +421,11 @@ services:
   demo-site:
     build:
       context: ../frontend/demo-site
+      # Optional - the "log in to the live demo" section only renders when both are set
+      # (see App.tsx). Leave unset in .env to ship the page without it.
+      args:
+        VITE_LIVE_DEMO_EMAIL: ${LIVE_DEMO_EMAIL:-}
+        VITE_LIVE_DEMO_PASSWORD: ${LIVE_DEMO_PASSWORD:-}
     <<: *default-restart
     logging: *default-logging
     networks: [csense]
