@@ -3,10 +3,10 @@
 # `docker-compose.yml`, only by `docker-compose.prod.yml`).
 #
 # **Before first deploy, replace every `app.example.com` / `console.example.com` /
-# `demo.example.com` placeholder below with your real domains** (a `sed` one-liner is in
-# docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md) - Traefik's file provider does not do
-# environment-variable substitution the way docker-compose.yml itself does, so this file
-# needs a real edit, not an env var, to carry real domains.
+# `demo.example.com` / `storage.example.com` placeholder below with your real domains**
+# (a `sed` one-liner is in docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md) - Traefik's file
+# provider does not do environment-variable substitution the way docker-compose.yml
+# itself does, so this file needs a real edit, not an env var, to carry real domains.
 #
 # Same routing rules, security headers, rate limits, and CORS shape as dynamic.yml -
 # only the entrypoint (websecure/443 instead of web/80) and TLS (a cert resolver on every
@@ -62,6 +62,23 @@ http:
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
+    # Public-reachable MinIO S3 API, TLS-terminated here - not the web console (9001,
+    # deliberately not routed). docker-compose.prod.yml never publishes MinIO's ports
+    # directly (real object storage has no business on a bare public port), so this is
+    # the only way presigned/public-read URLs (evidence snapshots, exports, white-label
+    # branding logos/favicons) resolve for a real browser at all. `MINIO_PUBLIC_ENDPOINT`
+    # must be set to this same hostname - see .env.example. Authorization itself is
+    # unaffected: MinIO's own per-bucket policies (deny-all-except-presigned for every
+    # bucket except BUCKET_BRANDING, which is deliberately public-read - see
+    # csense_shared/storage/objects.py's own module docstring) do the real access
+    # control; this router is a TLS-terminating pass-through, not a second auth layer.
+    storage:
+      rule: "Host(`storage.example.com`)"
+      service: minio-storage
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
   services:
     tenant-api:
       loadBalancer:
@@ -91,6 +108,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://mediamtx:8889"
+    minio-storage:
+      loadBalancer:
+        servers:
+          - url: "http://minio:9000"
 
   middlewares:
     security-headers:

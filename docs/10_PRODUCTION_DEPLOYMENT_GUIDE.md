@@ -80,7 +80,7 @@ it's already gitignored).
 
 ```bash
 cd infra/traefik
-sed -i 's/app\.example\.com/app.yourdomain.com/g; s/console\.example\.com/console.yourdomain.com/g; s/demo\.example\.com/demo.yourdomain.com/g' dynamic.prod.yml
+sed -i 's/app\.example\.com/app.yourdomain.com/g; s/console\.example\.com/console.yourdomain.com/g; s/demo\.example\.com/demo.yourdomain.com/g; s/storage\.example\.com/storage.yourdomain.com/g' dynamic.prod.yml
 ```
 
 Set the matching `CUSTOMER_CRM_ORIGIN=https://app.yourdomain.com` and
@@ -88,13 +88,25 @@ Set the matching `CUSTOMER_CRM_ORIGIN=https://app.yourdomain.com` and
 agree with `dynamic.prod.yml`'s `Host()` rules and CORS origin lists, or requests will
 fail CORS in the browser even though routing itself works.
 
+Also set `MINIO_PUBLIC_ENDPOINT=storage.yourdomain.com` in `.env` — this is what gets
+embedded in every presigned/public URL (evidence snapshots, exports, white-label
+branding logos/favicons) a real browser then has to resolve. Left at its dev default
+(`localhost:9000`), every one of those URLs is broken in production even though
+everything else works. A related trap already bit a real deploy (CHECKLIST.md's
+2026-09-11 entry): `MINIO_USE_TLS` governs both the internal `minio:9000` connection
+*and* what scheme gets assumed for the public endpoint unless `MINIO_PUBLIC_USE_TLS`
+is set independently — a real production `SSL: WRONG_VERSION_NUMBER` error the first
+time `ensure_buckets()` ran, since the internal connection has no TLS at all. Set both
+`MINIO_PUBLIC_ENDPOINT` and `MINIO_PUBLIC_USE_TLS=true` explicitly; don't assume the
+internal-connection settings carry over correctly.
+
 ### B.4 Point DNS at your server
 
 A/AAAA records for `app.yourdomain.com`, `console.yourdomain.com`,
-`demo.yourdomain.com` (if using the demo site) → your server's public IP. Let's Encrypt's
-HTTP-01 challenge (what `docker-compose.prod.yml` is configured for) needs port 80
-reachable from the public internet at the moment certificates are issued/renewed — don't
-firewall it off.
+`storage.yourdomain.com`, and `demo.yourdomain.com` (if using the demo site) → your
+server's public IP. Let's Encrypt's HTTP-01 challenge (what `docker-compose.prod.yml`
+is configured for) needs port 80 reachable from the public internet at the moment
+certificates are issued/renewed — don't firewall it off.
 
 ### B.5 Bring it up
 
