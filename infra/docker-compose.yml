@@ -386,6 +386,13 @@ services:
   developer-console:
     build:
       context: ../frontend/developer-console
+      # Build arg, not just `environment:` below - NEXT_PUBLIC_* is inlined at `next
+      # build` time, so a runtime-only env var is silently ignored (see the Dockerfile's
+      # own comment - this masked itself in dev only because localhost:8080 is also the
+      # hardcoded fallback, so the bug was invisible until a real domain in production
+      # needed a different value).
+      args:
+        NEXT_PUBLIC_API_BASE: http://localhost:8080
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8080
     networks: [csense]

@@ -392,6 +392,11 @@ services:
   developer-console:
     build:
       context: ../frontend/developer-console
+      # NEXT_PUBLIC_API_BASE must be a build arg, not just below in `environment:` - it's
+      # inlined into the client bundle at `next build` time, so a runtime-only env var
+      # has no effect (see the Dockerfile's own comment on this - the bug it fixes).
+      args:
+        NEXT_PUBLIC_API_BASE: ${DEVELOPER_CONSOLE_ORIGIN:?set to your real https:// admin domain}
     <<: *default-restart
     environment:
       NEXT_PUBLIC_API_BASE: ${DEVELOPER_CONSOLE_ORIGIN:?set to your real https:// admin domain}
