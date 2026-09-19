@@ -51,6 +51,37 @@ import { useResource } from "../hooks/useResource";
  *  would imply the value is retrievable.
  */
 
+/** Parses `rtsp://[user[:pass]@]host[:port][/path]` into its parts, or null if `raw`
+ *  isn't a recognizable RTSP URL yet (e.g. still mid-paste/mid-typing) — callers treat
+ *  null as "don't touch the form", not as an error to surface. The WHATWG URL parser
+ *  handles arbitrary schemes' `//user:pass@host:port/path` authority generically, so no
+ *  hand-rolled regex is needed for the parsing itself. */
+function parseRtspUrl(raw: string): {
+  hostname: string;
+  port: string;
+  path: string;
+  username: string;
+  password: string;
+} | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "rtsp:" && url.protocol !== "rtsps:") return null;
+  if (!url.hostname) return null;
+  return {
+    hostname: url.hostname,
+    port: url.port || "554",
+    path: url.pathname && url.pathname !== "/" ? url.pathname : "",
+    username: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+  };
+}
+
 export function CamerasPage() {
   const online = useOnlineStatus();
   const notify = useNotifications();
@@ -547,6 +578,32 @@ function CameraFormDialog({
     username: { initial: camera?.username ?? "", label: "Username" },
   });
 
+  // A pasted rtsp:// URL is a convenience that fills the fields below, not a field of
+  // its own — its password half never enters `form.values` (which only ever holds
+  // plain strings destined for the request body/error mapping); it is held here and
+  // sent straight to setCameraCredentials after save, the same one-way path the
+  // Credential dialog itself uses. Cleared whenever the pasted text stops parsing, so a
+  // stale password from an earlier paste can never be applied to a later edit.
+  const [rtspInput, setRtspInput] = useState("");
+  const [rtspPassword, setRtspPassword] = useState<string | null>(null);
+  const [rtspParsed, setRtspParsed] = useState(false);
+
+  function handleRtspInput(value: string) {
+    setRtspInput(value);
+    const parsed = parseRtspUrl(value);
+    if (!parsed) {
+      setRtspParsed(false);
+      setRtspPassword(null);
+      return;
+    }
+    form.setValue("hostname", parsed.hostname);
+    form.setValue("rtsp_port", parsed.port);
+    if (parsed.path) form.setValue("main_stream_path", parsed.path);
+    if (parsed.username) form.setValue("username", parsed.username);
+    setRtspPassword(parsed.password || null);
+    setRtspParsed(true);
+  }
+
   const submit = onSubmitHandler(form.validateAll, form.setSubmitAttempted, async () => {
     form.setSubmitting(true);
     form.setFormError(undefined);
@@ -564,7 +621,18 @@ function CameraFormDialog({
       const saved = isNew
         ? await createCamera(body)
         : await updateCamera(camera.id, body);
-      onSaved(saved, isNew);
+      // A password came along with the pasted URL - store it exactly like the
+      // Credential dialog would, right after the camera itself exists to attach it to.
+      // Best-effort: the camera is already saved either way, so a credential failure
+      // here is surfaced but does not roll back the save (matches this page's existing
+      // "add credential next" nudge for a camera saved with none).
+      const finalCamera = rtspPassword
+        ? await setCameraCredentials(saved.id, {
+            username: form.values.username || undefined,
+            password: rtspPassword,
+          })
+        : saved;
+      onSaved(finalCamera, isNew);
     } catch (err) {
       form.applyServerError(err);
     } finally {
@@ -613,6 +681,19 @@ function CameraFormDialog({
             }
           />
         )}
+        <Field
+          name="rtsp_url_paste"
+          label="Paste RTSP URL"
+          value={rtspInput}
+          onChange={handleRtspInput}
+          onBlur={() => {}}
+          placeholder="rtsp://username:password@10.0.0.2:554/stream1"
+          hint={
+            rtspParsed
+              ? `Parsed — filled in the fields below${rtspPassword ? ", including the password (stored as a credential on save, never shown here)" : ""}.`
+              : "Optional. Paste a full rtsp:// URL and the fields below fill themselves in — nothing here is saved as typed."
+          }
+        />
         <div className="field-row">
           <Field {...form.field("hostname")} label="Host" placeholder="nvr.example.com" />
           <Field {...form.field("rtsp_port")} label="Port" type="number" />
