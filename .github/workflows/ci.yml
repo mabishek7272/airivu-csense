@@ -31,15 +31,14 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U csense_app -d csense"
           --health-interval 5s --health-timeout 5s --health-retries 10
-      minio:
-        image: minio/minio:edge-cicd
-        env:
-          MINIO_ROOT_USER: ci_minio_user
-          MINIO_ROOT_PASSWORD: ci_minio_password
-        ports: ["9000:9000"]
-        options: >-
-          --health-cmd "curl -sf http://localhost:9000/minio/health/live"
-          --health-interval 5s --health-timeout 5s --health-retries 20
+    # No `minio:` here - see the "Start MinIO" step below. GitHub Actions' declarative
+    # `services:` block cannot override a container's command, and MinIO's own images
+    # need one (`server /data ...`) to actually start a server rather than print usage -
+    # the old `minio/minio:edge-cicd` tag baked that default in for exactly this
+    # services-block use case, but MinIO stopped publishing to Docker Hub entirely
+    # (found live while deploying elsewhere: every Hub tag now returns "pull access
+    # denied, repository does not exist") and quay.io/minio/minio, their real current
+    # registry, has no equivalent zero-args tag.
     env:
       POSTGRES_HOST: localhost
       POSTGRES_PORT: 5432
@@ -60,6 +59,21 @@ jobs:
       TEST_MINIO_PASSWORD: ci_minio_password
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        # Manual `docker run`, not a services: block - see this job's own comment above
+        # for why (services: cannot pass `server /data`, which quay.io/minio/minio's
+        # image needs as an explicit command; the old Docker-Hub-only `edge-cicd` tag
+        # that baked this in no longer exists anywhere).
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=ci_minio_user \
+            -e MINIO_ROOT_PASSWORD=ci_minio_password \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
 
       - uses: actions/setup-python@v5
         with:

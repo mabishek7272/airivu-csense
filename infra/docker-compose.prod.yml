@@ -158,7 +158,12 @@ services:
         limits: { cpus: "1.0", memory: 512M }
 
   minio:
-    image: minio/minio:latest
+    # MinIO stopped publishing to Docker Hub entirely (found live during the Huawei
+    # server deployment: every tag, including :latest, returns "pull access denied for
+    # minio/minio, repository does not exist" - not a transient error).
+    # quay.io/minio/minio is their real, current registry. Pinned rather than :latest
+    # for reproducibility.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     <<: *default-restart
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
