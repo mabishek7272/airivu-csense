@@ -391,20 +391,90 @@ class OnnxEngine:
         documentation, which doesn't exist for this migrated model: each of 9 character
         positions carries its own 37-way softmax (rows sum to 1.0), and 37 matches
         exactly one plausible charset size (blank/pad + 10 digits + 26 letters).
-
-        **No decode into actual plate text is implemented here.** The exact index-to-
-        character mapping is not verified: every real plate crop from this camera's
-        640x480 source tried during this work was too low-resolution for either a human
-        or the model to confidently read (per-position confidence 10-40% except a run of
-        trailing blank/pad positions), so there was no ground truth to check a charset
-        guess against. Shipping a guessed mapping would be exactly the failure mode
-        `OutputContractUnknownError` above exists to avoid elsewhere in this file - a
-        wrong guess here produces a plausible-looking plate number that is silently
-        wrong, not an error. Decoding this into text needs either the model's original
-        training config (the charset order) or a clearer reference image with a known
-        answer to validate against - tracked in CHECKLIST.md, not guessed at here.
         """
         return self._session.run(None, {self._input.name: self._preprocess(image)})
+
+    def decode_plate_text(self, image: np.ndarray) -> PlateOcrResult:
+        """Decodes `license-plate-ocr`'s `(1, 9, 37)` output into text - see
+        `PlateOcrResult`'s own docstring for the two things this decode cannot promise,
+        and CHECKLIST.md / CLARIFICATIONS.md for the 2026-09-19 decision to ship this
+        anyway, clearly labelled, rather than leave it as a raw tensor indefinitely.
+        """
+        outputs = self.raw_infer(image)
+        logits = outputs[0]
+        if logits.ndim == 3:
+            logits = logits[0]  # drop batch dim -> (9, 37)
+
+        chars: list[str] = []
+        char_confidences: list[float] = []
+        for row in logits:
+            index = int(np.argmax(row))
+            char = _PLATE_OCR_CHARSET[index] if index < len(_PLATE_OCR_CHARSET) else ""
+            if not char:
+                continue  # "" marks blank/pad - excluded from both the text and its
+                # confidences, so `char_confidences[i]` always lines up with `text[i]`
+                # rather than carrying a confidence for a padding slot nobody reads.
+            chars.append(char)
+            char_confidences.append(float(row[index]))
+
+        text = "".join(chars)
+        # The weakest position sets how much the whole *visible* plate can be trusted -
+        # a plate is only as readable as its worst-decoded character, not its average,
+        # and a confidently-blank padding slot should not water that down.
+        overall_confidence = min(char_confidences) if char_confidences else 0.0
+
+        return PlateOcrResult(
+            text=text,
+            char_confidences=[round(c, 4) for c in char_confidences],
+            confidence=round(overall_confidence, 4),
+            low_confidence=overall_confidence < PLATE_OCR_CONFIDENCE_THRESHOLD,
+        )
+
+
+# Assumed CTC-style convention for `license-plate-ocr`'s 37-class head: blank/pad first,
+# then digits, then uppercase letters - the most common ordering for this exact class
+# count in open ANPR/LPR models. **Unverified against this specific artifact** - no
+# ground-truth plate was ever readable enough (10-40% per-position confidence on every
+# real crop tried) to confirm index 11 is really 'A' and not, say, digit-adjacent noise.
+# `PlateOcrResult.charset_verified` is hardcoded False for exactly this reason: a
+# confidence score describes the model's certainty about a position, not whether this
+# mapping is the right one to read that position with. Revisit only by checking against a
+# clearer reference image with a known plate, or the model's original training config.
+_PLATE_OCR_CHARSET: tuple[str, ...] = (
+    "",  # 0: blank/pad
+    *"0123456789",  # 1-10
+    *"ABCDEFGHIJKLMNOPQRSTUVWXYZ",  # 11-36
+)
+
+# Matches this codebase's existing default rule confidence (csense_shared/pipeline/
+# rules.py) rather than inventing a separate number - "not confident enough to act on"
+# means the same threshold everywhere in this platform unless a specific model's own
+# measured behaviour says otherwise (see CLAUDE.md's night/IR section for that exception).
+PLATE_OCR_CONFIDENCE_THRESHOLD = 0.5
+
+
+@dataclass(frozen=True)
+class PlateOcrResult:
+    """Two independent reasons this text may still be wrong, surfaced separately rather
+    than collapsed into one score - a caller (or a UI) needs to know which applies:
+
+    `low_confidence`: the model itself was unsure about at least one character position
+    (worst-position softmax below `PLATE_OCR_CONFIDENCE_THRESHOLD`). This is the normal
+    "trust this less" signal and improves with a better crop.
+
+    `charset_verified`: always `False`. This is not a confidence measure at all - it is
+    an admission that `_PLATE_OCR_CHARSET`'s index-to-character mapping has never been
+    checked against a real, human-readable plate on this artifact. A *high*-confidence
+    result can still show the wrong character if the assumed ordering is wrong at that
+    index; no amount of model certainty fixes a wrong lookup table. Only a verified
+    reference image or the model's original training config can flip this to `True`.
+    """
+
+    text: str
+    char_confidences: list[float]
+    confidence: float
+    low_confidence: bool
+    charset_verified: bool = False
 
 
 # --- InsightFace ONNX (SCRFD detection / ArcFace recognition) -----------------------

@@ -22,7 +22,12 @@ import numpy as np
 from fastapi import FastAPI, File, Form, UploadFile
 from pydantic import BaseModel
 
-from app.engines import FACE_PARSING_LABELS, EngineUnavailableError, OutputContractUnknownError
+from app.engines import (
+    FACE_PARSING_LABELS,
+    EngineUnavailableError,
+    OutputContractUnknownError,
+    PlateOcrResult,
+)
 from app.loader import ArtifactVerificationError, ModelArtifactCache
 from app.pool import ModelPool
 from app.registry import get_by_version_id, get_deployable_by_name, get_state_by_name, list_deployable
@@ -235,6 +240,25 @@ class FaceStateOut(BaseModel):
     eyeglasses: float
     mask: float
     sunglasses: float
+
+
+class PlateOcrOut(BaseModel):
+    """Response for `/internal/v1/infer-plate-ocr`. Two independent trust signals, not
+    one collapsed score - see `PlateOcrResult`'s own docstring (`engines.py`) for why:
+    `low_confidence` is the model's own uncertainty and improves with a better crop;
+    `charset_verified` is always `false` because the index-to-character mapping itself
+    has never been checked against a real readable plate on this artifact. A caller (or
+    a UI) that shows `text` MUST show both flags next to it, not just one - a
+    high-confidence result can still be the wrong characters if the assumed charset
+    ordering is wrong, which `low_confidence` alone would not catch."""
+
+    model_name: str
+    text: str
+    char_confidences: list[float]
+    confidence: float
+    low_confidence: bool
+    charset_verified: bool
+    inference_ms: float
 
 
 class UnifaceValidationResponse(BaseModel):
@@ -569,6 +593,152 @@ async def validate_infer_uniface(
         frame_size=[image.shape[1], image.shape[0]],
         inference_ms=round(inference_ms, 2),
         **result,
+    )
+
+
+# Models approved for direct production access via /internal/v1/infer-uniface, per an
+# explicit product decision (2026-09-19) - a deliberately narrow subset of the 12 models
+# `_UNIFACE_VALIDATION_MODELS` above covers. The other 9 are excluded here on purpose:
+# each is either still in `validating` state, or classified `biometric` (or both), and
+# exposing a facial-recognition/landmark/attribute model to unconditional production
+# calls is a decision this build does not make unilaterally - see CLARIFICATIONS.md
+# #15/#16 for how the two biometric decisions already made in this codebase were
+# actually reached (explicit owner direction, recorded). Revisit only the same way.
+_UNIFACE_PRODUCTION_MODELS = {
+    "uniface-mobilegaze-estimation": "gaze",
+    "uniface-bisenet-parsing": "parsing",
+    "uniface-modnet-matting": "matte",
+}
+
+
+@app.post(
+    "/internal/v1/infer-uniface",
+    response_model=UnifaceValidationResponse,
+    tags=["runtime"],
+)
+async def infer_uniface(
+    model_name: str = Form(...),
+    confidence: float = Form(0.25),
+    frame: UploadFile = File(...),
+) -> UnifaceValidationResponse:
+    """Production, by-name counterpart to `/internal/v1/validate-infer-uniface`, for the
+    three uniface-zoo models that are both `validated` and non-biometric
+    (`_UNIFACE_PRODUCTION_MODELS` above). Deployable-state scoped like `/internal/v1/
+    infer` (via `_resolve_or_raise`), not validation-scoped like the version_id-addressed
+    route above.
+
+    On-demand only, addressed directly by the caller - there is no automated per-camera
+    pipeline path here. `pipeline_runtime` calls exactly one model per camera (see
+    `csense_shared/pipeline/runtime.py`'s `Assignment.model_name`, a single string, and
+    `admin_api/app/api/pipelines.py`'s own docstring: "Only one stage type is interpreted
+    anywhere in this codebase today: infer"). Wiring one of these into an automated
+    detection pipeline would need a real multi-stage pipeline concept - detector, then
+    post-processor - that does not exist in this codebase yet, and no product requirement
+    has asked for one. This endpoint exists so the three approved models are reachable at
+    all, without building that speculatively.
+
+    `gaze` and `parsing` still need a detected face first, same as the validation route
+    above: this runs the platform's own production face detector
+    (`_FACE_DETECTOR_MODEL_NAME`) - already `production`/biometric/owner-approved
+    (CLARIFICATIONS.md #16), not a new biometric processing step introduced by this
+    endpoint. `matte` runs on the full frame directly and needs no detector.
+    """
+    image = _decode_frame(await frame.read())
+    kind = _UNIFACE_PRODUCTION_MODELS.get(model_name)
+    if kind is None:
+        raise ApiError(
+            status_code=422,
+            code="not_a_production_uniface_model",
+            message=(
+                f"'{model_name}' is not one of the models available here: "
+                f"{sorted(_UNIFACE_PRODUCTION_MODELS)}. Other uniface-zoo models are "
+                "reachable only via /internal/v1/validate-infer-uniface (version_id-"
+                "addressed) pending validation/classification review."
+            ),
+        )
+
+    registered = await _resolve_or_raise(model_name)
+    pool: ModelPool = app.state.pool
+    loaded = await _load_in_threadpool(pool, registered)
+
+    detector_loaded = None
+    if kind != "matte":
+        async with _registry_session() as session:
+            detector_registered = await get_deployable_by_name(session, _FACE_DETECTOR_MODEL_NAME)
+        if detector_registered is None:
+            raise ApiError(
+                status_code=503,
+                code="face_detector_unavailable",
+                message=(
+                    f"'{_FACE_DETECTOR_MODEL_NAME}' has no deployable version right now - "
+                    f"'{model_name}' needs a detected face to run against."
+                ),
+            )
+        detector_loaded = await _load_in_threadpool(pool, detector_registered)
+
+    started = time.monotonic()
+    try:
+        result = await _run_uniface_inference(loaded, detector_loaded, kind, image, confidence)
+    except OutputContractUnknownError as exc:
+        raise ApiError(
+            status_code=501,
+            code="output_contract_unknown",
+            message=str(exc),
+            details={"model": registered.model_name, "runtime": registered.runtime},
+        ) from exc
+    inference_ms = (time.monotonic() - started) * 1000
+
+    return UnifaceValidationResponse(
+        model_name=loaded.model_name,
+        version_id=loaded.version_id,
+        task_code=registered.task_code,
+        frame_size=[image.shape[1], image.shape[0]],
+        inference_ms=round(inference_ms, 2),
+        **result,
+    )
+
+
+_PLATE_OCR_MODEL_NAME = "license-plate-ocr"
+
+
+@app.post("/internal/v1/infer-plate-ocr", response_model=PlateOcrOut, tags=["runtime"])
+async def infer_plate_ocr(
+    frame: UploadFile = File(...),
+) -> PlateOcrOut:
+    """Decodes a plate crop into text via `OnnxEngine.decode_plate_text` - see that
+    method's own docstring and `PlateOcrResult`'s for what this can and cannot promise.
+    2026-09-19 decision to ship this (CHECKLIST.md), after `raw_infer` alone left the
+    model producing a well-formed but un-decoded tensor with no consumer at all.
+
+    Takes an already-cropped plate image, not a full frame - the caller is expected to
+    have run `license-plate-detector` (via `/internal/v1/infer`) first and cropped its
+    detected box. This endpoint does not run the detector itself, matching `raw_infer`'s
+    own "takes a plate crop" contract rather than introducing a second detect-then-crop
+    path alongside the one `/internal/v1/infer` already provides for the detector model.
+
+    `PlateOcrOut.charset_verified` is always `false` - callers and any UI built on this
+    endpoint must surface that alongside `low_confidence`, not just the confidence
+    number, per this response model's own docstring.
+    """
+    import anyio
+
+    image = _decode_frame(await frame.read())
+    registered = await _resolve_or_raise(_PLATE_OCR_MODEL_NAME)
+    pool: ModelPool = app.state.pool
+    loaded = await _load_in_threadpool(pool, registered)
+
+    started = time.monotonic()
+    result: PlateOcrResult = await anyio.to_thread.run_sync(loaded.engine.decode_plate_text, image)
+    inference_ms = (time.monotonic() - started) * 1000
+
+    return PlateOcrOut(
+        model_name=loaded.model_name,
+        text=result.text,
+        char_confidences=result.char_confidences,
+        confidence=result.confidence,
+        low_confidence=result.low_confidence,
+        charset_verified=result.charset_verified,
+        inference_ms=round(inference_ms, 2),
     )
 
 

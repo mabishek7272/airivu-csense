@@ -17,7 +17,12 @@ AI_RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "ai_runtime"
 if str(AI_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(AI_RUNTIME_ROOT))
 
-from app.engines import OnnxEngine, decode_raw_yolo  # noqa: E402
+from app.engines import (  # noqa: E402
+    _PLATE_OCR_CHARSET,
+    OnnxEngine,
+    PLATE_OCR_CONFIDENCE_THRESHOLD,
+    decode_raw_yolo,
+)
 
 LABELS = {0: "person", 1: "helmet"}
 INPUT_SIZE = (640, 640)
@@ -306,3 +311,105 @@ def test_preprocess_keeps_raw_uint8_for_a_model_that_declares_it():
     assert tensor.shape == (1, 64, 128, 3)
     assert tensor.dtype == np.uint8
     assert tensor.max() > 1  # never rescaled to 0..1
+
+
+# --- decode_plate_text ---------------------------------------------------------------
+#
+# 2026-09-19: text decode for `license-plate-ocr`'s (1, 9, 37) output, shipped with two
+# explicit trust caveats rather than left as a raw tensor indefinitely - see
+# `PlateOcrResult`'s own docstring in engines.py for why `charset_verified` is
+# unconditionally False. These tests pin the decode arithmetic itself (blank stripping,
+# confidence alignment, the low-confidence threshold) using synthetic one-hot softmax
+# rows with a known answer - they cannot and do not claim the assumed charset ordering
+# is correct, only that the code decodes whatever ordering it is given consistently.
+
+
+def _plate_engine():
+    return OnnxEngine.__new__(OnnxEngine)
+
+
+def _one_hot_row(index: int, confidence: float) -> np.ndarray:
+    row = np.full(37, (1 - confidence) / 36, dtype=np.float32)
+    row[index] = confidence
+    return row
+
+
+def _fake_plate_logits(text: str, confidences: list[float], *, pad_to: int = 9) -> np.ndarray:
+    rows = [_one_hot_row(_PLATE_OCR_CHARSET.index(ch), conf) for ch, conf in zip(text, confidences)]
+    while len(rows) < pad_to:
+        rows.append(_one_hot_row(0, 0.95))  # confident trailing blank/pad
+    return np.expand_dims(np.stack(rows), axis=0)  # (1, 9, 37)
+
+
+def test_decode_plate_text_reads_each_position_via_argmax():
+    engine = _plate_engine()
+    engine.raw_infer = lambda image: [_fake_plate_logits("KA01AB123", [0.35, 0.22, 0.41, 0.18, 0.3, 0.28, 0.15, 0.33, 0.25])]
+    result = engine.decode_plate_text(image=None)
+    assert result.text == "KA01AB123"
+    assert result.char_confidences == [0.35, 0.22, 0.41, 0.18, 0.3, 0.28, 0.15, 0.33, 0.25]
+
+
+def test_decode_plate_text_strips_trailing_blank_pad_positions():
+    """A 6-character plate padded to 9 with confident blanks must not appear as
+    'AB1234\\x00\\x00\\x00' or similar - blanks are absent from `text` entirely."""
+    engine = _plate_engine()
+    engine.raw_infer = lambda image: [_fake_plate_logits("AB1234", [0.9] * 6)]
+    result = engine.decode_plate_text(image=None)
+    assert result.text == "AB1234"
+    assert len(result.char_confidences) == len(result.text) == 6
+
+
+def test_decode_plate_text_confidence_excludes_blank_pad_positions():
+    """An uncertain trailing blank (the model isn't sure there's nothing there) must not
+    drag down the confidence of a plate whose visible characters were all read
+    confidently - the blank never appears in `text`, so it must not appear in the
+    confidence that describes `text`."""
+    engine = _plate_engine()
+    logits = _fake_plate_logits("AB1234", [0.9] * 6)
+    logits[0, 6] = _one_hot_row(0, 0.05)  # very uncertain blank at position 7
+    engine.raw_infer = lambda image: [logits]
+    result = engine.decode_plate_text(image=None)
+    assert result.text == "AB1234"
+    assert result.confidence == 0.9
+    assert result.low_confidence is False
+
+
+def test_decode_plate_text_confidence_is_the_weakest_visible_position():
+    """Overall confidence is a minimum, not an average - one badly-read character should
+    make the whole plate read as untrustworthy, not be diluted by the other eight."""
+    engine = _plate_engine()
+    engine.raw_infer = lambda image: [_fake_plate_logits("ABCDEFGHI", [0.9, 0.9, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9])]
+    result = engine.decode_plate_text(image=None)
+    assert result.confidence == 0.1
+
+
+def test_decode_plate_text_low_confidence_flag_matches_the_shared_threshold():
+    engine = _plate_engine()
+    just_above = PLATE_OCR_CONFIDENCE_THRESHOLD + 0.01
+    just_below = PLATE_OCR_CONFIDENCE_THRESHOLD - 0.01
+
+    engine.raw_infer = lambda image: [_fake_plate_logits("AB1234", [just_above] * 6)]
+    assert engine.decode_plate_text(image=None).low_confidence is False
+
+    engine.raw_infer = lambda image: [_fake_plate_logits("AB1234", [just_below] * 6)]
+    assert engine.decode_plate_text(image=None).low_confidence is True
+
+
+def test_decode_plate_text_charset_verified_is_always_false():
+    """Not a confidence measure - see `PlateOcrResult`'s own docstring. Pinned as its own
+    test so a future change cannot flip this to True without deliberately touching the
+    line that does it, which is the whole point: this can only become True alongside a
+    real verification, never by accident."""
+    engine = _plate_engine()
+    engine.raw_infer = lambda image: [_fake_plate_logits("AB1234", [0.99] * 6)]
+    assert engine.decode_plate_text(image=None).charset_verified is False
+
+
+def test_decode_plate_text_handles_an_all_blank_result():
+    engine = _plate_engine()
+    engine.raw_infer = lambda image: [_fake_plate_logits("", [])]
+    result = engine.decode_plate_text(image=None)
+    assert result.text == ""
+    assert result.char_confidences == []
+    assert result.confidence == 0.0
+    assert result.low_confidence is True

@@ -1062,20 +1062,29 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
           ([test_ai_runtime_decoder.py](backend/tests/test_ai_runtime_decoder.py))
           covering NCHW/NHWC detection and dtype handling directly, not just this one
           model's shape.
-    - [ ] **Text decode is not implemented**, on purpose. With the layout/dtype bugs
-          fixed, the model runs and returns a well-formed `(1, 9, 37)` output - 9
-          character positions, each a 37-way softmax (blank/pad + 10 digits + 26
-          letters is the one class count that fits). But the actual index-to-character
-          mapping is unverified: every real plate crop from this camera's 640x480
-          source tried during this work was too low-resolution for a human or the model
-          to confidently read it (10-40% per-position confidence, trailing positions
-          converging on what looks like blank/pad). Shipping a guessed charset mapping
-          would be exactly the failure mode `OutputContractUnknownError` exists to avoid
-          elsewhere in this same file - a wrong guess produces a plausible-looking plate
-          number that is silently wrong. Needs either the model's original training
-          config or a clearer reference image with a known answer to check against; not
-          guessed at here. Documented in `raw_infer`'s own docstring
-          ([engines.py](backend/ai_runtime/app/engines.py)).
+    - [x] **2026-09-19: text decode implemented, deliberately labelled rather than
+          silently trusted** - `OnnxEngine.decode_plate_text()` + new
+          `POST /internal/v1/infer-plate-ocr` (owner-approved: ship the decode with a
+          visible caveat, not leave it as a raw tensor indefinitely). Two independent
+          trust signals, surfaced separately because they mean different things:
+          `low_confidence` (the model's own per-position uncertainty, worst-position-
+          wins - normal, improves with a better crop) and `charset_verified` (**always
+          `false`** - an admission that the assumed blank+digit+A-Z index ordering has
+          never been checked against a real readable plate on this artifact; a
+          *high*-confidence result can still show the wrong character if that ordering
+          is wrong, which `low_confidence` alone would never catch). Both flags are part
+          of the response contract (`PlateOcrOut`) - a caller cannot show `text` without
+          them. 7 new unit tests pin the decode arithmetic itself (blank/pad stripping,
+          confidence alignment to only the visible characters, the shared 0.5 threshold)
+          against synthetic known-answer tensors
+          ([test_ai_runtime_decoder.py](backend/tests/test_ai_runtime_decoder.py)) -
+          they verify the code decodes consistently, not that the charset guess is
+          correct, which no unit test can establish. **Verified live**: rebuilt
+          `ai-runtime`, called the real endpoint inside the running container - real
+          200, a 9-char decode, `low_confidence: true` and `charset_verified: false`
+          both present exactly as designed. Still needs either the model's original
+          training config or a clearer reference image with a known answer before
+          `charset_verified` could ever become `true`.
 - [x] Internal runtime API: `/internal/v1/models`, `/models/{name}/load`, `/infer`,
       `/engines`. Deliberately **not** exposed through Traefik - it takes raw frames and
       returns raw detections with no tenant scoping, so it is called by the pipeline
@@ -2286,6 +2295,55 @@ failed at runtime on the first tenant-scoped query. Now uses `set_config(..., tr
               degenerate 0.0. Full backend suite green alongside them (**528 passed, 316
               skipped, 0 failed**); `ruff check backend scripts` clean - one real B905
               finding (`zip()` without `strict=`) was fixed rather than suppressed.
+- [x] **2026-09-19: a real, narrow production path opened for 3 of the 15 uniface
+      models - `uniface-mobilegaze-estimation`, `uniface-bisenet-parsing`,
+      `uniface-modnet-matting`.** Before this, every uniface model was reachable only
+      through `/internal/v1/validate-infer-uniface` (version_id-addressed, validation-
+      scoped) - real decode logic, zero production callers. Two things checked before
+      building anything, not assumed:
+  - **InsightFace was already `production`, not `revoked`.** An earlier exploration
+    pass this session reported all 5 InsightFace models as revoked with zero
+    production assignments - checked directly against the live `model_versions` table
+    before acting on it and found that claim flatly wrong: all 5 have been `production`,
+    `access_classification=biometric`, since 2026-08-26 (CLARIFICATIONS.md #16). No
+    "security review + promotion" work was needed or done; the earlier finding was
+    stale/incorrect and is corrected here rather than quietly acted on.
+  - **Deploying the other 12 uniface models is a real product/legal decision, not a
+    wiring task, and was scoped down on purpose.** Checked live: only 3 of the 15 have
+    reached `validated` state, and all 3 happen to be `access_classification=standard`
+    (non-biometric); the other 12 are still `validating` and/or `biometric`, and one
+    (`minifasnet-antispoofing`) failed its own golden-v1 validation run outright.
+    Explicitly decided (asked, not assumed): deploy only the 3 validated/non-biometric
+    models, and even for those, build the minimum real reach rather than the full
+    automated pipeline - see below for why the full version isn't a small task either.
+  - **New `POST /internal/v1/infer-uniface`** (`ai_runtime/app/main.py`), by-name and
+    `DEPLOYABLE_STATES`-scoped like `/internal/v1/infer`, restricted to exactly the 3
+    approved models via `_UNIFACE_PRODUCTION_MODELS` - any other uniface model name
+    (including the 12 excluded ones) gets a 422 naming the allow-list, not a 404 or a
+    silent pass-through. `gaze`/`parsing` still run the platform's own production face
+    detector first (the same InsightFace SCRFD model above, already owner-approved),
+    reusing `_run_uniface_inference` rather than duplicating its decode branches;
+    `matte` runs on the full frame directly.
+  - **On-demand only, deliberately not wired into the automated per-camera pipeline.**
+    Checked before assuming otherwise: `pipeline_runtime`'s `Assignment.model_name` is
+    a single string (`csense_shared/pipeline/runtime.py`), and
+    `admin_api/app/api/pipelines.py`'s own docstring says outright "Only one stage type
+    is interpreted anywhere in this codebase today: infer." A real multi-stage
+    (detector-then-postprocessor) pipeline concept does not exist, and no product
+    requirement has asked for gaze/parsing/matting as an automated camera-rule feature
+    - building that speculatively was explicitly declined in favour of just making the
+    3 approved models reachable on demand.
+  - **Verified live**, not just re-imported: rebuilt `ai-runtime`, called all three
+    approved models against a real image inside the running container - `matte` (real
+    `mean_alpha`/`coverage_fraction`), `bisenet-parsing` (2 real faces via the live
+    face detector, real per-class-fraction output), and a 422 confirmed for a non-
+    approved model (`uniface-fairface-attributes`) naming the 3-model allow-list.
+- [x] **2026-09-19: `license-plate-ocr` text decode implemented** - see this file's own
+      Phase 4 entry above (search "text decode implemented, deliberately labelled") for
+      the full writeup: `OnnxEngine.decode_plate_text()`, new
+      `POST /internal/v1/infer-plate-ocr`, `low_confidence` and `charset_verified`
+      (always `false`) surfaced as two independent flags, 7 new unit tests, verified
+      live against the running `ai-runtime`.
 
 
 ## Phase 5 — Incident, Evidence, and Notification MVP
