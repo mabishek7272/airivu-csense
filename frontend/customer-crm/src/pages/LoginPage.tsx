@@ -2,10 +2,18 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useBrand } from "../branding/BrandProvider";
 
 export function LoginPage() {
   const { login, register } = useAuth();
+  const brand = useBrand();
   const navigate = useNavigate();
+  // A URL that resolves to (or was clearly meant to look like) a specific brand's own
+  // private login page must never offer "create a brand-new, unrelated organization"
+  // — that's a real security-relevant surface, not just a visual leak, so this checks
+  // `hasSlug` (was a brand path present at all) rather than `isDefaultBrand` (did it
+  // actually resolve) - a misspelled/unresolved brand slug should still hide this.
+  const allowSelfRegistration = !brand.hasSlug;
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,11 +45,14 @@ export function LoginPage() {
   return (
     <main className="auth-shell">
       <div className="card auth-card">
-        <h1>AIRIVU CSense</h1>
+        {!brand.isDefaultBrand && brand.logoUrl && (
+          <img src={brand.logoUrl} alt="" style={{ height: 40, marginBottom: 12, objectFit: "contain" }} />
+        )}
+        <h1>{brand.isDefaultBrand ? "AIRIVU CSense" : brand.displayName}</h1>
         <p>{mode === "login" ? "Sign in to your workspace" : "Create your organization"}</p>
 
         <form onSubmit={handleSubmit}>
-          {mode === "register" && (
+          {mode === "register" && allowSelfRegistration && (
             <>
               <div className="field">
                 <label htmlFor="org">Organization name</label>
@@ -108,6 +119,7 @@ export function LoginPage() {
           </button>
         </form>
 
+        {allowSelfRegistration && (
         <button
           type="button"
           className="link"
@@ -121,6 +133,7 @@ export function LoginPage() {
             ? "Need an account? Register your organization"
             : "Already have an account? Sign in"}
         </button>
+        )}
       </div>
     </main>
   );

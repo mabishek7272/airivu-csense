@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useBrand } from "../branding/BrandProvider";
 import { SupportGrantBanner } from "./SupportGrantBanner";
 import {
   AuditIcon,
@@ -77,6 +78,7 @@ const NAV_GROUPS: { label: string; items: { to: string; label: string; Icon: typ
 
 export function Layout({ children }: { children: ReactNode }) {
   const { logout, tenantId } = useAuth();
+  const brand = useBrand();
 
   return (
     <div className="app-shell">
@@ -87,16 +89,31 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <aside className="app-sidebar">
         <div className="app-brand">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Z" stroke="#98134E" strokeWidth="1.4" fill="rgba(152,19,78,.18)" />
-            <circle cx="12" cy="12" r="3.4" stroke="#FF8ABB" strokeWidth="1.4" />
-            <circle cx="12" cy="12" r="1.1" fill="#FF8ABB" />
-            <path d="M12 5.6v2.4M12 16v2.4M6.6 9v6M17.4 9v6" stroke="#98134E" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-          <div>
-            AIRIVU
-            <span>CSENSE</span>
-          </div>
+          {brand.isDefaultBrand ? (
+            <>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Z" stroke="#98134E" strokeWidth="1.4" fill="rgba(152,19,78,.18)" />
+                <circle cx="12" cy="12" r="3.4" stroke="#FF8ABB" strokeWidth="1.4" />
+                <circle cx="12" cy="12" r="1.1" fill="#FF8ABB" />
+                <path d="M12 5.6v2.4M12 16v2.4M6.6 9v6M17.4 9v6" stroke="#98134E" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+              <div>
+                AIRIVU
+                <span>CSENSE</span>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* A configured brand with no logo uploaded yet is a real, valid state
+                  (colors/name set, logo pending) - it must never fall back to showing
+                  AIRIVU's own mark, which is exactly the leak white-label branding
+                  exists to prevent. Text-only wordmark until a logo exists. */}
+              {brand.logoUrl && (
+                <img src={brand.logoUrl} alt="" width={26} height={26} style={{ objectFit: "contain" }} />
+              )}
+              <div>{brand.displayName}</div>
+            </>
+          )}
         </div>
 
         {/* Layout only ever renders once RequireAuth has let a page through, so this

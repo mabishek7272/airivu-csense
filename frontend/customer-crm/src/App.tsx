@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { BrandProvider } from "./branding/BrandProvider";
 import { NotificationProvider } from "./components/Notifications";
 import { CamerasPage } from "./pages/CamerasPage";
 import { EdgePage } from "./pages/EdgePage";
@@ -183,12 +184,17 @@ function AppRoutes() {
   );
 }
 
-export default function App() {
+export default function App({ brandSlug }: { brandSlug: string | null }) {
   return (
     <AuthProvider>
-      <NotificationProvider>
-        <AppRoutes />
-      </NotificationProvider>
+      {/* Inside AuthProvider, not outside: BrandProvider calls useAuth() itself to
+          know when to switch from the pre-login (URL-derived) branding to the
+          post-login (session-trusted) branding. */}
+      <BrandProvider brandSlug={brandSlug}>
+        <NotificationProvider>
+          <AppRoutes />
+        </NotificationProvider>
+      </BrandProvider>
     </AuthProvider>
   );
 }
