@@ -45,9 +45,20 @@ export function LoginPage() {
   return (
     <main className="auth-shell">
       <div className="card auth-card">
-        {!brand.isDefaultBrand && brand.logoUrl && (
+        {/* The default (unbranded) login gets its own static mark here rather than a
+            served brand.logoUrl - there is no org_branding row for "no brand at all",
+            so nothing to fetch; /csense-default-logo.png is the same source image as
+            the Airivu CSense org's own upload, just baked into the build for the case
+            where no org resolves at all. */}
+        {!brand.isDefaultBrand && brand.logoUrl ? (
           <img src={brand.logoUrl} alt="" style={{ height: 40, marginBottom: 12, objectFit: "contain" }} />
-        )}
+        ) : brand.isDefaultBrand ? (
+          <img
+            src="/csense-default-logo.png"
+            alt=""
+            style={{ height: 40, marginBottom: 12, objectFit: "contain" }}
+          />
+        ) : null}
         <h1>{brand.isDefaultBrand ? "AIRIVU CSense" : brand.displayName}</h1>
         <p>{mode === "login" ? "Sign in to your workspace" : "Create your organization"}</p>
 

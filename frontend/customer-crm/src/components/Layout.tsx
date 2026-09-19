@@ -91,12 +91,11 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="app-brand">
           {brand.isDefaultBrand ? (
             <>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Z" stroke="#98134E" strokeWidth="1.4" fill="rgba(152,19,78,.18)" />
-                <circle cx="12" cy="12" r="3.4" stroke="#FF8ABB" strokeWidth="1.4" />
-                <circle cx="12" cy="12" r="1.1" fill="#FF8ABB" />
-                <path d="M12 5.6v2.4M12 16v2.4M6.6 9v6M17.4 9v6" stroke="#98134E" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
+              {/* Same source image as the Airivu CSense org's own upload (see
+                  LoginPage's identical use of this file) - there is no org_branding row
+                  for "no brand at all" to fetch a logoUrl from, so this is baked into
+                  the build rather than served, replacing the old hand-drawn SVG mark. */}
+              <img src="/csense-default-logo.png" alt="" width={26} height={26} style={{ objectFit: "contain" }} />
               <div>
                 AIRIVU
                 <span>CSENSE</span>
