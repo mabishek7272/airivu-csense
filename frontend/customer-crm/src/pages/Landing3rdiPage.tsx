@@ -13,7 +13,11 @@ export function Landing3rdiPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "var(--bg, #0a0a0a)",
+        // Creamy white, not the app's own dark --bg token - deliberately not a
+        // white-labeled surface (see this file's own docstring), and the logo's own
+        // source PNG already has a white background baked in, so this avoids a visible
+        // seam around it.
+        background: "#FAF6EF",
       }}
     >
       <img

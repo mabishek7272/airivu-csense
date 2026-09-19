@@ -24,3 +24,22 @@ export function detectBrandSlug(pathname: string): string | null {
   if (RESERVED_TOP_LEVEL_SEGMENTS.has(first)) return null;
   return first;
 }
+
+/** Is this hostname the bare parent-company domain (3rdi.in), as opposed to the real
+ *  customer-facing app.* host — the ONE thing that decides whether a slug-less bare
+ *  root ("/") should show the 3RDI splash (Landing3rdiPage) instead of the normal app.
+ *
+ *  Real bug this exists to fix: both `app.3rdi.in` and the bare `3rdi.in` route to this
+ *  same customer-crm build (two Traefik Host() rules, one service — see
+ *  infra/traefik/dynamic.prod.yml's `customer-crm`/`customer-crm-apex` routers), and
+ *  `window.location.pathname` is identical ("/") for both — path alone cannot tell them
+ *  apart, which is exactly how the splash first leaked onto the real app.3rdi.in login.
+ *
+ *  Deliberately keyed on the known "app." prefix rather than an explicit apex allowlist:
+ *  any hostname that isn't the real customer-facing entry point (a stray/unrecognized
+ *  host, a future apex variant, local dev's own `app.localhost`) falls back to "not the
+ *  apex" — i.e. the real product — which is the safe direction to default in, not the
+ *  splash. */
+export function isApexHostname(hostname: string): boolean {
+  return !hostname.startsWith("app.") && hostname !== "localhost" && hostname !== "127.0.0.1";
+}

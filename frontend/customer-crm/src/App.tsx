@@ -39,16 +39,19 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children;
 }
 
-function AppRoutes({ brandSlug }: { brandSlug: string | null }) {
+function AppRoutes({ brandSlug, isApex }: { brandSlug: string | null; isApex: boolean }) {
   return (
     <Routes>
-      {/* The bare 3rdi.in root (no brand slug) is the 3RDI parent-company splash, not
-          a login form - see Landing3rdiPage's own docs. Under a brand's own basename
-          (e.g. 3rdi.in/eaigleye/ with nothing after it), this same "/" instead means
-          that brand's own bare root, which keeps its normal behavior (redirect into
-          the app via the catch-all below) - only the truly slug-less case shows the
-          splash. */}
-      <Route path="/" element={brandSlug ? <Navigate to="/dashboard" replace /> : <Landing3rdiPage />} />
+      {/* The bare 3rdi.in root (no brand slug, AND the hostname is the apex, not
+          app.3rdi.in) is the 3RDI parent-company splash, not a login form - see
+          Landing3rdiPage's and isApexHostname's own docs. Checking isApex here, not
+          just "no brand slug", is the real fix for a real bug: app.3rdi.in's own bare
+          root also has pathname "/" with no slug, and briefly showed the splash too
+          before hostname was taken into account. Under a brand's own basename (e.g.
+          3rdi.in/eaigleye/ with nothing after it), this same "/" instead means that
+          brand's own bare root, which keeps its normal behavior (redirect into the app
+          via the catch-all below). */}
+      <Route path="/" element={!brandSlug && isApex ? <Landing3rdiPage /> : <Navigate to="/dashboard" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
       <Route
@@ -192,7 +195,7 @@ function AppRoutes({ brandSlug }: { brandSlug: string | null }) {
   );
 }
 
-export default function App({ brandSlug }: { brandSlug: string | null }) {
+export default function App({ brandSlug, isApex }: { brandSlug: string | null; isApex: boolean }) {
   return (
     <AuthProvider>
       {/* Inside AuthProvider, not outside: BrandProvider calls useAuth() itself to
@@ -200,7 +203,7 @@ export default function App({ brandSlug }: { brandSlug: string | null }) {
           post-login (session-trusted) branding. */}
       <BrandProvider brandSlug={brandSlug}>
         <NotificationProvider>
-          <AppRoutes brandSlug={brandSlug} />
+          <AppRoutes brandSlug={brandSlug} isApex={isApex} />
         </NotificationProvider>
       </BrandProvider>
     </AuthProvider>
