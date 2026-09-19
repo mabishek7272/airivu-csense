@@ -3,10 +3,11 @@
 # `docker-compose.yml`, only by `docker-compose.prod.yml`).
 #
 # **Before first deploy, replace every `app.example.com` / `console.example.com` /
-# `demo.example.com` / `storage.example.com` placeholder below with your real domains**
-# (a `sed` one-liner is in docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md) - Traefik's file
-# provider does not do environment-variable substitution the way docker-compose.yml
-# itself does, so this file needs a real edit, not an env var, to carry real domains.
+# `demo.example.com` / `storage.example.com` / bare `example.com` placeholder below
+# with your real domains** (a `sed` one-liner is in docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md)
+# - Traefik's file provider does not do environment-variable substitution the way
+# docker-compose.yml itself does, so this file needs a real edit, not an env var, to
+# carry real domains.
 #
 # Same routing rules, security headers, rate limits, and CORS shape as dynamic.yml -
 # only the entrypoint (websecure/443 instead of web/80) and TLS (a cert resolver on every
@@ -43,6 +44,19 @@ http:
 
     customer-crm:
       rule: "Host(`app.example.com`)"
+      service: customer-crm
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
+    # Bare apex domain, same service as customer-crm above - the React app's own
+    # client-side routing (frontend/customer-crm/src/App.tsx, main.tsx's slug
+    # detection) decides what to show: no brand slug in the path means the parent-
+    # company splash (Landing3rdiPage), not the customer-crm login. Only needed if the
+    # apex itself is meant to be reachable directly (as opposed to only app.*) - added
+    # once a real DNS record for the bare domain existed, not speculatively.
+    customer-crm-apex:
+      rule: "Host(`example.com`)"
       service: customer-crm
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }

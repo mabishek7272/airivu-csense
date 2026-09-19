@@ -80,8 +80,13 @@ it's already gitignored).
 
 ```bash
 cd infra/traefik
-sed -i 's/app\.example\.com/app.yourdomain.com/g; s/console\.example\.com/console.yourdomain.com/g; s/demo\.example\.com/demo.yourdomain.com/g; s/storage\.example\.com/storage.yourdomain.com/g' dynamic.prod.yml
+sed -i 's/app\.example\.com/app.yourdomain.com/g; s/console\.example\.com/console.yourdomain.com/g; s/demo\.example\.com/demo.yourdomain.com/g; s/storage\.example\.com/storage.yourdomain.com/g; s/Host(`example\.com`)/Host(`yourdomain.com`)/g' dynamic.prod.yml
 ```
+
+The bare-apex router (`customer-crm-apex`) is optional — only needed if the apex domain
+itself should be reachable directly (customer-crm's own frontend routing then decides
+what to show there); skip that one `sed` clause and remove the router if you only want
+the `app.`/`console.`/`demo.`/`storage.` subdomains.
 
 Set the matching `CUSTOMER_CRM_ORIGIN=https://app.yourdomain.com` and
 `DEVELOPER_CONSOLE_ORIGIN=https://console.yourdomain.com` in `.env` — these two must
