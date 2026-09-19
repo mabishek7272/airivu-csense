@@ -58,7 +58,7 @@ jobs:
       TEST_MINIO_USER: ci_minio_user
       TEST_MINIO_PASSWORD: ci_minio_password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Start MinIO
         # Manual `docker run`, not a services: block - see this job's own comment above
@@ -147,7 +147,7 @@ jobs:
       run:
         working-directory: frontend/customer-crm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -167,7 +167,7 @@ jobs:
       run:
         working-directory: frontend/developer-console
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -190,7 +190,7 @@ jobs:
       run:
         working-directory: mobile/app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -215,7 +215,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -270,7 +270,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Trivy filesystem + config scan
         uses: aquasecurity/trivy-action@v0.36.0
