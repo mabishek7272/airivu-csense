@@ -82,7 +82,11 @@ function applyBranding(b: Branding | null) {
     root.removeProperty("--canvas");
   }
 
-  document.title = b ? `${b.display_name} — powered by AIRIVU CSense` : "AIRIVU CSense — Customer CRM";
+  // A branded org's tab title must carry zero AIRIVU/CSense identity, matching the
+  // same "full white-label" decision applied to the login page and app shell — a
+  // "powered by AIRIVU CSense" suffix here was a real leak, caught by production
+  // screenshots (browser tabs are easy to overlook since the page body looks correct).
+  document.title = b ? b.display_name : "AIRIVU CSense — Customer CRM";
 
   // No <link rel="icon"> exists in index.html by default — see the tag added there
   // with id="brand-favicon" as the element this always finds.
