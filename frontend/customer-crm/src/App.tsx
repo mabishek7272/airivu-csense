@@ -14,6 +14,7 @@ import { ZonesPage } from "./pages/ZonesPage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
+import { Landing3rdiPage } from "./pages/Landing3rdiPage";
 import { LoginPage } from "./pages/LoginPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
@@ -38,9 +39,16 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children;
 }
 
-function AppRoutes() {
+function AppRoutes({ brandSlug }: { brandSlug: string | null }) {
   return (
     <Routes>
+      {/* The bare 3rdi.in root (no brand slug) is the 3RDI parent-company splash, not
+          a login form - see Landing3rdiPage's own docs. Under a brand's own basename
+          (e.g. 3rdi.in/eaigleye/ with nothing after it), this same "/" instead means
+          that brand's own bare root, which keeps its normal behavior (redirect into
+          the app via the catch-all below) - only the truly slug-less case shows the
+          splash. */}
+      <Route path="/" element={brandSlug ? <Navigate to="/dashboard" replace /> : <Landing3rdiPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
       <Route
@@ -192,7 +200,7 @@ export default function App({ brandSlug }: { brandSlug: string | null }) {
           post-login (session-trusted) branding. */}
       <BrandProvider brandSlug={brandSlug}>
         <NotificationProvider>
-          <AppRoutes />
+          <AppRoutes brandSlug={brandSlug} />
         </NotificationProvider>
       </BrandProvider>
     </AuthProvider>
