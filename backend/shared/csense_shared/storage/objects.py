@@ -9,7 +9,13 @@ Bucket layout and lifecycle come straight from SCH §14. Two rules drive this mo
     silently repointed at different content (TRD §15.2).
 
 Bucket policies deny public access; readers get scoped pre-signed URLs only after an
-authorization check in the calling service (TRD §14).
+authorization check in the calling service (TRD §14). **One deliberate exception**:
+`BUCKET_BRANDING` (white-label logos/favicons) is public-read, not presigned - these
+assets are referenced from alert emails that must still render correctly months after
+being sent, and a presigned URL's expiry would eventually break every old email's logo.
+Nothing branding-bucket-adjacent is sensitive (an org's own uploaded logo is meant to be
+publicly visible, by definition, the moment it's used anywhere), so this is a narrow,
+named trade rather than a weakening of the rule for every other bucket.
 """
 from __future__ import annotations
 
@@ -29,6 +35,7 @@ BUCKET_EXPORTS = "csense-exports"
 BUCKET_DIAGNOSTICS = "csense-diagnostics"
 BUCKET_AUDIT_ARCHIVE = "csense-audit-archive"
 BUCKET_BACKUPS = "csense-backups"
+BUCKET_BRANDING = "csense-branding"
 
 ALL_BUCKETS = (
     BUCKET_EVIDENCE,
@@ -38,7 +45,22 @@ ALL_BUCKETS = (
     BUCKET_DIAGNOSTICS,
     BUCKET_AUDIT_ARCHIVE,
     BUCKET_BACKUPS,
+    BUCKET_BRANDING,
 )
+
+# Buckets given a public-read policy instead of this module's default (deny-all,
+# presigned-only) - see the module docstring's own "one deliberate exception" note.
+PUBLIC_READ_BUCKETS = (BUCKET_BRANDING,)
+
+
+def _public_read_policy(bucket: str) -> str:
+    """Standard AWS/MinIO public-read bucket policy JSON: anonymous GetObject only -
+    no list, no write, no delete. `import json` is deliberately avoided for one small
+    fixed document; an f-string keeps this a single, easily-diffed literal."""
+    return (
+        '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},'
+        f'"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/*"]}}]}}'
+    )
 
 
 def create_client(settings: Settings) -> Minio:
@@ -79,12 +101,18 @@ def create_presign_client(settings: Settings) -> Minio:
 
 
 def ensure_buckets(client: Minio) -> list[str]:
-    """Creates any missing buckets. Idempotent; returns the ones actually created."""
+    """Creates any missing buckets and (re)applies the public-read policy to
+    `PUBLIC_READ_BUCKETS`. Both parts are idempotent; returns the buckets actually
+    created (the policy application always runs, even for an already-existing bucket,
+    since a bucket created before this policy existed would otherwise stay
+    private-by-default forever)."""
     created = []
     for bucket in ALL_BUCKETS:
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
             created.append(bucket)
+    for bucket in PUBLIC_READ_BUCKETS:
+        client.set_bucket_policy(bucket, _public_read_policy(bucket))
     return created
 
 
@@ -109,6 +137,26 @@ def model_artifact_key(model_name: str, version_label: str, sha256: str, extensi
 def tenant_evidence_key(tenant_id: UUID, incident_id: UUID, evidence_id: UUID, variant: str) -> str:
     """SCH §14: `{tenant}/incidents/{incident}/{evidence_id}/{variant}.jpg`."""
     return f"{tenant_id}/incidents/{incident_id}/{evidence_id}/{variant}.jpg"
+
+
+def branding_asset_key(organization_id: UUID, kind: str, sha256: str, extension: str) -> str:
+    """`{organization_id}/branding/{kind}/{sha256}.{ext}` in `BUCKET_BRANDING`, `kind`
+    being `logo` or `favicon`. Content-addressed like `model_artifact_key`: a re-upload
+    of identical bytes lands at the same key rather than silently orphaning the previous
+    object every time an admin re-saves the same file."""
+    ext = extension if extension.startswith(".") else f".{extension}"
+    return f"{organization_id}/branding/{kind}/{sha256}{ext}"
+
+
+def public_branding_url(settings: Settings, object_key: str) -> str:
+    """Plain (non-presigned) URL for an object in the public-read `BUCKET_BRANDING` -
+    deliberately not `create_presign_client`: a presigned URL expires, and a logo
+    referenced from a months-old alert email must still resolve. Uses the same
+    externally-reachable `minio_presign_endpoint` the presign client signs against
+    (never the internal container-network hostname), because this URL is also handed
+    straight to a real browser."""
+    scheme = "https" if settings.minio_presign_use_tls else "http"
+    return f"{scheme}://{settings.minio_presign_endpoint}/{BUCKET_BRANDING}/{object_key}"
 
 
 def tenant_export_key(tenant_id: UUID, export_type: str, job_id: UUID) -> str:

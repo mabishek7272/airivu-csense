@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     audit,
     auth,
+    branding,
     health,
     licensing,
     mfa,
@@ -24,6 +25,7 @@ from csense_shared.errors import ApiError, api_error_handler, unhandled_exceptio
 from csense_shared.logging import configure_logging, get_logger
 from csense_shared.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 from csense_shared.notifications.bootstrap import build_registry
+from csense_shared.storage.objects import create_client, ensure_buckets
 
 settings = get_settings()
 configure_logging("admin-api", settings.environment, settings.log_level)
@@ -37,6 +39,17 @@ async def lifespan(app: FastAPI):
     app.state.redis = create_redis_client(settings)
     app.state.settings = settings
     app.state.provider_registry = build_registry(settings)
+
+    # Only needed for branding asset upload (logos/favicons) - not fatal if unavailable,
+    # same non-fatal shape tenant_api's own object_store wiring already uses, since no
+    # other admin_api endpoint touches object storage today.
+    try:
+        app.state.object_store = create_client(settings)
+        ensure_buckets(app.state.object_store)
+    except Exception:  # noqa: BLE001
+        logger.exception("object_store_unavailable_branding_upload_disabled")
+        app.state.object_store = None
+
     logger.info("admin_api_started")
     try:
         yield
@@ -73,6 +86,7 @@ app.include_router(health.router)
 app.include_router(audit.router)
 app.include_router(auth.router)
 app.include_router(organizations.router)
+app.include_router(branding.router)
 app.include_router(models.router)
 app.include_router(pipelines.router)
 app.include_router(notifications.router)

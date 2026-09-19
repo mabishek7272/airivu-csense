@@ -9,3 +9,9 @@ argon2-cffi>=23.1
 pyjwt[crypto]>=2.8
 python-json-logger>=2.0
 minio>=7.2
+# Needed by branding.py's logo/favicon upload endpoints - the first `UploadFile`/Form
+# multipart route in admin_api; FastAPI's Form/UploadFile support requires this at
+# runtime even though nothing imports it directly (found by actually booting the
+# service, not by reading the code - it fails at router-registration time, not on
+# first request).
+python-multipart>=0.0.9
