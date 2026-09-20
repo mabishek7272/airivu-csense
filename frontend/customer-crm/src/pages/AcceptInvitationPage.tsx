@@ -2,16 +2,25 @@ import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useBrand } from "../branding/BrandProvider";
 
 /** The one page in this app reachable without already being signed in - same shell as
  *  LoginPage, reached from the link an invitation email carries (`?token=...`). Accepting
  *  logs the person straight in, the same as a fresh registration does.
+ *
+ *  Brand-aware for the same reason LoginPage is: a link under a brand's own path
+ *  (`/eaigleye/accept-invitation?token=...`) previously still hardcoded "AIRIVU CSense"
+ *  regardless - the very first thing a new eAIgleye or Apti SafeGuard member ever saw of
+ *  the product was the wrong brand's name. Fixed by using the same `useBrand()` +
+ *  `isDefaultBrand` pattern LoginPage already establishes.
  */
 export function AcceptInvitationPage() {
   const { acceptInvitation } = useAuth();
+  const brand = useBrand();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") ?? "";
+  const heading = brand.isDefaultBrand ? "3RDI" : brand.displayName;
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -44,7 +53,7 @@ export function AcceptInvitationPage() {
     return (
       <main className="auth-shell">
         <div className="card auth-card">
-          <h1>AIRIVU CSense</h1>
+          <h1>{heading}</h1>
           <p role="alert">This invitation link is missing its token. Check the link in your email.</p>
         </div>
       </main>
@@ -54,7 +63,10 @@ export function AcceptInvitationPage() {
   return (
     <main className="auth-shell">
       <div className="card auth-card">
-        <h1>AIRIVU CSense</h1>
+        {!brand.isDefaultBrand && brand.logoUrl && (
+          <img src={brand.logoUrl} alt="" style={{ height: 40, marginBottom: 12, objectFit: "contain" }} />
+        )}
+        <h1>{heading}</h1>
         <p>Set a password to accept your invitation</p>
 
         <form onSubmit={handleSubmit}>

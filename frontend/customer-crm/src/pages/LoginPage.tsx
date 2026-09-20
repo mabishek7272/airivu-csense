@@ -45,21 +45,25 @@ export function LoginPage() {
   return (
     <main className="auth-shell">
       <div className="card auth-card">
-        {/* The default (unbranded) login gets its own static mark here rather than a
-            served brand.logoUrl - there is no org_branding row for "no brand at all",
-            so nothing to fetch; /csense-default-logo.png is the same source image as
-            the Airivu CSense org's own upload, just baked into the build for the case
-            where no org resolves at all. */}
+        {/* The default (unbranded) login is 3RDI's own identity - the parent company
+            operating every white-label brand on this platform (Airivu CSense, eAIgleye,
+            Apti SafeGuard), not any one of them. It must never reuse a specific brand's
+            mark (this page briefly used Airivu CSense's logo here, which wrongly implied
+            Airivu was "the default" rather than a peer white-label brand like the other
+            two - fixed). /3rdi-logo.png is the same asset the apex splash
+            (Landing3rdiPage) uses, so the parent identity looks identical wherever it
+            appears. There is no org_branding row for "no brand at all", so nothing to
+            fetch here. */}
         {!brand.isDefaultBrand && brand.logoUrl ? (
           <img src={brand.logoUrl} alt="" style={{ height: 40, marginBottom: 12, objectFit: "contain" }} />
         ) : brand.isDefaultBrand ? (
           <img
-            src="/csense-default-logo.png"
+            src="/3rdi-logo.png"
             alt=""
             style={{ height: 40, marginBottom: 12, objectFit: "contain" }}
           />
         ) : null}
-        <h1>{brand.isDefaultBrand ? "AIRIVU CSense" : brand.displayName}</h1>
+        <h1>{brand.isDefaultBrand ? "3RDI" : brand.displayName}</h1>
         <p>{mode === "login" ? "Sign in to your workspace" : "Create your organization"}</p>
 
         <form onSubmit={handleSubmit}>

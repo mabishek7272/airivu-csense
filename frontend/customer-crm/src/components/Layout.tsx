@@ -91,13 +91,14 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="app-brand">
           {brand.isDefaultBrand ? (
             <>
-              {/* Same source image as the Airivu CSense org's own upload (see
-                  LoginPage's identical use of this file) - there is no org_branding row
-                  for "no brand at all" to fetch a logoUrl from, so this is baked into
-                  the build rather than served, replacing the old hand-drawn SVG mark. */}
-              <img src="/csense-default-logo.png" alt="" width={26} height={26} style={{ objectFit: "contain" }} />
+              {/* 3RDI's own mark - the parent company, not any one white-label brand
+                  (see LoginPage's identical fix and its own docstring for why this
+                  briefly, wrongly, showed Airivu CSense's logo instead). Same asset the
+                  apex splash uses, baked into the build since there is no org_branding
+                  row for "no brand at all" to serve a logoUrl from. */}
+              <img src="/3rdi-logo.png" alt="" width={26} height={26} style={{ objectFit: "contain" }} />
               <div>
-                AIRIVU
+                3RDI
                 <span>CSENSE</span>
               </div>
             </>

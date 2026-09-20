@@ -86,7 +86,10 @@ function applyBranding(b: Branding | null) {
   // same "full white-label" decision applied to the login page and app shell — a
   // "powered by AIRIVU CSense" suffix here was a real leak, caught by production
   // screenshots (browser tabs are easy to overlook since the page body looks correct).
-  document.title = b ? b.display_name : "AIRIVU CSense — Customer CRM";
+  // The unbranded fallback is 3RDI's own identity (the parent company), not any one
+  // white-label brand's - see LoginPage.tsx and Layout.tsx for the same fix applied to
+  // their own hardcoded "AIRIVU CSense" fallbacks.
+  document.title = b ? b.display_name : "3RDI — Customer CRM";
 
   // No <link rel="icon"> exists in index.html by default — see the tag added there
   // with id="brand-favicon" as the element this always finds.
