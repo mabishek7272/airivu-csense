@@ -76,6 +76,16 @@ http:
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
+    # Static marketing/portfolio site, not part of this app - see
+    # infra/edge-site/nginx.conf's own comment for what it is and why it isn't a build
+    # target of this repo.
+    edge-site:
+      rule: "Host(`edge.example.com`)"
+      service: edge-site
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
     # Public-reachable MinIO S3 API, TLS-terminated here - not the web console (9001,
     # deliberately not routed). docker-compose.prod.yml never publishes MinIO's ports
     # directly (real object storage has no business on a bare public port), so this is
@@ -114,6 +124,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    edge-site:
+      loadBalancer:
+        servers:
+          - url: "http://edge-site:8080"
     media-hls:
       loadBalancer:
         servers:

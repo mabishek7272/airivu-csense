@@ -433,6 +433,24 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 128M }
 
+  # edge.3rdi.in - a static marketing/portfolio site, migrated from the previous server's
+  # /var/www/edge.3rdi.in (see infra/edge-site/nginx.conf's own comment). Not a build
+  # target: no Dockerfile, just the stock nginx-unprivileged image serving a host-mounted
+  # content directory - the content itself (images, a 98MB PDF, prebuilt HTML) is large,
+  # static, and not source this repo maintains, so it stays out of git like the demo
+  # site's own curated frames do.
+  edge-site:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    volumes:
+      - ${EDGE_SITE_CONTENT_DIR:?set EDGE_SITE_CONTENT_DIR to the migrated static content directory}:/usr/share/nginx/html:ro
+      - ../infra/edge-site/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    <<: *default-restart
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
 networks:
   csense:
     driver: bridge

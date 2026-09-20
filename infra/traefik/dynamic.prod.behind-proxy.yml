@@ -61,6 +61,12 @@ http:
       entryPoints: [web]
       middlewares: [security-headers]
 
+    edge-site:
+      rule: "Host(`edge.3rdi.in`)"
+      service: edge-site
+      entryPoints: [web]
+      middlewares: [security-headers]
+
     # Presigned evidence/report URLs are followed directly by a browser (MINIO_PUBLIC_
     # ENDPOINT, see docker-compose.prod.yml's own x-backend-env comment on why this can't
     # be proxied through the platform's own API services) - MinIO itself is never
@@ -94,6 +100,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    edge-site:
+      loadBalancer:
+        servers:
+          - url: "http://edge-site:8080"
     media-hls:
       loadBalancer:
         servers:
