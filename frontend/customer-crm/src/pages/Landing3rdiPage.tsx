@@ -60,9 +60,18 @@ export function Landing3rdiPage() {
       currentX += (targetX - currentX) * 0.08;
       currentY += (targetY - currentY) * 0.08;
 
-      const maxTilt = 10;
+      const maxTilt = 14;
       card!.style.transform = `rotateX(${(-currentY * maxTilt).toFixed(2)}deg) rotateY(${(currentX * maxTilt).toFixed(2)}deg)`;
-      shine!.style.background = `radial-gradient(circle at ${50 + currentX * 40}% ${50 + currentY * 40}%, rgba(255,255,255,0.55), rgba(255,255,255,0) 55%)`;
+      shine!.style.background = `radial-gradient(circle at ${50 + currentX * 40}% ${50 + currentY * 40}%, rgba(255,255,255,0.65), rgba(255,255,255,0) 55%)`;
+      // The shadow moves opposite the tilt (a card leaning left casts its shadow to the
+      // right) and grows on the axis the card lifts toward - without this, a rotateX/Y
+      // transform alone reads as flat in a still frame; a shifting, asymmetric shadow is
+      // what actually sells "this is a physical object catching light", not just motion.
+      const shadowX = (-currentX * 28).toFixed(1);
+      const shadowY = (18 - currentY * 20).toFixed(1);
+      card!.style.boxShadow =
+        `${shadowX}px ${shadowY}px 60px -18px rgba(152,19,78,0.35), ` +
+        `0 10px 24px -8px rgba(0,0,0,0.10)`;
 
       parallaxRefs.current.forEach((el, i) => {
         if (!el) return;
