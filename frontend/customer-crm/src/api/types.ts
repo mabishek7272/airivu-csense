@@ -14,6 +14,8 @@ export interface DetectedObject {
   confidence: number;
   bbox: BoundingBox;
   track_id: string | null;
+  /** Face recognition only: who was recognised. */
+  attributes?: { identity_id?: string; name?: string; similarity?: number } | null;
 }
 
 export interface Camera {

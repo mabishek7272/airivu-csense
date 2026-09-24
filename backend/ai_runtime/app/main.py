@@ -698,6 +698,79 @@ async def infer_uniface(
     )
 
 
+_FACE_RECOGNITION_MODEL_NAME = "insightface-buffalo-l-recognition"
+
+
+class FaceOut(BaseModel):
+    bbox: list[float]
+    detector_confidence: float
+    # L2-normalised, so a plain dot product of two of these is their cosine similarity.
+    # `InsightFaceEngine.embed` returns the raw, un-normalised feature vector; doing the
+    # normalisation once here keeps every caller (enrolment, live matching) from having to
+    # remember it.
+    embedding: list[float]
+
+
+class FaceInferResponse(BaseModel):
+    frame_size: list[int]
+    inference_ms: float
+    faces: list[FaceOut]
+
+
+@app.post("/internal/v1/infer-face", response_model=FaceInferResponse, tags=["runtime"])
+async def infer_face(
+    confidence: float = Form(0.5),
+    frame: UploadFile = File(...),
+) -> FaceInferResponse:
+    """Detects every face in a frame and returns a normalised 512-d ArcFace embedding for
+    each. Internal-only (not routed by Traefik), used by exactly two callers: the tenant
+    API's face enrolment and the pipeline runtime's live matcher.
+
+    These embeddings are biometric templates. This route only computes them; it never
+    stores or compares anything. Persistence is the tenant API's encrypted, consent-gated
+    `face_templates` path, and comparison is the pipeline runtime's matcher. Both models
+    must be deployable, which for the InsightFace set required the owner-approved,
+    audit-logged promotion recorded in CLARIFICATIONS.md.
+    """
+    image = _decode_frame(await frame.read())
+    detector_registered = await _resolve_or_raise(_FACE_DETECTOR_MODEL_NAME)
+    recognizer_registered = await _resolve_or_raise(_FACE_RECOGNITION_MODEL_NAME)
+    pool: ModelPool = app.state.pool
+    detector = await _load_in_threadpool(pool, detector_registered)
+    recognizer = await _load_in_threadpool(pool, recognizer_registered)
+
+    import anyio
+
+    def _run() -> list[FaceOut]:
+        detector.inference_count += 1
+        recognizer.inference_count += 1
+        faces: list[FaceOut] = []
+        for d in detector.engine.infer(image, confidence=confidence):
+            vector = recognizer.engine.embed(image, d).astype(np.float32)
+            norm = float(np.linalg.norm(vector))
+            if norm == 0.0:
+                continue
+            faces.append(
+                FaceOut(
+                    bbox=[round(v, 5) for v in d.bbox],
+                    detector_confidence=round(d.confidence, 4),
+                    embedding=[float(v) for v in (vector / norm)],
+                )
+            )
+        return faces
+
+    started = time.monotonic()
+    try:
+        faces = await anyio.to_thread.run_sync(_run)
+    except OutputContractUnknownError as exc:
+        raise ApiError(status_code=501, code="output_contract_unknown", message=str(exc)) from exc
+    return FaceInferResponse(
+        frame_size=[image.shape[1], image.shape[0]],
+        inference_ms=round((time.monotonic() - started) * 1000, 2),
+        faces=faces,
+    )
+
+
 _PLATE_OCR_MODEL_NAME = "license-plate-ocr"
 
 

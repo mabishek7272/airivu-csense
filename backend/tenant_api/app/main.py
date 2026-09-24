@@ -15,6 +15,7 @@ from app.api import (
     detections,
     edge,
     exports,
+    faces,
     health,
     incidents,
     ingest,
@@ -127,5 +128,6 @@ app.include_router(support.router)
 app.include_router(webhooks.router)
 app.include_router(api_clients.router)
 app.include_router(exports.router)
+app.include_router(faces.router)
 
 

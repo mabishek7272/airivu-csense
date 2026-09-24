@@ -114,3 +114,39 @@ One correction on the record: I described the gateway's own PNG as unscannable b
 OpenCV would not decode it. A phone camera read it fine, and that is how the number was
 eventually linked. OpenCV's decoder is stricter than a phone's; "cv2 cannot read it" is
 not the same claim as "it will not scan".
+
+## 32. Face recognition enabled (owner-approved, 2026-09-24)
+
+The five `insightface-buffalo-l-*` models were promoted `revoked` -> `validated` on prod
+(audit-logged) and a `face-recognition` pipeline published. This is the owner-approved
+promotion clause of #16, and the deliberate exception to #8 ("no default facial
+recognition"): nothing runs unless a pipeline is assigned to a camera, and nothing is
+assigned by default.
+
+**Licence.** buffalo_l is non-commercial (see the model estate notes above). The owner has
+accepted that. Revisit before any commercial resale of face recognition as a feature.
+
+**Consent is structural.** `face_identities.consent_recorded_at` and `consent_note` are
+NOT NULL and the API refuses to register anyone without `consent: true`. Registering people
+is a client action (CRM "Faces" page), unlike the rest of camera/rule management, which
+moved to the Console - the client is the party that can obtain and hold consent.
+
+**No photos, ciphertext only.** An uploaded photo is embedded by ai-runtime
+(`/internal/v1/infer-face`, internal-only) and discarded. The 512-d vector is stored only
+in `encrypted_secrets` (purpose `face.template`, AES-GCM envelope). Deleting a person
+deletes their templates *and* the secrets in one transaction (an FK cannot express that;
+the API does it). Verified on prod: after delete, `face_identities`, `face_templates` and
+`face.template` secrets are all at zero.
+
+**Matching** is cosine similarity against the tenant gallery (cached ~60s in
+pipeline-runtime), default threshold 0.40 (`csense_shared/faces/matching.py`); unverified
+against a real-world validation set, tune from live behaviour. Emitted classes are
+`face:known`, `face:watchlist`, `face:unknown`; a rule alerts on `face:unknown` /
+`face:watchlist` (type codes `face.unknown` / `face.watchlist`). Known faces are recorded
+as detections but match no rule. **No alert rule is created by default** - an unknown-face
+rule on a busy camera would page someone on every passer-by, so a person chooses that.
+
+**Found while building this:** pipeline-runtime keyed its per-camera tasks by `camera_id`,
+so a camera with two active assignments silently ran only one (the last returned). Tasks
+are now keyed by `assignment_id`; a camera can run fire/smoke and face recognition together.
+Each assignment grabs its own frame, so N pipelines on one camera means N RTSP grabs.

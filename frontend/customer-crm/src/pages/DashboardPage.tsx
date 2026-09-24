@@ -42,7 +42,7 @@ export function DashboardPage() {
       ) : dashboard.data ? (
         <>
           <div className="stat-grid">
-            <StatTile label="Sites" value={dashboard.data.sites_count} to="/sites" />
+            <StatTile label="Sites" value={dashboard.data.sites_count} />
             <StatTile label="Cameras" value={dashboard.data.cameras_count} to="/cameras" />
             <StatTile label="Open incidents" value={dashboard.data.incidents_open_count} to="/incidents" />
             <StatTile label="Team members" value={dashboard.data.team_members_count} to="/team" />
@@ -56,8 +56,6 @@ export function DashboardPage() {
 
           <div className="dashboard-lower" style={{ display: "flex", gap: "var(--space-4)", marginTop: "var(--space-4)", alignItems: "flex-start" }}>
             <OnboardingChecklist
-              sitesCount={dashboard.data.sites_count}
-              camerasCount={dashboard.data.cameras_count}
               teamMembersCount={dashboard.data.team_members_count}
               mfaEnrolled={mfa.data?.enrolled ?? false}
               style={{ flex: 1, marginTop: 0 }}
@@ -130,12 +128,21 @@ function RecentActivity({
   );
 }
 
-function StatTile({ label, value, to }: { label: string; value: number; to: string }) {
-  return (
-    <Link to={to} className="stat-tile card">
+function StatTile({ label, value, to }: { label: string; value: number; to?: string }) {
+  const content = (
+    <>
       <span className="stat-tile-value">{value}</span>
       <span className="stat-tile-label">{label}</span>
+    </>
+  );
+  // Sites has no page of its own anymore (managed from the Developer Console on this
+  // tenant's behalf) - shown as a plain count, not a dead link.
+  return to ? (
+    <Link to={to} className="stat-tile card">
+      {content}
     </Link>
+  ) : (
+    <div className="stat-tile card">{content}</div>
   );
 }
 
@@ -147,21 +154,15 @@ interface ChecklistStep {
 }
 
 function OnboardingChecklist({
-  sitesCount,
-  camerasCount,
   teamMembersCount,
   mfaEnrolled,
   style,
 }: {
-  sitesCount: number;
-  camerasCount: number;
   teamMembersCount: number;
   mfaEnrolled: boolean;
   style?: CSSProperties;
 }) {
   const steps: ChecklistStep[] = [
-    { label: "Add your first site", done: sitesCount > 0, to: "/sites", action: "Add a site" },
-    { label: "Add a camera", done: camerasCount > 0, to: "/cameras", action: "Add a camera" },
     { label: "Invite your team", done: teamMembersCount > 1, to: "/team", action: "Invite someone" },
     { label: "Turn on two-factor authentication", done: mfaEnrolled, to: "/settings", action: "Set up 2FA" },
   ];

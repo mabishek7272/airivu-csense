@@ -8,19 +8,14 @@ import {
   CameraIcon,
   DashboardIcon,
   DetectionIcon,
-  EdgeIcon,
   IncidentIcon,
   NotifyIcon,
-  PipelineIcon,
   RecipientIcon,
   ResellerIcon,
-  RuleIcon,
   SearchIcon,
   SettingsIcon,
-  SiteIcon,
   TeamIcon,
   WebhookIcon,
-  ZoneIcon,
 } from "./Icons";
 
 /** Grouped sidebar nav (design/csense-ui/Main.dc.html) - Operations / Infrastructure /
@@ -39,22 +34,12 @@ const NAV_GROUPS: { label: string; items: { to: string; label: string; Icon: typ
       { to: "/dashboard", label: "Dashboard", Icon: DashboardIcon },
       { to: "/incidents", label: "Incidents", Icon: IncidentIcon },
       { to: "/detections", label: "Detections", Icon: DetectionIcon },
-    ],
-  },
-  {
-    label: "Infrastructure",
-    items: [
-      { to: "/sites", label: "Sites", Icon: SiteIcon },
-      { to: "/zones", label: "Zones", Icon: ZoneIcon },
+      // View-only now - adding/editing a camera, its zones, sites and edge tunnel, and
+      // what model watches it are all managed on this tenant's behalf from the Developer
+      // Console (see CamerasPage.tsx's own docstring and CHECKLIST.md's "move camera/
+      // site/zone/edge/rules/pipeline management to the Console" entry).
       { to: "/cameras", label: "Cameras", Icon: CameraIcon },
-      { to: "/edge", label: "Edge", Icon: EdgeIcon },
-    ],
-  },
-  {
-    label: "Intelligence",
-    items: [
-      { to: "/pipelines", label: "Pipelines", Icon: PipelineIcon },
-      { to: "/rules", label: "Rules", Icon: RuleIcon },
+      { to: "/faces", label: "Faces", Icon: TeamIcon },
     ],
   },
   {

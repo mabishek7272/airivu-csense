@@ -378,6 +378,12 @@ services:
       DATABASE_SAVE_MESSAGES: "false"
       CONNECT_ON_STARTUP: "true"
       LOGTYPE: console
+      # Left unset by default (README.md's own "Licence auto-activation" section) so this
+      # service does not phone home to evolutionapi.com from an on-prem/air-gapped
+      # deployment. Every instance-management endpoint (connect/qr/send) 503s with
+      # LICENSE_REQUIRED without it - set deliberately, per tenant deployment, not as a
+      # blanket default.
+      EVOLUTION_OPERATOR_EMAIL: ${EVOLUTION_OPERATOR_EMAIL:-}
     depends_on:
       postgres: { condition: service_healthy }
     volumes:

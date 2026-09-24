@@ -1,44 +1,55 @@
 /* Design tokens and base styles for the Developer Console.
  *
- * Trimmed port of the Customer CRM's stylesheet (frontend/customer-crm/src/styles.css) -
- * same token names and values, so the two apps read as one family, but only the pieces
- * this console actually uses. The CRM's file is the fuller reference if a future page
- * here needs something not ported yet (timeline, polygon editor, etc. are deliberately
- * left out - nothing in this app draws a zone or a detection card).
+ * Real port of the Customer CRM's "Technical Atmosphere" stylesheet
+ * (frontend/customer-crm/src/styles.css) - same token names AND the same values this
+ * time, so the two apps actually read as one family instead of only claiming to. One
+ * theme, deliberately, matching the CRM's own decision: this is the product's identity,
+ * not a dark-mode variant of a light default - no prefers-color-scheme branch.
  *
  * Severity/state colours are always paired with a text label - colour alone cannot carry
  * meaning here either, same reasoning as the CRM.
  */
 
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-sunken: #eef0f3;
-  --border: #d5d9e0;
-  --border-strong: #aeb5c0;
+  --canvas: #241c21;
+  --well: #1a1418;
+  --raised: #2a2026;
+  --hair: #362a31;
+  --hair-strong: #4a3b43;
+  --emerald: #10b981;
+  --rose: #ff8abb;
+  --crimson: #98134e;
+  --ink: #f5edf0;
+  --dim: #a2929a;
 
-  --text: #14181f;
-  --text-muted: #545c6a;
-  --text-inverse: #ffffff;
+  --bg: var(--canvas);
+  --surface: var(--well);
+  --surface-sunken: var(--raised);
+  --border: var(--hair);
+  --border-strong: var(--hair-strong);
 
-  --accent: #1f5fd0;
-  --accent-hover: #17489e;
-  --accent-subtle: #e8effb;
+  --text: var(--ink);
+  --text-muted: var(--dim);
+  --text-inverse: #fff0f6;
 
-  --critical: #a5102a;
-  --critical-subtle: #fdeaee;
-  --high: #b4470a;
-  --high-subtle: #fdf0e6;
-  --medium: #8a6100;
-  --medium-subtle: #fbf3e0;
-  --low: #1c6b52;
-  --low-subtle: #e6f4ef;
-  --info: #35506e;
-  --info-subtle: #eaf0f7;
+  --accent: var(--rose);
+  --accent-hover: #ffb3d2;
+  --accent-subtle: rgb(255 138 187 / 12%);
+
+  --critical: #ff6b9d;
+  --critical-subtle: rgb(152 19 78 / 28%);
+  --high: #f0a87e;
+  --high-subtle: rgb(194 96 58 / 20%);
+  --medium: #e0be72;
+  --medium-subtle: rgb(138 106 46 / 20%);
+  --low: var(--emerald);
+  --low-subtle: rgb(16 185 129 / 12%);
+  --info: var(--dim);
+  --info-subtle: var(--raised);
 
   --radius: 8px;
-  --radius-sm: 5px;
-  --shadow: 0 1px 2px rgb(20 24 31 / 8%), 0 2px 8px rgb(20 24 31 / 6%);
+  --radius-sm: 6px;
+  --shadow: 0 8px 22px rgb(0 0 0 / 32%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -47,38 +58,8 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12151a;
-    --surface: #1a1e25;
-    --surface-sunken: #23282f;
-    --border: #333a44;
-    --border-strong: #4a525e;
-
-    --text: #eef1f5;
-    --text-muted: #a3acba;
-
-    --accent: #6ea3f5;
-    --accent-hover: #8ab6f8;
-    --accent-subtle: #1c2939;
-
-    --critical: #ff8fa1;
-    --critical-subtle: #33161c;
-    --high: #f7ad72;
-    --high-subtle: #331f11;
-    --medium: #e5c268;
-    --medium-subtle: #2e2612;
-    --low: #7ddcb8;
-    --low-subtle: #122b23;
-    --info: #a8c3e0;
-    --info-subtle: #1a2431;
-
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 2px 8px rgb(0 0 0 / 30%);
-  }
+  --font: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }

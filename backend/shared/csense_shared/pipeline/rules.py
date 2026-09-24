@@ -57,6 +57,10 @@ class DetectedObject:
     confidence: float
     bbox: tuple[float, float, float, float]
     track_id: str | None = None
+    # Extra facts about this object that are not a class: today only face recognition uses
+    # it (`identity_id`, `name`, `similarity`). Kept as a plain dict so rules keep matching
+    # on `class_name` alone and nothing that predates it needs to change.
+    attributes: dict | None = None
 
 
 @dataclass(frozen=True)

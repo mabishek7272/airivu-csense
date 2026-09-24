@@ -4,13 +4,8 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { BrandProvider } from "./branding/BrandProvider";
 import { NotificationProvider } from "./components/Notifications";
 import { CamerasPage } from "./pages/CamerasPage";
-import { EdgePage } from "./pages/EdgePage";
 import { NotificationPoliciesPage } from "./pages/NotificationPoliciesPage";
 import { RecipientGroupsPage } from "./pages/RecipientGroupsPage";
-import { PipelineAssignmentsPage } from "./pages/PipelineAssignmentsPage";
-import { RulesPage } from "./pages/RulesPage";
-import { SitesPage } from "./pages/SitesPage";
-import { ZonesPage } from "./pages/ZonesPage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
@@ -20,6 +15,7 @@ import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
 import { ResellerRollupPage } from "./pages/ResellerRollupPage";
 import { AuditPage } from "./pages/AuditPage";
+import { FacesPage } from "./pages/FacesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WebhooksPage } from "./pages/WebhooksPage";
@@ -119,50 +115,10 @@ function AppRoutes({ brandSlug, isApex }: { brandSlug: string | null; isApex: bo
         }
       />
       <Route
-        path="/sites"
-        element={
-          <RequireAuth>
-            <SitesPage />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/zones"
-        element={
-          <RequireAuth>
-            <ZonesPage />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/rules"
-        element={
-          <RequireAuth>
-            <RulesPage />
-          </RequireAuth>
-        }
-      />
-      <Route
         path="/cameras"
         element={
           <RequireAuth>
             <CamerasPage />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/edge"
-        element={
-          <RequireAuth>
-            <EdgePage />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/pipelines"
-        element={
-          <RequireAuth>
-            <PipelineAssignmentsPage />
           </RequireAuth>
         }
       />
@@ -187,6 +143,14 @@ function AppRoutes({ brandSlug, isApex }: { brandSlug: string | null; isApex: bo
         element={
           <RequireAuth>
             <WebhooksPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/faces"
+        element={
+          <RequireAuth>
+            <FacesPage />
           </RequireAuth>
         }
       />

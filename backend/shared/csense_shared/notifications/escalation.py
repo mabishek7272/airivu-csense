@@ -45,6 +45,8 @@ TYPE_LABELS = {
     "crowd.density": "Crowd density",
     "vehicle.unauthorised": "Unauthorised vehicle",
     "fall.detected": "Fall detected",
+    "face.unknown": "Unknown person",
+    "face.watchlist": "Watchlist person",
 }
 
 SEVERITY_PREFIX = {

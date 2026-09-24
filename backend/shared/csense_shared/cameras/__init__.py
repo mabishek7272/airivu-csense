@@ -9,11 +9,21 @@ from csense_shared.cameras.health import (
     SLOW_PROBE_THRESHOLD_MS,
     classify_health_events,
 )
+from csense_shared.cameras.probe import (
+    ProbeOutcome,
+    camera_secret_query,
+    device_tunnel_networks,
+    probe_stream,
+)
 
 __all__ = [
     "LOW_FRAMERATE_THRESHOLD_FPS",
+    "ProbeOutcome",
     "SLOW_PROBE_THRESHOLD_MS",
+    "camera_secret_query",
     "classify_health_events",
+    "device_tunnel_networks",
+    "probe_stream",
     "resolve_camera_endpoint",
     "tunnel_networks",
 ]
