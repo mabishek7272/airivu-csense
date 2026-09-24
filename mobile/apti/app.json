@@ -5,7 +5,7 @@
     "scheme": "apti",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": false,
@@ -18,7 +18,7 @@
       "package": "ai.airivu.apti",
       "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
-        "backgroundColor": "#161826",
+        "backgroundColor": "#f3f5fe",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -32,7 +32,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "backgroundColor": "#161826",
+          "backgroundColor": "#f3f5fe",
           "imageWidth": 200
         }
       ],

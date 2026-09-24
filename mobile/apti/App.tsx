@@ -31,7 +31,7 @@ import { LIVE_FRAME_WIDTH, LIVE_INTERVAL_MS, UPLOAD_MAX_WIDTH } from './src/conf
 import type { Size } from './src/geometry';
 import { prepareForUpload } from './src/image';
 import { DEFAULT_MODE_ICON, MODE_ICON } from './src/modeIcons';
-import { color, fontHeading, fontHeadingSemibold, radius, shadow, space, textMuted, textMuted50 } from './src/theme';
+import { color, fontHeading, fontHeadingSemibold, radius, shadow, space, stageText, textMuted, textMuted50 } from './src/theme';
 
 type Tab = 'live' | 'photo';
 type Facing = 'back' | 'front';
@@ -83,7 +83,9 @@ function Spinner({ size = 32 }: { size?: number }) {
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return (
     <Animated.View style={{ transform: [{ rotate }] }}>
-      <Icon name="loading" size={size} color={color.accent} />
+      {/* Always drawn over the dark camera/photo stage overlay, so this stays a light
+          accent step regardless of app theme - the same reasoning as stageText below. */}
+      <Icon name="loading" size={size} color={color.accent300} />
     </Animated.View>
   );
 }
@@ -209,13 +211,11 @@ function Screen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <StatusBar style="light" />
-      <LinearGradient
-        colors={[color.accent900, color.bg]}
-        locations={[0, 0.65]}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {/* Dark OS status bar icons against the light app background - the moody dark radial
+          glow the dark theme drew over the whole page is dropped here too: the design
+          system's own "Do" guidance is to keep chroma low and lean on neutral surfaces,
+          which a flat light ground already does. */}
+      <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.titleRow}>
           <View style={{ gap: 2 }}>
@@ -226,7 +226,7 @@ function Screen() {
             <Tag variant="accent" style={styles.liveTag}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <LiveDot />
-                <Text style={{ color: color.accent100, fontSize: 11 }}>Live · {(1000 / LIVE_INTERVAL_MS).toFixed(1)} fps</Text>
+                <Text style={{ color: color.accent800, fontSize: 11 }}>Live · {(1000 / LIVE_INTERVAL_MS).toFixed(1)} fps</Text>
               </View>
             </Tag>
           )}
@@ -246,7 +246,7 @@ function Screen() {
           modesError ? (
             <Card elevated style={{ gap: 10, padding: 14 }}>
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                <Icon name="power-plug-off-outline" size={18} color={color.accent300} />
+                <Icon name="power-plug-off-outline" size={18} color={color.accent} />
                 <Text style={{ color: color.text, fontSize: 14 }}>Could not reach the demo service.</Text>
               </View>
               <Btn variant="primary" block onPress={loadModes}>
@@ -256,7 +256,7 @@ function Screen() {
           ) : (
             <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 6 }}>
               {[90, 80, 70, 90].map((w, i) => (
-                <View key={i} style={{ height: 36, width: w, borderRadius: 8, backgroundColor: color.surface }} />
+                <View key={i} style={{ height: 36, width: w, borderRadius: 8, backgroundColor: color.neutral200 }} />
               ))}
             </View>
           )
@@ -285,7 +285,7 @@ function Screen() {
         {mode && !mode.available ? (
           <Card elevated style={{ gap: 8, padding: 16 }}>
             <Tag variant="outline">{mode.note ?? 'Not available yet'}</Tag>
-            <Text style={{ fontSize: 14, color: color.neutral300 }}>This detector is being finished. Try another mode meanwhile.</Text>
+            <Text style={{ fontSize: 14, color: color.neutral700 }}>This detector is being finished. Try another mode meanwhile.</Text>
           </Card>
         ) : tab === 'live' ? (
           !permission ? (
@@ -293,9 +293,9 @@ function Screen() {
           ) : !permission.granted ? (
             <Card elevated style={{ gap: 12, padding: 18 }}>
               <View style={styles.permissionIcon}>
-                <Icon name="camera-outline" size={22} color={color.accent300} />
+                <Icon name="camera-outline" size={22} color={color.accent} />
               </View>
-              <Text style={{ fontSize: 14, color: color.neutral300 }}>
+              <Text style={{ fontSize: 14, color: color.neutral700 }}>
                 Apti needs the camera to show live detection. Frames are analysed and never stored.
               </Text>
               <Btn variant="primary" block onPress={requestPermission}>
@@ -325,7 +325,7 @@ function Screen() {
                 onPress={() => { setFacing((f) => (f === 'back' ? 'front' : 'back')); setResult(null); }}
                 style={styles.flipButton}
                 accessibilityLabel="Switch camera"
-                icon={<Icon name="camera-flip-outline" size={20} color={color.text} />}
+                icon={<Icon name="camera-flip-outline" size={20} color={stageText} />}
               />
               {busy && (
                 <View style={styles.busyOverlay}>
@@ -367,8 +367,8 @@ function Screen() {
 
         {notice && (
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <Icon name="alert-circle-outline" size={16} color={color.accent300} />
-            <Text style={{ color: color.accent300, fontSize: 13, flex: 1 }}>{notice}</Text>
+            <Icon name="alert-circle-outline" size={16} color={color.accent} />
+            <Text style={{ color: color.accent, fontSize: 13, flex: 1 }}>{notice}</Text>
           </View>
         )}
 
@@ -419,14 +419,14 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   appTitle: { color: color.text, fontSize: 28, fontFamily: fontHeading, letterSpacing: -0.5 },
   liveTag: { paddingVertical: 4 },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.accent300 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.accent },
   subtitle: { color: textMuted, fontSize: 14, marginTop: -6 },
   chips: { gap: 8, paddingVertical: 2 },
   chip: { paddingVertical: 9, paddingHorizontal: 14 },
   modeDescription: { color: textMuted, fontSize: 13, marginTop: -4 },
   permissionIcon: {
     width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: color.accent900,
+    backgroundColor: color.accent100,
   },
   stage: {
     position: 'relative', width: '100%', aspectRatio: 3 / 4, borderRadius: radius.lg,
@@ -438,7 +438,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
   camDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: color.accent400 },
-  camLabel: { color: color.text, fontSize: 11, letterSpacing: 1, fontFamily: fontHeadingSemibold },
+  // Always over the dark camera-stage gradient bar - stageText, not the theme's text
+  // token, for the same reason as the flip-camera icon above.
+  camLabel: { color: stageText, fontSize: 11, letterSpacing: 1, fontFamily: fontHeadingSemibold },
   clock: { color: color.neutral300, fontSize: 11, fontVariant: ['tabular-nums'] },
   flipButton: { position: 'absolute', right: 12, bottom: 12, borderRadius: 22, backgroundColor: 'rgba(22,24,38,0.7)' },
   busyOverlay: {
@@ -447,9 +449,9 @@ const styles = StyleSheet.create({
   },
   resultRow: { gap: 4 },
   resultLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  resultLabel: { flex: 1, minWidth: 0, color: color.neutral200, fontSize: 14 },
-  resultPct: { color: color.neutral400, fontSize: 13, fontVariant: ['tabular-nums'] },
-  resultTrack: { width: '100%', height: 2, borderRadius: 1, backgroundColor: color.neutral800, overflow: 'hidden' },
+  resultLabel: { flex: 1, minWidth: 0, color: color.text, fontSize: 14 },
+  resultPct: { color: color.neutral600, fontSize: 13, fontVariant: ['tabular-nums'] },
+  resultTrack: { width: '100%', height: 2, borderRadius: 1, backgroundColor: color.neutral200, overflow: 'hidden' },
   resultFill: { height: '100%', backgroundColor: color.accent, borderRadius: 1 },
   footer: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginTop: 4 },
   footerText: { flex: 1, color: color.neutral600, fontSize: 11, lineHeight: 15 },

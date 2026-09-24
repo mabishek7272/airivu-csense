@@ -45,13 +45,17 @@ export function Tag({
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
+  // Tinted-fill roles invert with the ground: the handoff's dark theme used dark ramp
+  // steps for fills and light steps for the text on them ("dark steps (700-900) for
+  // tinted fills... light steps (100-300) for text on those tints"); on this light ground
+  // that's a light fill with a dark step for the text sitting on it.
   const variantStyle =
     variant === 'outline'
       ? { borderWidth: 1, borderColor: color.accent, backgroundColor: 'transparent' as const }
       : variant === 'neutral'
-        ? { backgroundColor: color.neutral800 }
-        : { backgroundColor: color.accent800 };
-  const textColor = variant === 'outline' ? color.accent : variant === 'neutral' ? color.neutral100 : color.accent100;
+        ? { backgroundColor: color.neutral200 }
+        : { backgroundColor: color.accent100 };
+  const textColor = variant === 'outline' ? color.accent : variant === 'neutral' ? color.neutral800 : color.accent800;
   return (
     <View style={[styles.tag, variantStyle, style]}>
       {typeof children === 'string' ? (
@@ -156,7 +160,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: color.surface,
   },
-  cardElevated: { ...shadow.md, borderWidth: 1, borderColor: color.neutral800 },
+  // "Soft ink-tinted shadows on a light theme" (the handoff's own words) replace the dark
+  // theme's hairline-ring border; a faint neutral edge is kept only for definition on very
+  // uniform backgrounds, not as the primary elevation cue.
+  cardElevated: { ...shadow.md, borderWidth: 1, borderColor: color.neutral200 },
   tag: {
     alignSelf: 'flex-start',
     borderRadius: radius.md * 0.75,
@@ -176,9 +183,9 @@ const styles = StyleSheet.create({
   },
   btnText: { fontFamily: fontHeading, fontSize: 14 },
   btnPrimary: { borderColor: color.accent, backgroundColor: 'transparent' },
-  btnPrimaryPressed: { backgroundColor: 'rgba(145,132,217,0.22)' },
+  btnPrimaryPressed: { backgroundColor: 'rgba(93,82,148,0.16)' }, // accent tint
   btnSecondary: { borderColor: color.divider, backgroundColor: 'transparent' },
-  btnSecondaryPressed: { backgroundColor: 'rgba(233,233,237,0.14)' },
+  btnSecondaryPressed: { backgroundColor: 'rgba(32,34,44,0.08)' }, // text tint
   seg: {
     flexDirection: 'row',
     borderWidth: 1,
