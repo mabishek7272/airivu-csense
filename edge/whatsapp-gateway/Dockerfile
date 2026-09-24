@@ -25,7 +25,7 @@ COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o server ./cmd/evolution-go
 
-FROM alpine:3.19.1 AS final
+FROM alpine:3.24.2 AS final
 
 # ffmpeg and libwebp: media transcoding for image sends.
 # poppler-utils: pdftoppm, used to rasterize page 1 of a PDF for document thumbnails.
