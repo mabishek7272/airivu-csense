@@ -1,11 +1,17 @@
 import React from 'react';
-import { StyleSheet } from 'react-native';
-import Svg, { Rect, Text as SvgText } from 'react-native-svg';
+import { StyleSheet, Text, View } from 'react-native';
 import type { Detection } from '../api';
+import { color, fontHeadingSemibold } from '../theme';
 import { mapBox, type Size } from '../geometry';
 
-const COLOURS = ['#22d3ee', '#a3e635', '#f472b6', '#fbbf24', '#818cf8', '#fb7185'];
+const CORNER = 14;
 
+/**
+ * Bracket-style detection box, matching the approved Nocturne mockup: a faint full
+ * outline plus four solid corner brackets, with the label pinned to the top-left corner
+ * (or dropped below it when the box starts near the top edge, so the label never runs
+ * off-screen).
+ */
 export function DetectionOverlay({
   detections,
   image,
@@ -20,27 +26,52 @@ export function DetectionOverlay({
   mirror?: boolean;
 }) {
   if (view.width === 0 || view.height === 0) return null;
-  const colourFor = new Map<string, string>();
 
   return (
-    <Svg style={StyleSheet.absoluteFill} width={view.width} height={view.height} pointerEvents="none">
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
       {detections.map((d, index) => {
-        if (!colourFor.has(d.label)) colourFor.set(d.label, COLOURS[colourFor.size % COLOURS.length]);
-        const colour = colourFor.get(d.label)!;
         const r = mapBox(d.box, image, view, fit, mirror);
+        const labelBelow = r.y < 24;
         const text = `${d.label} ${Math.round(d.confidence * 100)}%`;
-        const labelWidth = text.length * 7.2 + 10;
-        const labelY = r.y >= 20 ? r.y - 20 : r.y;
         return (
-          <React.Fragment key={index}>
-            <Rect x={r.x} y={r.y} width={r.width} height={r.height} stroke={colour} strokeWidth={2.5} fill="none" />
-            <Rect x={r.x} y={labelY} width={labelWidth} height={20} fill={colour} />
-            <SvgText x={r.x + 5} y={labelY + 14} fontSize={12} fontWeight="700" fill="#0b1220">
-              {text}
-            </SvgText>
-          </React.Fragment>
+          <View key={index} style={{ position: 'absolute', left: r.x, top: r.y, width: r.width, height: r.height }}>
+            <View style={styles.outline} />
+            <View style={[styles.corner, styles.cornerTL]} />
+            <View style={[styles.corner, styles.cornerTR]} />
+            <View style={[styles.corner, styles.cornerBL]} />
+            <View style={[styles.corner, styles.cornerBR]} />
+            <View style={[styles.label, labelBelow ? { top: 2 } : { top: -22 }]}>
+              <Text style={styles.labelText} numberOfLines={1}>
+                {text}
+              </Text>
+            </View>
+          </View>
         );
       })}
-    </Svg>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  outline: {
+    position: 'absolute',
+    inset: 0,
+    borderWidth: 1,
+    borderColor: 'rgba(181,171,252,0.35)', // accent-400 at 35%
+    borderRadius: 3,
+  },
+  corner: { position: 'absolute', width: CORNER, height: CORNER, borderColor: color.accent300 },
+  cornerTL: { left: -1, top: -1, borderLeftWidth: 2, borderTopWidth: 2 },
+  cornerTR: { right: -1, top: -1, borderRightWidth: 2, borderTopWidth: 2 },
+  cornerBL: { left: -1, bottom: -1, borderLeftWidth: 2, borderBottomWidth: 2 },
+  cornerBR: { right: -1, bottom: -1, borderRightWidth: 2, borderBottomWidth: 2 },
+  label: {
+    position: 'absolute',
+    left: -1,
+    backgroundColor: color.accent800,
+    borderRadius: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+  },
+  labelText: { color: color.accent100, fontSize: 11, fontFamily: fontHeadingSemibold },
+});

@@ -18,7 +18,7 @@
       "package": "ai.airivu.apti",
       "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
-        "backgroundColor": "#0b1220",
+        "backgroundColor": "#161826",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -32,7 +32,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "backgroundColor": "#0b1220",
+          "backgroundColor": "#161826",
           "imageWidth": 200
         }
       ],
@@ -49,7 +49,8 @@
           "photosPermission": "Apti lets you pick a photo to run detection on. Photos are analysed and never stored."
         }
       ],
-      "./plugins/withBlockRecordAudio.js"
+      "./plugins/withBlockRecordAudio.js",
+      "expo-font"
     ],
     "extra": {
       "eas": {

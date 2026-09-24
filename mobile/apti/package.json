@@ -11,10 +11,15 @@
     "test": "jest"
   },
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo/vector-icons": "^15.0.2",
     "expo": "~57.0.18",
+    "expo-blur": "~57.0.3",
     "expo-camera": "~57.0.5",
+    "expo-font": "~57.0.4",
     "expo-image-manipulator": "~57.0.20",
     "expo-image-picker": "~57.0.20",
+    "expo-linear-gradient": "~57.0.2",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
