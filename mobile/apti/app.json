@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Apti",
+    "slug": "apti",
+    "scheme": "apti",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ai.airivu.apti",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "ai.airivu.apti",
+      "predictiveBackGestureEnabled": false,
+      "adaptiveIcon": {
+        "backgroundColor": "#0b1220",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "backgroundColor": "#0b1220",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Apti uses the camera to show live detection. Frames are analysed and never stored.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Apti lets you pick a photo to run detection on. Photos are analysed and never stored."
+        }
+      ],
+      "./plugins/withBlockRecordAudio.js"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6a953854-2046-41a5-8a86-0069dd8b6100"
+      }
+    },
+    "owner": "apti-services"
+  }
+}

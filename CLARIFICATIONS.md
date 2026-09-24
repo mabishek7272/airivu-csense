@@ -150,3 +150,41 @@ rule on a busy camera would page someone on every passer-by, so a person chooses
 so a camera with two active assignments silently ran only one (the last returned). Tasks
 are now keyed by `assignment_id`; a camera can run fire/smoke and face recognition together.
 Each assignment grabs its own frame, so N pipelines on one camera means N RTSP grabs.
+
+## 33. Client tiers and the public demo (2026-09-24)
+
+**Tiers are licence plans.** `standard` (2 phones, 1 concurrent browser) and `industry` (5
+phones, 2 browsers) are seeded by migration 0065 as `license_plans` carrying the
+entitlements `mobile_device.count` and `web_session.concurrent`. A tenant whose licence has
+no such entitlement (every tenant that existed before) is unlimited. Camera limits were not
+specified by Apti, so `camera.count` stays a per-licence override, not part of the plans.
+
+**Devices = phones/tablets, not logins.** The mobile app sends its own install id at
+sign-in; signing in again on the same phone reuses its slot, a new phone at the limit gets
+403 `device_limit_reached`, and the account owner frees a slot under Settings > Devices
+(which also signs that phone out). The id is client-supplied, so a modified app could spoof
+it; accepted for a commercial tier. On Android a reinstall makes a new id and burns a slot
+until the owner removes the old one (iOS Keychain survives reinstall).
+
+**Web limit = concurrent sessions, and the oldest is signed out.** Refusing a new sign-in
+would lock a user out for up to 14 days (the refresh-session lifetime) after they merely
+closed a tab, so the newest session wins and the oldest is evicted. The evicted browser
+notices when its access token next refreshes (up to 10 minutes), not instantly. Mobile
+sessions neither count toward nor are evicted by this limit.
+
+**Demo API (`demo.3rdi.in/api/v1/demo/*`) is unauthenticated on purpose.** It is defended by
+a per-IP limit (150/min, keyed by a hash of the address), a global cap of 4 frames in flight
+that refuses rather than queues (prod has no GPU and serves real cameras), an allow-list of
+modes, and a 1.5 MB cap. Nothing is stored or logged: no images, no IPs (access log off).
+Face mode is detection only; it never calls the embedding route, so no biometric template
+exists. The service is deliberately given no database, JWT or storage credentials.
+
+**Demo modes.** Objects and Phone use the general model (Phone filters to `cell phone`),
+plus Fire, Faces and Hygiene PPE (masks/gloves, not helmet/vest). **Weapon and door
+open/closed have no model yet** and report "Coming soon"; enabling one is a one-line change
+in `backend/demo_api/app/modes.py` once its model is trained and registered.
+
+**Found while building this:** the `kitchen-safety-y8` registry row on prod has no
+`label_map`, although migration 0008 records one, so the runtime returns numeric class ids
+(`"0"`..`"5"`). The demo maps them itself; the real kitchen-safety pipeline still emits
+numeric classes, so a rule cannot match `no_glove` until the registry row is fixed.

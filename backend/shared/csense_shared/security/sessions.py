@@ -160,6 +160,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from uuid import UUID
 
 import redis.asyncio as redis
@@ -307,6 +308,10 @@ def _grace_key(settings: Settings, session_id: str) -> str:
     return f"cs:{settings.environment}:session:{session_id}:grace"
 
 
+def _web_index_key(settings: Settings, tenant_id: UUID | str) -> str:
+    return f"cs:{settings.environment}:tenant_sessions:{tenant_id}:web"
+
+
 async def create_session(
     redis_client: redis.Redis,
     settings: Settings,
@@ -315,8 +320,15 @@ async def create_session(
     tenant_id: UUID | None,
     membership_id: UUID | None,
     audience: str,
+    client: str = "web",
+    max_concurrent_web: int | None = None,
 ) -> tuple[str, str]:
-    """Returns (session_id, raw_refresh_token). Only the hash is persisted."""
+    """Returns (session_id, raw_refresh_token). Only the hash is persisted.
+
+    `client` is `"web"` or `"mobile"`. Only web sessions are indexed per tenant, and when
+    `max_concurrent_web` is set, creating one that would exceed it signs out the *oldest*
+    web sessions (see `_trim_web_sessions`).
+    """
     session_id = new_session_id()
     raw_token = generate_refresh_token()
     key = _session_key(settings, session_id)
@@ -328,10 +340,61 @@ async def create_session(
             "tenant_id": str(tenant_id) if tenant_id else "",
             "membership_id": str(membership_id) if membership_id else "",
             "audience": audience,
+            "client": client,
         },
     )
     await redis_client.expire(key, settings.jwt_refresh_token_ttl_seconds)
+
+    if client == "web" and tenant_id is not None:
+        index_key = _web_index_key(settings, tenant_id)
+        await redis_client.zadd(index_key, {session_id: time.time()})
+        await redis_client.expire(index_key, settings.jwt_refresh_token_ttl_seconds)
+        if max_concurrent_web is not None:
+            await _trim_web_sessions(
+                redis_client, settings, tenant_id=tenant_id, keep=max(max_concurrent_web, 1),
+                newest=session_id,
+            )
     return session_id, raw_token
+
+
+async def _trim_web_sessions(
+    redis_client: redis.Redis, settings: Settings, *, tenant_id: UUID, keep: int, newest: str
+) -> list[str]:
+    """Drops index entries whose session has expired or been revoked, then signs out the
+    oldest live web sessions until at most `keep` remain. Returns the evicted session ids.
+
+    The new session is added *before* trimming and is never a candidate, so two logins
+    racing each other both converge on `keep` sessions instead of one of them being
+    refused - and a limit of 1 can never evict the session that just signed in.
+
+    Eviction takes effect when the evicted browser next refreshes (its access token lives
+    `jwt_access_token_ttl_seconds`, 10 minutes by default), not instantly.
+    """
+    index_key = _web_index_key(settings, tenant_id)
+    members: list[str] = await redis_client.zrange(index_key, 0, -1)
+    live: list[str] = []
+    for member in members:
+        if await redis_client.exists(_session_key(settings, member)):
+            live.append(member)
+        else:
+            await redis_client.zrem(index_key, member)
+
+    evicted: list[str] = []
+    excess = len(live) - keep
+    for member in live:  # zrange is oldest-first
+        if excess <= 0:
+            break
+        if member == newest:
+            continue
+        await revoke_session(redis_client, settings, session_id=member)
+        evicted.append(member)
+        excess -= 1
+    if evicted:
+        logger.info(
+            "web_sessions_evicted_over_limit",
+            extra={"tenant_id": str(tenant_id), "evicted": len(evicted), "limit": keep},
+        )
+    return evicted
 
 
 async def rotate_session(
@@ -380,5 +443,9 @@ async def rotate_session(
 
 
 async def revoke_session(redis_client: redis.Redis, settings: Settings, *, session_id: str) -> None:
-    await redis_client.delete(_session_key(settings, session_id))
+    key = _session_key(settings, session_id)
+    tenant_id, client = await redis_client.hmget(key, "tenant_id", "client")
+    await redis_client.delete(key)
     await redis_client.delete(_grace_key(settings, session_id))
+    if tenant_id and client in (None, "web"):
+        await redis_client.zrem(_web_index_key(settings, tenant_id), session_id)

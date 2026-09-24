@@ -25,12 +25,14 @@ from app.repositories.identity import (
     get_role_permissions,
     get_user_by_email,
 )
+from app.services.mobile_devices import admit_device
 from app.services.sessions import create_session, revoke_session, rotate_session
 from csense_shared.audit.outbox import record_audit_and_outbox
 from csense_shared.config import Settings
 from csense_shared.db.models import Membership, Organization, Tenant, User
-from csense_shared.db.postgres import bootstrap_session, set_tenant_scope
+from csense_shared.db.postgres import bootstrap_session, set_tenant_scope, tenant_session
 from csense_shared.errors import ApiError, AuthenticationError, ConflictError
+from csense_shared.licensing.limits import MOBILE_DEVICE_LIMIT, WEB_SESSION_LIMIT, entitlement_limit
 from csense_shared.security.invitation_tickets import consume_invitation_ticket
 from csense_shared.security.passwords import hash_password, verify_password
 from csense_shared.security.tokens import AUDIENCE_CUSTOMER, issue_access_token
@@ -51,6 +53,12 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    # The mobile app sends `client="mobile"` plus its install id; everything else is a
+    # browser. Only mobile installs count against `mobile_device.count`.
+    client: str = Field(default="web", pattern="^(web|mobile)$")
+    device_id: str | None = Field(default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    device_name: str | None = Field(default=None, max_length=120)
+    platform: str | None = Field(default=None, max_length=32)
 
 
 class AuthResponse(BaseModel):
@@ -251,10 +259,28 @@ async def login(
         permissions = await get_role_permissions(db, membership.role_id)
         user_id, tenant_id, membership_id = user.id, membership.tenant_id, membership.membership_id
 
+        previous_device_session: str | None = None
+        if body.client == "mobile":
+            if not body.device_id:
+                raise ApiError(
+                    status_code=422, code="device_id_required",
+                    message="The mobile app must identify this device to sign in.",
+                )
+            await set_tenant_scope(db, tenant_id)
+            previous_device_session = await admit_device(
+                db, tenant_id=tenant_id, user_id=user_id, device_id=body.device_id,
+                name=body.device_name, platform=body.platform,
+                limit=await entitlement_limit(db, tenant_id, MOBILE_DEVICE_LIMIT),
+            )
+
+    if previous_device_session:
+        await revoke_session(request.app.state.redis, settings, session_id=previous_device_session)
+
     return await _issue_tokens(
         request, response, settings,
         user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
         site_scope_mode=membership.site_scope_mode, site_ids=membership.site_ids,
+        client=body.client, device_id=body.device_id if body.client == "mobile" else None,
     )
 
 
@@ -269,12 +295,26 @@ async def _issue_tokens(
     permissions: frozenset[str],
     site_scope_mode: str,
     site_ids: frozenset[uuid.UUID],
+    client: str = "web",
+    device_id: str | None = None,
 ) -> AuthResponse:
     redis_client = request.app.state.redis
+    session_factory: async_sessionmaker = request.app.state.session_factory
+    max_concurrent_web: int | None = None
+    if client == "web":
+        async with tenant_session(session_factory, tenant_id) as db:
+            max_concurrent_web = await entitlement_limit(db, tenant_id, WEB_SESSION_LIMIT)
     session_id, refresh_token = await create_session(
         redis_client, settings,
         user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, audience=AUDIENCE_CUSTOMER,
+        client=client, max_concurrent_web=max_concurrent_web,
     )
+    if device_id:
+        async with tenant_session(session_factory, tenant_id) as db:
+            await db.execute(
+                text("UPDATE mobile_devices SET session_id = :s WHERE device_id = :d"),
+                {"s": session_id, "d": device_id},
+            )
     access_token = issue_access_token(
         settings=settings,
         user_id=user_id,

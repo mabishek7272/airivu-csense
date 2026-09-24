@@ -61,6 +61,15 @@ http:
       entryPoints: [web]
       middlewares: [security-headers]
 
+    # Detection demo API on the demo host; the longer rule and explicit priority make it
+    # win over demo-site for /api/v1/demo/* only.
+    demo-api:
+      rule: "(Host(`demo.3rdi.in`) || Host(`3rdi.in`)) && PathPrefix(`/api/v1/demo`)"
+      service: demo-api
+      priority: 100
+      entryPoints: [web]
+      middlewares: [security-headers]
+
     edge-site:
       rule: "Host(`edge.3rdi.in`)"
       service: edge-site
@@ -100,6 +109,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    demo-api:
+      loadBalancer:
+        servers:
+          - url: "http://demo-api:8000"
     edge-site:
       loadBalancer:
         servers:

@@ -76,6 +76,16 @@ http:
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
+    # Detection demo API on the demo host; the longer rule and explicit priority make it
+    # win over demo-site for /api/v1/demo/* only.
+    demo-api:
+      rule: "(Host(`demo.example.com`)) && PathPrefix(`/api/v1/demo`)"
+      service: demo-api
+      priority: 100
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
     # Static marketing/portfolio site, not part of this app - see
     # infra/edge-site/nginx.conf's own comment for what it is and why it isn't a build
     # target of this repo.
@@ -124,6 +134,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    demo-api:
+      loadBalancer:
+        servers:
+          - url: "http://demo-api:8000"
     edge-site:
       loadBalancer:
         servers:

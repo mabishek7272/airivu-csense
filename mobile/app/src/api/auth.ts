@@ -1,10 +1,19 @@
+import { Platform } from 'react-native';
 import { apiRequest } from './client';
+import { deviceName, getDeviceId } from '../auth/device';
 import { cookies } from '../auth/cookies';
 import { tokenStore } from '../auth/tokenStore';
 import type { AuthResponse, LoginRequest } from './types';
 
 export async function login(email: string, password: string): Promise<void> {
-  const body: LoginRequest = { email, password };
+  const body: LoginRequest = {
+    email,
+    password,
+    client: 'mobile',
+    device_id: await getDeviceId(),
+    device_name: deviceName(),
+    platform: Platform.OS,
+  };
   const auth = await apiRequest<AuthResponse>('/api/v1/auth/login', { method: 'POST', body, auth: false });
   await tokenStore.setSession({
     accessToken: auth.access_token,

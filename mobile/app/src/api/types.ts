@@ -11,6 +11,10 @@
 export interface LoginRequest {
   email: string;
   password: string;
+  client?: 'web' | 'mobile';
+  device_id?: string;
+  device_name?: string;
+  platform?: string;
 }
 
 /**
@@ -170,4 +174,21 @@ export interface LicenseOut {
   grace_ends_at: string | null;
   entitlements: EntitlementOut[];
   quota_usage: QuotaUsageOut[];
+}
+
+// --- Devices (backend/tenant_api/app/api/devices.py) -------------------------------------
+
+export interface DeviceOut {
+  id: string;
+  name: string | null;
+  platform: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface DevicesOut {
+  /** `null` = the plan sets no limit. */
+  device_limit: number | null;
+  web_session_limit: number | null;
+  devices: DeviceOut[];
 }

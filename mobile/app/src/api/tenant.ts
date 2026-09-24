@@ -2,6 +2,7 @@ import { apiRequest } from './client';
 import type {
   CameraOut,
   DashboardOut,
+  DevicesOut,
   IncidentDetail,
   IncidentPage,
   IncidentTransitionResult,
@@ -53,4 +54,12 @@ export function listCameras(): Promise<CameraOut[]> {
  * contract the real endpoint documents (license.py's own docstring). */
 export function getLicense(): Promise<LicenseOut | null> {
   return apiRequest<LicenseOut | null>('/api/v1/tenant/license');
+}
+
+export function listDevices(): Promise<DevicesOut> {
+  return apiRequest<DevicesOut>('/api/v1/tenant/devices');
+}
+
+export function removeDevice(deviceId: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/tenant/devices/${deviceId}`, { method: 'DELETE' });
 }

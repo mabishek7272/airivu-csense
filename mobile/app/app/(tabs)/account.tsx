@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { removeDevice } from '../../src/api/tenant';
+import { useDevices } from '../../src/hooks/useDevices';
+import { errorMessage } from '../../src/utils/errorMessage';
 import { useAuth } from '../../src/auth/AuthContext';
 import { useLicense } from '../../src/hooks/useLicense';
 import { LoadingState, ErrorState } from '../../src/components/States';
@@ -27,6 +30,7 @@ export default function AccountScreen() {
   const colors = useColors();
   const { logout } = useAuth();
   const { data: license, loading, error, refresh } = useLicense();
+  const devices = useDevices();
   const [loggingOut, setLoggingOut] = useState(false);
 
   const onLogout = async () => {
@@ -36,6 +40,28 @@ export default function AccountScreen() {
     } finally {
       setLoggingOut(false);
     }
+  };
+
+  const onRemoveDevice = (id: string, name: string | null) => {
+    Alert.alert(
+      'Remove this device?',
+      `${name ?? 'This device'} will be signed out and its slot freed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeDevice(id);
+              devices.refresh();
+            } catch (err) {
+              Alert.alert('Could not remove the device', errorMessage(err));
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -73,6 +99,37 @@ export default function AccountScreen() {
         </View>
       )}
 
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Signed-in devices</Text>
+      {devices.loading ? (
+        <LoadingState label="Loading devices…" />
+      ) : devices.error || !devices.data ? (
+        <ErrorState message={devices.error ?? 'Could not load devices.'} onRetry={devices.refresh} />
+      ) : (
+        <View style={[styles.card, { borderColor: colors.border }]}>
+          <Text style={[styles.muted, { color: colors.textMuted }]}>
+            {devices.data.devices.length}
+            {devices.data.device_limit !== null ? ` of ${devices.data.device_limit}` : ''} in use
+          </Text>
+          {devices.data.devices.map((device) => (
+            <View key={device.id} style={styles.deviceRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{device.name ?? 'Unnamed device'}</Text>
+                <Text style={[styles.muted, { color: colors.textMuted }]}>
+                  Last active {new Date(device.last_seen_at).toLocaleDateString()}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => onRemoveDevice(device.id, device.name)}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${device.name ?? 'device'}`}
+              >
+                <Text style={{ color: colors.critical, fontWeight: '600' }}>Remove</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+
       <Pressable
         onPress={onLogout}
         disabled={loggingOut}
@@ -98,5 +155,6 @@ const styles = StyleSheet.create({
   quotaValue: { fontSize: 12 },
   quotaBar: { borderRadius: 3, height: 6, overflow: 'hidden' },
   quotaBarFill: { height: '100%' },
+  deviceRow: { alignItems: 'center', flexDirection: 'row', gap: 12, paddingTop: 8 },
   logoutButton: { alignItems: 'center', borderRadius: 8, borderWidth: 1, marginTop: 8, paddingVertical: 12 },
 });

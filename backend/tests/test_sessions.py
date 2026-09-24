@@ -399,3 +399,76 @@ async def test_revoke_session_also_clears_the_grace_key(redis_client, test_setti
 
     assert await redis_client.exists(_session_key(test_settings, session_id)) == 0
     assert await redis_client.exists(_grace_key(test_settings, session_id)) == 0
+
+
+# --- Concurrent web session limit (client tiers) -----------------------------------------
+
+async def _web_session(redis_client, test_settings, tenant_id, *, limit, client="web"):
+    session_id, _ = await create_session(
+        redis_client, test_settings,
+        user_id=uuid.uuid4(), tenant_id=tenant_id, membership_id=uuid.uuid4(),
+        audience=AUDIENCE_CUSTOMER, client=client, max_concurrent_web=limit,
+    )
+    return session_id
+
+
+async def _alive(redis_client, test_settings, session_id) -> bool:
+    return bool(await redis_client.exists(_session_key(test_settings, session_id)))
+
+
+async def test_a_limit_of_one_signs_out_the_previous_web_session(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    first = await _web_session(redis_client, test_settings, tenant, limit=1)
+    second = await _web_session(redis_client, test_settings, tenant, limit=1)
+    assert not await _alive(redis_client, test_settings, first)
+    assert await _alive(redis_client, test_settings, second)
+
+
+async def test_a_limit_of_two_evicts_only_the_oldest(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    a = await _web_session(redis_client, test_settings, tenant, limit=2)
+    b = await _web_session(redis_client, test_settings, tenant, limit=2)
+    c = await _web_session(redis_client, test_settings, tenant, limit=2)
+    assert not await _alive(redis_client, test_settings, a)
+    assert await _alive(redis_client, test_settings, b)
+    assert await _alive(redis_client, test_settings, c)
+
+
+async def test_no_limit_means_no_eviction(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    ids = [await _web_session(redis_client, test_settings, tenant, limit=None) for _ in range(4)]
+    assert all([await _alive(redis_client, test_settings, s) for s in ids])
+
+
+async def test_mobile_sessions_neither_count_toward_nor_are_evicted_by_the_web_limit(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    phone = await _web_session(redis_client, test_settings, tenant, limit=1, client="mobile")
+    web = await _web_session(redis_client, test_settings, tenant, limit=1)
+    assert await _alive(redis_client, test_settings, phone)
+    assert await _alive(redis_client, test_settings, web)
+
+
+async def test_the_limit_is_per_tenant(redis_client, test_settings):
+    one, two = uuid.uuid4(), uuid.uuid4()
+    a = await _web_session(redis_client, test_settings, one, limit=1)
+    b = await _web_session(redis_client, test_settings, two, limit=1)
+    assert await _alive(redis_client, test_settings, a)
+    assert await _alive(redis_client, test_settings, b)
+
+
+async def test_a_signed_out_session_frees_its_slot_without_evicting_anyone(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    a = await _web_session(redis_client, test_settings, tenant, limit=2)
+    b = await _web_session(redis_client, test_settings, tenant, limit=2)
+    await revoke_session(redis_client, test_settings, session_id=a)
+    c = await _web_session(redis_client, test_settings, tenant, limit=2)
+    assert await _alive(redis_client, test_settings, b)
+    assert await _alive(redis_client, test_settings, c)
+
+
+async def test_racing_logins_settle_at_the_limit(redis_client, test_settings):
+    tenant = uuid.uuid4()
+    await asyncio.gather(*[_web_session(redis_client, test_settings, tenant, limit=2) for _ in range(6)])
+    members = await redis_client.zrange(f"cs:{test_settings.environment}:tenant_sessions:{tenant}:web", 0, -1)
+    live = [m for m in members if await _alive(redis_client, test_settings, m)]
+    assert len(live) <= 2

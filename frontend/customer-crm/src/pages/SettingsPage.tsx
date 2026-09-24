@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { ApiRequestError } from "../api/client";
-import { getOwnLicense } from "../api/license";
+import { getOwnLicense, listDevices, removeDevice } from "../api/license";
 import { confirmTotp, enrollTotp, getMfaStatus, removeTotp, verifyMfa } from "../api/mfa";
 import { Dialog } from "../components/Dialog";
-import { Layout } from "../components/Layout";
+import { Layout, relativeTime } from "../components/Layout";
 import { useNotifications } from "../components/Notifications";
 import { EmptyPanel, FailureState, InlineSpinner, LoadingRows } from "../components/States";
 import { useOnlineStatus } from "../hooks/useNetwork";
@@ -19,9 +19,24 @@ export function SettingsPage() {
   const notify = useNotifications();
   const license = useResource(getOwnLicense, []);
   const mfa = useResource(getMfaStatus, []);
+  const devices = useResource(listDevices, []);
+  const [removingDeviceId, setRemovingDeviceId] = useState<string | null>(null);
 
   const [enrolling, setEnrolling] = useState(false);
   const [removing, setRemoving] = useState(false);
+
+  async function handleRemoveDevice(id: string, name: string | null) {
+    setRemovingDeviceId(id);
+    try {
+      await removeDevice(id);
+      devices.reload();
+      notify.success(`${name ?? "The device"} was removed`, "It is signed out and its slot is free.");
+    } catch (err) {
+      notify.error("Could not remove the device", err instanceof Error ? err.message : undefined);
+    } finally {
+      setRemovingDeviceId(null);
+    }
+  }
 
   return (
     <Layout>
@@ -91,6 +106,63 @@ export function SettingsPage() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section style={{ marginBottom: "var(--space-5)" }}>
+        <h2>Devices</h2>
+        {devices.loading ? (
+          <LoadingRows rows={2} columns={3} />
+        ) : devices.error || !devices.data ? (
+          <FailureState error={devices.error} online={online} onRetry={devices.reload} entity="the device list" />
+        ) : (
+          <div className="card">
+            <p className="muted">
+              {devices.data.devices.length}
+              {devices.data.device_limit !== null ? ` of ${devices.data.device_limit}` : ""} phones and
+              tablets signed in
+              {devices.data.web_session_limit !== null
+                ? `. Your plan allows ${devices.data.web_session_limit} browser${
+                    devices.data.web_session_limit === 1 ? "" : "s"
+                  } signed in at once; signing in on another browser signs out the oldest.`
+                : "."}
+            </p>
+            {devices.data.devices.length > 0 && (
+              <table className="data-table">
+                <caption className="visually-hidden">Signed-in devices</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Device</th>
+                    <th scope="col">Last active</th>
+                    <th scope="col">
+                      <span className="visually-hidden">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devices.data.devices.map((device) => (
+                    <tr key={device.id}>
+                      <td>
+                        <strong>{device.name ?? "Unnamed device"}</strong>
+                        {device.platform && <div className="muted">{device.platform}</div>}
+                      </td>
+                      <td title={device.last_seen_at}>{relativeTime(device.last_seen_at)}</td>
+                      <td className="row-actions">
+                        <button
+                          type="button"
+                          className="btn-quiet btn-danger-quiet"
+                          disabled={!online || removingDeviceId === device.id}
+                          onClick={() => void handleRemoveDevice(device.id, device.name)}
+                        >
+                          {removingDeviceId === device.id ? "Removing…" : "Remove"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}

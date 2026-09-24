@@ -13,6 +13,7 @@ from app.api import (
     cameras,
     dashboard,
     detections,
+    devices,
     edge,
     exports,
     faces,
@@ -129,5 +130,6 @@ app.include_router(webhooks.router)
 app.include_router(api_clients.router)
 app.include_router(exports.router)
 app.include_router(faces.router)
+app.include_router(devices.router)
 
 
