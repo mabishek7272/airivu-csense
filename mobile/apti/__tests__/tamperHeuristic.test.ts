@@ -26,4 +26,12 @@ describe('TamperDetector', () => {
     d.reset();
     expect(d.check(5000)).toBe(false);
   });
+
+  it('keeps firing through a sustained tamper block instead of going silent', () => {
+    const d = new TamperDetector();
+    for (let i = 0; i < 5; i++) d.check(50000);
+    for (let i = 0; i < 10; i++) {
+      expect(d.check(5000)).toBe(true);
+    }
+  });
 });

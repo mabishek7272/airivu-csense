@@ -18,8 +18,10 @@ export class TamperDetector {
    *  this frame looks like a covered/blocked lens relative to recent frames. */
   check(byteSize: number): boolean {
     const tampered = this.samples.length >= MIN_SAMPLES && byteSize < this.average() * DROP_RATIO;
-    this.samples.push(byteSize);
-    if (this.samples.length > WINDOW) this.samples.shift();
+    if (!tampered) {
+      this.samples.push(byteSize);
+      if (this.samples.length > WINDOW) this.samples.shift();
+    }
     return tampered;
   }
 
