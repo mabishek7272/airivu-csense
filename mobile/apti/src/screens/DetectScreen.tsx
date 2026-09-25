@@ -167,6 +167,7 @@ export function DetectScreen() {
           setResult(detected);
           setNotice(null);
         } catch (error) {
+          if (cancelled) break;
           if (error instanceof Throttled) {
             wait = error.retryAfterMs;
             setNotice('The demo is busy. Retrying in a moment…');

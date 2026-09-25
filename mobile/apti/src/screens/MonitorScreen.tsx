@@ -137,6 +137,7 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
           }
           setNotice(null);
         } catch (error) {
+          if (cancelled) break;
           // Unlike a bare swallow, distinguish a Throttled/busy response (back off by the
           // server's own retryAfterMs and say so) from any other failure, mirroring
           // DetectScreen.tsx's live loop - so a run of 503s is visibly different from a
