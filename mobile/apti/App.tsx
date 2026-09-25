@@ -220,7 +220,15 @@ function Screen() {
         <View style={styles.titleRow}>
           <View style={{ gap: 2 }}>
             <Kicker>Closed circuit assurance</Kicker>
-            <Text style={styles.appTitle}>Apti</Text>
+            {/* The real brand mark (logos/apti.png) plus wordmark, not a text label - it
+                already reads "apti", so this is the app's name and logo together. */}
+            <Image
+              source={require('./assets/apti-logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+              accessibilityRole="image"
+              accessibilityLabel="Apti"
+            />
           </View>
           {live && (
             <Tag variant="accent" style={styles.liveTag}>
@@ -417,7 +425,9 @@ const styles = StyleSheet.create({
   root: { backgroundColor: color.bg, flex: 1 },
   content: { gap: space[4], padding: 16, paddingBottom: 40 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
-  appTitle: { color: color.text, fontSize: 28, fontFamily: fontHeading, letterSpacing: -0.5 },
+  // Source is 155x165 (a bit taller than wide); fixed height with width auto-derived
+  // keeps the wordmark legible without distorting the mark's own proportions.
+  logo: { width: 45, height: 48 },
   liveTag: { paddingVertical: 4 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.accent },
   subtitle: { color: textMuted, fontSize: 14, marginTop: -6 },
