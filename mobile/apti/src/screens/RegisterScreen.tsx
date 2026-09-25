@@ -136,7 +136,7 @@ export function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack:
           <View style={styles.photoGrid}>
             {photos.map((uri, i) => (
               <Tag key={i} variant="neutral">
-                Photo {i + 1}
+                {`Photo ${i + 1}`}
               </Tag>
             ))}
           </View>
