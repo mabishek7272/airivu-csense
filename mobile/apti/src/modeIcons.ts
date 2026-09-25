@@ -5,6 +5,7 @@ export const MODE_ICON: Record<string, string> = {
   phone: 'cellphone',
   fire: 'fire',
   face: 'face-recognition',
+  face_recognition: 'account-check-outline',
   ppe: 'face-mask-outline',
   weapon: 'pistol',
   door: 'door',
