@@ -106,6 +106,19 @@ class DetectOut(BaseModel):
     detections: list[DetectionOut]
 
 
+class FaceOut(BaseModel):
+    box: BoxOut
+    detector_confidence: float
+    embedding: list[float]
+
+
+class DetectFaceOut(BaseModel):
+    width: int
+    height: int
+    inference_ms: float
+    faces: list[FaceOut]
+
+
 @app.get("/api/v1/demo/modes", response_model=list[ModeOut])
 async def list_modes() -> list[ModeOut]:
     return [
@@ -180,6 +193,64 @@ async def detect(request: Request, mode: str = Form(...), image: UploadFile = Fi
         "mode": mode, "detections": len(detections), "ms": round((time.monotonic() - started) * 1000)})
     return DetectOut(mode=mode, width=width, height=height,
                      inference_ms=float(payload.get("inference_ms", 0)), detections=detections)
+
+
+@app.post("/api/v1/demo/detect-face", response_model=DetectFaceOut)
+async def detect_face(request: Request, image: UploadFile = File(...)):
+    if image.content_type not in ALLOWED_TYPES:
+        return _error(415, "unsupported_image", "Send a JPEG, PNG or WebP image.")
+
+    try:
+        await check_and_increment(
+            request.app.state.redis, settings, client_id=_client_key(request),
+            limit_per_minute=PER_IP_LIMIT_PER_MINUTE,
+        )
+    except RateLimitExceededError as exc:
+        return _error(429, "rate_limited", "Too many requests. Slow down a little.",
+                      {"Retry-After": str(exc.retry_after_seconds)})
+
+    data = await image.read(MAX_IMAGE_BYTES + 1)
+    if not data:
+        return _error(400, "empty_image", "No image received.")
+    if len(data) > MAX_IMAGE_BYTES:
+        return _error(413, "image_too_large", "Image is larger than 1.5 MB. Send a smaller photo.")
+
+    slots: asyncio.Semaphore = request.app.state.slots
+    if slots.locked():
+        return _error(503, "busy", "The demo is busy. Try again in a moment.", {"Retry-After": "1"})
+
+    async with slots:
+        started = time.monotonic()
+        try:
+            response = await request.app.state.http.post(
+                "/internal/v1/infer-face",
+                data={"confidence": "0.5"},
+                files={"frame": ("frame.jpg", data, image.content_type)},
+            )
+        except httpx.HTTPError:
+            logger.warning("demo_infer_face_unreachable")
+            return _error(502, "inference_unavailable", "Detection is unavailable right now.")
+
+    if response.status_code == 400:
+        return _error(400, "bad_image", "That image could not be read.")
+    if response.status_code != 200:
+        logger.warning("demo_infer_face_failed", extra={"status": response.status_code})
+        return _error(502, "inference_failed", "Detection failed. Try again.")
+
+    payload = response.json()
+    width, height = payload.get("frame_size", [0, 0])
+    faces = [
+        FaceOut(
+            box=BoxOut(x1=f["bbox"][0], y1=f["bbox"][1], x2=f["bbox"][2], y2=f["bbox"][3]),
+            detector_confidence=float(f["detector_confidence"]),
+            embedding=f["embedding"],
+        )
+        for f in payload.get("faces", [])
+    ]
+    logger.info("demo_detect_face", extra={
+        "faces": len(faces), "ms": round((time.monotonic() - started) * 1000)})
+    return DetectFaceOut(width=width, height=height,
+                          inference_ms=float(payload.get("inference_ms", 0)), faces=faces)
 
 
 @app.get("/healthz")
