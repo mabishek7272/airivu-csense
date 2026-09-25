@@ -70,6 +70,14 @@ function Spinner({ size = 32 }: { size?: number }) {
   );
 }
 
+const FACE_RECOGNITION_MODE: Mode = {
+  code: 'face_recognition',
+  label: 'Face Recognition',
+  description: 'Matches faces against the people you registered this session.',
+  available: true,
+  note: null,
+};
+
 /** Runs face detection, matches each face against the session gallery, and reshapes the
  *  result into the same `DetectResult` shape the rest of this screen already renders - so
  *  no other UI code needs to know Face Recognition took a different path to get there. */
@@ -109,13 +117,6 @@ export function DetectScreen() {
   const gallery = useFaceGallery();
   const lastLogged = useRef<string | null>(null);
 
-  const FACE_RECOGNITION_MODE: Mode = {
-    code: 'face_recognition',
-    label: 'Face Recognition',
-    description: 'Matches faces against the people you registered this session.',
-    available: true,
-    note: null,
-  };
   const allModes = modes ? [...modes, FACE_RECOGNITION_MODE] : null;
   const mode = allModes?.find((m) => m.code === modeCode) ?? null;
 
@@ -181,7 +182,7 @@ export function DetectScreen() {
     return () => {
       cancelled = true;
     };
-  }, [live, mode]);
+  }, [live, mode, gallery.match]);
 
   function pickMode(code: string) {
     setModeCode(code);
@@ -236,7 +237,7 @@ export function DetectScreen() {
       severity,
       thumbnailSourceUri: tab === 'live' ? undefined : photoUri ?? undefined,
     }).catch(() => {});
-  }, [shown]);
+  }, [shown, tab, photoUri]);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
