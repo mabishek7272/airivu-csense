@@ -425,9 +425,9 @@ const styles = StyleSheet.create({
   root: { backgroundColor: color.bg, flex: 1 },
   content: { gap: space[4], padding: 16, paddingBottom: 40 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
-  // Source is 155x165 (a bit taller than wide); fixed height with width auto-derived
+  // Source is 300x305 (near-square); fixed height with width matched to that ratio
   // keeps the wordmark legible without distorting the mark's own proportions.
-  logo: { width: 45, height: 48 },
+  logo: { width: 47.2, height: 48 },
   liveTag: { paddingVertical: 4 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.accent },
   subtitle: { color: textMuted, fontSize: 14, marginTop: -6 },
