@@ -63,7 +63,7 @@ export function HomeScreen({
       </View>
       <View style={styles.statusRow}>
         <Tag variant="neutral">Models ready</Tag>
-        {gallery.personCount > 0 && <Tag variant="accent">{gallery.personCount} registered this session</Tag>}
+        {gallery.personCount > 0 && <Tag variant="accent">{`${gallery.personCount} registered this session`}</Tag>}
       </View>
 
       <ActionCard
