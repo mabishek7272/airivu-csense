@@ -17,11 +17,13 @@ function Icon({ name, size = 18, color: c = color.text }: { name: string; size?:
 
 type Step = 'details' | 'capture' | 'consent' | 'review';
 
+type CapturedPhoto = { uri: string; embedding: number[] };
+
 export function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => void }) {
   const gallery = useFaceGallery();
   const [step, setStep] = useState<Step>('details');
   const [name, setName] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,12 +58,12 @@ export function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack:
           `This looks like ${duplicate.name} (${Math.round(duplicate.similarity * 100)}% match). Add it anyway?`,
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Add anyway', onPress: () => setPhotos((prev) => [...prev, uri]) },
+            { text: 'Add anyway', onPress: () => setPhotos((prev) => [...prev, { uri, embedding }]) },
           ],
         );
         return;
       }
-      setPhotos((prev) => [...prev, uri]);
+      setPhotos((prev) => [...prev, { uri, embedding }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not check that photo. Try again.');
     } finally {
@@ -73,11 +75,12 @@ export function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack:
     setBusy(true);
     setError(null);
     try {
+      // Embeddings were already computed (and validated) when each photo was added in
+      // addPhoto() - reuse them here instead of re-calling detectFaces. Registering only
+      // happens after every photo is accounted for, under a single id, so a failure can
+      // never leave partial/orphaned entries in the gallery.
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      for (const uri of photos) {
-        const result = await detectFaces(uri);
-        if (result.faces[0]) gallery.register(id, name.trim(), result.faces[0].embedding);
-      }
+      for (const photo of photos) gallery.register(id, name.trim(), photo.embedding);
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save. Try again.');
@@ -134,7 +137,7 @@ export function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack:
             One clear, front-facing photo per angle. {photos.length}/{MAX_PHOTOS} added.
           </Text>
           <View style={styles.photoGrid}>
-            {photos.map((uri, i) => (
+            {photos.map((p, i) => (
               <Tag key={i} variant="neutral">
                 {`Photo ${i + 1}`}
               </Tag>
