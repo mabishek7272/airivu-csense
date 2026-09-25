@@ -10,8 +10,12 @@ This endpoint is unauthenticated on purpose, so it is defended in depth instead:
   - **Allow-listed modes only**; the caller never names a model.
   - **Nothing is stored or logged**: the image lives in memory for the length of the request,
     and the log line carries the mode and timing only. Faces of passers-by are personal data.
-  - **Face mode is detection only.** It calls the detector, never the embedding/recognition
-    route, so no biometric template is ever produced here.
+  - **`/detect`'s `face` mode is detection only** — it calls the detector, never the
+    embedding/recognition route, so no biometric template is produced there. `/detect-face`
+    is different by design: it returns a raw embedding to the caller for the app's
+    session-only, client-side face-matching feature (see
+    `docs/superpowers/specs/2026-09-25-apti-demo-v2-design.md`) — the embedding is never
+    stored or compared here, only computed and returned.
 """
 from __future__ import annotations
 
@@ -195,6 +199,11 @@ async def detect(request: Request, mode: str = Form(...), image: UploadFile = Fi
                      inference_ms=float(payload.get("inference_ms", 0)), detections=detections)
 
 
+# Costs roughly 2x /detect per request (two model passes - detector + recognizer -
+# instead of one), sharing the same MAX_IN_FLIGHT cap and the same ai-runtime container
+# that also serves real tenant camera inference. Not yet measured against real demo
+# traffic; revisit MAX_IN_FLIGHT or give this route its own cap if it turns out to
+# meaningfully compete with real camera traffic under load.
 @app.post("/api/v1/demo/detect-face", response_model=DetectFaceOut)
 async def detect_face(request: Request, image: UploadFile = File(...)):
     if image.content_type not in ALLOWED_TYPES:
