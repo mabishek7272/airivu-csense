@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import { bestMatch, type GalleryEntry, type Match } from './faceMatch';
+import { bestMatch, normalise, type GalleryEntry, type Match } from './faceMatch';
 
 interface FaceGalleryValue {
   entries: GalleryEntry[];
@@ -26,7 +26,7 @@ export function FaceGalleryProvider({ children }: { children: React.ReactNode })
   const [entries, setEntries] = useState<GalleryEntry[]>([]);
 
   const register = useCallback((id: string, name: string, vector: number[]) => {
-    setEntries((prev) => [...prev, { id, name, vector }]);
+    setEntries((prev) => [...prev, { id, name, vector: normalise(vector) }]);
   }, []);
 
   const findDuplicate = useCallback((vector: number[]) => bestMatch(vector, entries, DUPLICATE_THRESHOLD), [entries]);
