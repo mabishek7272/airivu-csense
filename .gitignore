@@ -57,3 +57,6 @@ artifacts/
 
 # scripts/dast_baseline.py's own output - point-in-time scan artifacts, not source.
 /reports/
+
+# Isolated git worktrees for subagent-driven feature work - not source.
+/.worktrees/
