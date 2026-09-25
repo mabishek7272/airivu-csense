@@ -20,7 +20,7 @@ function Icon({ name, size = 22, color: c = color.neutral500 }: { name: string; 
 
 function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress}>
+    <Pressable onPress={onPress} accessibilityRole="radio" accessibilityState={{ selected: active }}>
       <Tag variant={active ? 'accent' : 'neutral'}>{label}</Tag>
     </Pressable>
   );
@@ -28,12 +28,16 @@ function FilterChip({ label, active, onPress }: { label: string; active: boolean
 
 export function HistoryScreen() {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
 
   const refresh = useCallback(() => {
-    loadHistory().then(setEntries);
+    setLoadError(false);
+    loadHistory()
+      .then(setEntries)
+      .catch(() => setLoadError(true));
   }, []);
 
   useEffect(() => {
@@ -50,7 +54,14 @@ export function HistoryScreen() {
   function onClear() {
     Alert.alert('Clear history?', 'This removes every entry and thumbnail on this device.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: () => clearHistory().then(refresh) },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: () =>
+          clearHistory()
+            .then(refresh)
+            .catch(() => Alert.alert('Could not clear history', 'Something went wrong. Please try again.')),
+      },
     ]);
   }
 
@@ -64,7 +75,17 @@ export function HistoryScreen() {
         Nothing here is uploaded. Detections stay on this phone and are cleared when you tap Clear.
       </Text>
 
-      {entries === null ? null : entries.length === 0 ? (
+      {loadError ? (
+        <View style={styles.empty}>
+          <Icon name="alert-circle-outline" size={32} />
+          <Text style={{ color: textMuted, fontSize: 14, marginTop: 8, textAlign: 'center' }}>
+            Couldn't load history.
+          </Text>
+          <Btn variant="secondary" onPress={refresh} style={{ marginTop: 12 }}>
+            Retry
+          </Btn>
+        </View>
+      ) : entries === null ? null : entries.length === 0 ? (
         <View style={styles.empty}>
           <Icon name="history" size={32} />
           <Text style={{ color: textMuted, fontSize: 14, marginTop: 8, textAlign: 'center' }}>
@@ -97,7 +118,12 @@ export function HistoryScreen() {
               keyExtractor={(e) => e.id}
               style={{ flex: 1, marginTop: space[2] }}
               renderItem={({ item }) => (
-                <Pressable onPress={() => setDetail(item)} style={styles.row}>
+                <Pressable
+                  onPress={() => setDetail(item)}
+                  style={styles.row}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.label}, ${item.severity} severity, opens details`}
+                >
                   {item.thumbnailUri ? (
                     <Image source={{ uri: item.thumbnailUri }} style={styles.thumb} />
                   ) : (
@@ -120,7 +146,7 @@ export function HistoryScreen() {
       <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDetail(null)}>
           {detail && (
-            <View style={styles.modalCard}>
+            <Pressable style={styles.modalCard} onPress={() => {}}>
               {detail.thumbnailUri ? (
                 <Image source={{ uri: detail.thumbnailUri }} style={styles.modalThumb} />
               ) : (
@@ -137,7 +163,7 @@ export function HistoryScreen() {
               <Btn variant="secondary" onPress={() => setDetail(null)} style={{ marginTop: 14 }}>
                 Close
               </Btn>
-            </View>
+            </Pressable>
           )}
         </Pressable>
       </Modal>
