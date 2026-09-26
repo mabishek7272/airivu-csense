@@ -50,7 +50,8 @@ export async function detect(mode: string, imageUri: string, signal?: AbortSigna
     res = await fetch(`${API_BASE}/api/v1/demo/detect`, { method: 'POST', body: form, signal });
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;
-    throw new DemoError('No connection to the demo service.');
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    throw new DemoError(`No connection to the demo service. (${detail})`);
   }
 
   if (res.status === 429 || res.status === 503) {
@@ -86,7 +87,8 @@ export async function detectFaces(imageUri: string, signal?: AbortSignal): Promi
     res = await fetch(`${API_BASE}/api/v1/demo/detect-face`, { method: 'POST', body: form, signal });
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;
-    throw new DemoError('No connection to the demo service.');
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    throw new DemoError(`No connection to the demo service. (${detail})`);
   }
 
   if (res.status === 429 || res.status === 503) {
