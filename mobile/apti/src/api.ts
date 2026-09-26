@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import { API_BASE } from './config';
 import type { NormBox } from './geometry';
 
@@ -42,8 +43,11 @@ export async function listModes(): Promise<Mode[]> {
 export async function detect(mode: string, imageUri: string, signal?: AbortSignal): Promise<DetectResult> {
   const form = new FormData();
   form.append('mode', mode);
-  // React Native's FormData accepts a { uri, name, type } descriptor for a file.
-  form.append('image', { uri: imageUri, name: 'frame.jpg', type: 'image/jpeg' } as unknown as Blob);
+  // Expo SDK 57's fetch polyfill only accepts a real Blob-like value for a file part
+  // (something with a .bytes() method) - the older { uri, name, type } descriptor throws
+  // "Unsupported FormDataPart implementation" now. expo-file-system's File implements
+  // Blob and reads the local file's real bytes, so it satisfies that check.
+  form.append('image', new File(imageUri) as unknown as Blob, 'frame.jpg');
 
   let res: Response;
   try {
@@ -80,7 +84,9 @@ export interface DetectFaceResult {
 
 export async function detectFaces(imageUri: string, signal?: AbortSignal): Promise<DetectFaceResult> {
   const form = new FormData();
-  form.append('image', { uri: imageUri, name: 'frame.jpg', type: 'image/jpeg' } as unknown as Blob);
+  // See the matching comment in detect() above - the old { uri, name, type } descriptor
+  // no longer works with this SDK's fetch polyfill.
+  form.append('image', new File(imageUri) as unknown as Blob, 'frame.jpg');
 
   let res: Response;
   try {
