@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import logging
 import os
 import time
@@ -32,12 +33,15 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from app.modes import MODES
 from csense_shared.config import get_settings
+from csense_shared.db.postgres import create_engine, create_session_factory
 from csense_shared.db.redis import create_redis_client
 from csense_shared.logging import configure_logging
 from csense_shared.security.rate_limit import RateLimitExceededError, check_and_increment
+from csense_shared.storage.objects import BUCKET_AUDIT_ARCHIVE, create_client as create_minio_client, demo_login_selfie_key
 
 logger = logging.getLogger("demo_api")
 
@@ -56,9 +60,13 @@ async def lifespan(app: FastAPI):
     app.state.redis = create_redis_client(settings)
     app.state.http = httpx.AsyncClient(base_url=settings.ai_runtime_base_url, timeout=15.0)
     app.state.slots = asyncio.Semaphore(MAX_IN_FLIGHT)
+    app.state.db_engine = create_engine(settings)
+    app.state.db_session_factory = create_session_factory(app.state.db_engine)
+    app.state.minio = create_minio_client(settings)
     yield
     await app.state.http.aclose()
     await app.state.redis.aclose()
+    await app.state.db_engine.dispose()
 
 
 _origins = [o for o in os.environ.get("DEMO_CORS_ORIGINS", "https://demo.3rdi.in").split(",") if o]
@@ -260,6 +268,74 @@ async def detect_face(request: Request, image: UploadFile = File(...)):
         "faces": len(faces), "ms": round((time.monotonic() - started) * 1000)})
     return DetectFaceOut(width=width, height=height,
                           inference_ms=float(payload.get("inference_ms", 0)), faces=faces)
+
+
+class AuditLoginOut(BaseModel):
+    id: str
+
+
+# The login screen's own credential is a shared, public one (see the mobile app's
+# LoginScreen.tsx) - this endpoint is not an access-control boundary, so it accepts every
+# well-formed submission. Its only job is recording who tried the demo, and it must not be
+# the place that decides whether they were allowed to.
+@app.post("/api/v1/demo/audit-login", response_model=AuditLoginOut)
+async def audit_login(
+    request: Request,
+    name: str = Form(...),
+    place: str = Form(...),
+    company: str = Form(...),
+    selfie: UploadFile = File(...),
+):
+    if selfie.content_type not in ALLOWED_TYPES:
+        return _error(415, "unsupported_image", "Send a JPEG, PNG or WebP image.")
+    if not name.strip() or not place.strip() or not company.strip():
+        return _error(422, "missing_field", "Name, place and company are all required.")
+
+    data = await selfie.read(MAX_IMAGE_BYTES + 1)
+    if not data:
+        return _error(400, "empty_image", "No selfie received.")
+    if len(data) > MAX_IMAGE_BYTES:
+        return _error(413, "image_too_large", "Image is larger than 1.5 MB. Send a smaller photo.")
+
+    login_id = uuid.uuid4()
+    object_key = demo_login_selfie_key(login_id)
+    try:
+        request.app.state.minio.put_object(
+            BUCKET_AUDIT_ARCHIVE, object_key, io.BytesIO(data), length=len(data), content_type="image/jpeg",
+        )
+    except Exception:
+        logger.exception("demo_audit_login_selfie_upload_failed")
+        return _error(502, "storage_unavailable", "Could not save your visit. Try again.")
+
+    try:
+        async with request.app.state.db_session_factory() as session:
+            async with session.begin():
+                await session.execute(
+                    text(
+                        "INSERT INTO demo_login_audit (id, name, place, company, selfie_object_key) "
+                        "VALUES (:id, :name, :place, :company, :selfie_object_key)"
+                    ),
+                    {
+                        "id": str(login_id), "name": name.strip()[:200], "place": place.strip()[:200],
+                        "company": company.strip()[:200], "selfie_object_key": object_key,
+                    },
+                )
+    except Exception:
+        logger.exception("demo_audit_login_db_write_failed")
+        return _error(502, "storage_unavailable", "Could not save your visit. Try again.")
+
+    logger.info("demo_audit_login", extra={"id": str(login_id)})
+    return AuditLoginOut(id=str(login_id))
+
+
+# Not wired to a real camera yet - always refuses until a specific site's camera is
+# provisioned. Shaped as a real 503/Retry-After so the client's existing Throttled handling
+# (used for the busy-in-flight-cap case elsewhere in this file) treats it the same way: a
+# quiet retry, not a hard error.
+@app.get("/api/v1/demo/monitor/remote-frame")
+async def monitor_remote_frame():
+    return _error(503, "remote_camera_not_configured", "The remote camera is not connected yet.",
+                  {"Retry-After": "5"})
 
 
 @app.get("/healthz")

@@ -1,16 +1,30 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { File } from 'expo-file-system';
+import * as Notifications from 'expo-notifications';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { DemoError, Throttled, detect, detectFaces } from '../api';
-import { Btn, Kicker, Tag } from '../components/ui';
+import { DemoError, Throttled, detect, detectFaces, fetchRemoteFrame } from '../api';
+import { Btn, Kicker, Seg, SegOption, Tag } from '../components/ui';
 import { useFaceGallery } from '../FaceGalleryContext';
 import { addHistoryEntry } from '../history';
 import { prepareForUpload } from '../image';
 import { LIVE_FRAME_WIDTH } from '../config';
 import { TamperDetector } from '../tamperHeuristic';
 import { color, fontHeading, space, textMuted } from '../theme';
+
+type Source = 'phone' | 'remote';
+
+// Foreground alerts are suppressed by default - without this handler, an alert fired while
+// the app is open and this screen is visible would never actually show anything.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 // Slower than DetectScreen's LIVE_INTERVAL_MS (600ms) on purpose: each cycle here fires
 // three concurrent server calls (object, phone, face) instead of one. The per-IP cap
@@ -46,6 +60,7 @@ function Icon({ name, size = 18, color: c = color.text }: { name: string; size?:
 export function MonitorScreen({ onBack }: { onBack: () => void }) {
   const gallery = useFaceGallery();
   const [permission, requestPermission] = useCameraPermissions();
+  const [source, setSource] = useState<Source>('phone');
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<AlertEvent[]>([]);
   // Separate from `events.length`: `events` is capped at 100 for the FlatList, but the
@@ -74,17 +89,26 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
     return () => sub.remove();
   }, []);
 
+  // Local-only notifications: no push token, no server dispatch - just an in-app alert
+  // while a session is running and this screen is open. Best-effort; a denied/unavailable
+  // permission just means no OS notification fires, the in-app alert feed still works.
+  useEffect(() => {
+    Notifications.requestPermissionsAsync().catch(() => {});
+  }, []);
+
   // If OS camera permission is revoked mid-session, end the session outright rather than
   // just pausing the loop below - otherwise a re-grant before Stop would let the loop
   // silently resume mid-effect without going through start(), continuing what looks like
   // the same session across a permission gap (no tamper.reset()/setEvents([])). Requiring
-  // a fresh Start after a permission gap is the safer, cheap fix.
+  // a fresh Start after a permission gap is the safer, cheap fix. Only applies to the
+  // phone source - the remote source never needs the phone's own camera permission.
   useEffect(() => {
-    if (running && permission?.granted === false) stop();
-  }, [running, permission?.granted]);
+    if (source === 'phone' && running && permission?.granted === false) stop();
+  }, [source, running, permission?.granted]);
 
   useEffect(() => {
-    if (!running || !permission?.granted || !appActive) return;
+    if (!running || !appActive) return;
+    if (source === 'phone' && !permission?.granted) return;
     let cancelled = false;
 
     function pushEvent(type: string, label: string, severity: Severity, confidence: number | null = null) {
@@ -93,6 +117,9 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
       setEvents((prev) => [event, ...prev].slice(0, 100));
       setTotalAlertCount((n) => n + 1);
       addHistoryEntry({ source: 'monitor', label, confidence, severity }).catch(() => {});
+      // Best-effort: a denied permission or a platform quirk here should never interrupt
+      // the monitoring loop itself, so failures are swallowed rather than surfaced.
+      Notifications.scheduleNotificationAsync({ content: { title: 'Live Monitoring alert', body: label }, trigger: null }).catch(() => {});
     }
 
     (async () => {
@@ -100,9 +127,16 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
         const started = Date.now();
         let wait = 0;
         try {
-          const picture = await cameraRef.current?.takePictureAsync({ quality: 0.5, shutterSound: false });
-          if (!picture || cancelled) break;
-          const uri = await prepareForUpload(picture.uri, LIVE_FRAME_WIDTH, 0.6);
+          let uri: string;
+          if (source === 'phone') {
+            const picture = await cameraRef.current?.takePictureAsync({ quality: 0.5, shutterSound: false });
+            if (!picture || cancelled) break;
+            uri = await prepareForUpload(picture.uri, LIVE_FRAME_WIDTH, 0.6);
+          } else {
+            const frame = await fetchRemoteFrame();
+            if (cancelled) break;
+            uri = frame.uri;
+          }
           if (cancelled) break;
 
           const size = new File(uri).size;
@@ -169,7 +203,7 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
     // DetectScreen.tsx (commit 4147b00). Without it, a face registered while a monitoring
     // session is already running would keep matching against a stale, closed-over gallery
     // for the rest of that session.
-  }, [running, permission?.granted, appActive, gallery.match]);
+  }, [running, permission?.granted, appActive, gallery.match, source]);
 
   function start() {
     tamper.reset();
@@ -198,7 +232,16 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
         <Kicker>Live Monitoring</Kicker>
       </View>
 
-      {!permission?.granted ? (
+      <Seg>
+        <SegOption first active={source === 'phone'} onPress={() => !running && setSource('phone')}>
+          Phone camera
+        </SegOption>
+        <SegOption active={source === 'remote'} onPress={() => !running && setSource('remote')}>
+          Remote camera
+        </SegOption>
+      </Seg>
+
+      {source === 'phone' && !permission?.granted ? (
         <View style={styles.centered}>
           <Text style={{ color: color.text, fontSize: 14, textAlign: 'center', marginBottom: 12 }}>
             Camera access is needed to monitor.
@@ -210,7 +253,16 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
       ) : (
         <>
           <View style={styles.stage}>
-            <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+            {source === 'phone' ? (
+              <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+            ) : (
+              <View style={[StyleSheet.absoluteFill, styles.remoteStage]}>
+                <Icon name="cctv" size={28} color={color.neutral500} />
+                <Text style={{ color: textMuted, fontSize: 13, marginTop: 8, textAlign: 'center', paddingHorizontal: 16 }}>
+                  Remote camera - not connected yet
+                </Text>
+              </View>
+            )}
             {running && (
               <View style={styles.statusBar}>
                 <Text style={styles.statusText}>{mm}:{ss}</Text>
@@ -222,7 +274,7 @@ export function MonitorScreen({ onBack }: { onBack: () => void }) {
           </View>
 
           <Btn variant="primary" block onPress={running ? stop : start}>
-            {running ? 'Stop' : 'Run'}
+            {running ? 'Stop monitoring' : 'Start monitoring'}
           </Btn>
 
           {running && notice && (
@@ -263,6 +315,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   stage: { aspectRatio: 3 / 4, borderRadius: 14, overflow: 'hidden', backgroundColor: color.neutral900 },
+  remoteStage: { alignItems: 'center', justifyContent: 'center' },
   statusBar: {
     position: 'absolute', left: 0, right: 0, top: 0, padding: 10,
     flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'rgba(22,24,38,0.6)',

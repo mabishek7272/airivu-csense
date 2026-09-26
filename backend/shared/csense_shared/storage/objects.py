@@ -139,6 +139,12 @@ def tenant_evidence_key(tenant_id: UUID, incident_id: UUID, evidence_id: UUID, v
     return f"{tenant_id}/incidents/{incident_id}/{evidence_id}/{variant}.jpg"
 
 
+def demo_login_selfie_key(login_id: UUID) -> str:
+    """`demo-logins/{login_id}.jpg` in `BUCKET_AUDIT_ARCHIVE` - the public demo app's login
+    screen has no tenant to prefix with, so the audit record's own id is the whole key."""
+    return f"demo-logins/{login_id}.jpg"
+
+
 def branding_asset_key(organization_id: UUID, kind: str, sha256: str, extension: str) -> str:
     """`{organization_id}/branding/{kind}/{sha256}.{ext}` in `BUCKET_BRANDING`, `kind`
     being `logo` or `favicon`. Content-addressed like `model_artifact_key`: a re-upload

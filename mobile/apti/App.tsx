@@ -9,6 +9,7 @@ import { FaceGalleryProvider } from './src/FaceGalleryContext';
 import { DetectScreen } from './src/screens/DetectScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
 import { MonitorScreen } from './src/screens/MonitorScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { color, fontHeading } from './src/theme';
@@ -41,8 +42,20 @@ export default function App() {
 }
 
 function Root() {
+  const [loggedIn, setLoggedIn] = useState(false);
   const [screen, setScreen] = useState<Screen>('home');
-  const isTabScreen = screen === 'home' || screen === 'detect' || screen === 'history';
+  const isTabScreen = loggedIn && (screen === 'home' || screen === 'detect' || screen === 'history');
+
+  if (!loggedIn) {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <View style={styles.body}>
+          <LoginScreen onDone={() => setLoggedIn(true)} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
