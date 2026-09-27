@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -24,8 +24,20 @@ export function MfaVerifyPage() {
   // A direct navigation to this route, or a page refresh, loses the in-memory
   // mfaChallenge (it's never persisted - see AuthContext) - there's no challenge left
   // to verify against, so bounce back to /login rather than showing a broken form.
+  // This effect also fires on the SUCCESS path, because verifyMfa() clears
+  // mfaChallenge as part of completing sign-in (see AuthContext) - without the
+  // verifiedRef guard below, a successful verification would race this effect's
+  // /login redirect against handleSubmit's own /dashboard redirect. Today React 18
+  // batches both of AuthContext's state updates (isAuthenticated, mfaChallenge) with
+  // the effect re-run into one commit, so the explicit navigate("/dashboard") always
+  // wins - but that's relying on batching being present, not on anything documented
+  // here. verifiedRef makes the ordering correct by construction instead: it's set
+  // the moment verifyMfa() resolves, so this effect skips its redirect regardless of
+  // how many renders/commits fall between the resolve and the explicit navigate call.
+  const verifiedRef = useRef(false);
+
   useEffect(() => {
-    if (!mfaChallenge) {
+    if (!mfaChallenge && !verifiedRef.current) {
       navigate("/login", { replace: true });
     }
   }, [mfaChallenge, navigate]);
@@ -44,6 +56,7 @@ export function MfaVerifyPage() {
       } else {
         await verifyMfa({ code });
       }
+      verifiedRef.current = true;
       navigate("/dashboard");
     } catch (err) {
       setError(
@@ -55,8 +68,11 @@ export function MfaVerifyPage() {
   }
 
   function handleStartOver() {
+    // No explicit navigate() here: cancelMfa() clears mfaChallenge, and the
+    // null-challenge effect above already redirects to /login for exactly that
+    // state (verifiedRef is still false on this path, so the effect isn't skipped).
+    // One redirect mechanism for "no challenge left" beats two that happen to agree.
     cancelMfa();
-    navigate("/login");
   }
 
   const factorLabel =
