@@ -27,6 +27,7 @@ from app.api import (
     notification_policies,
     nvr,
     pipeline_assignments,
+    profile,
     public_branding,
     realtime,
     recipient_groups,
@@ -118,6 +119,7 @@ app.include_router(edge.router)
 app.include_router(recipient_groups.router)
 app.include_router(notification_policies.router)
 app.include_router(pipeline_assignments.router)
+app.include_router(profile.router)
 app.include_router(realtime.router)
 app.include_router(media.router)
 app.include_router(nvr.router)
