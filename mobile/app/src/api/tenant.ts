@@ -50,6 +50,22 @@ export function listCameras(): Promise<CameraOut[]> {
   return apiRequest<CameraOut[]>('/api/v1/tenant/cameras');
 }
 
+export interface LiveSession {
+  path: string;
+  protocol: string;
+  token: string;
+  play_url: string;
+  expires_in: number;
+}
+
+/** `body` is a plain object, not a pre-stringified string - `apiRequest` does the one
+ * `JSON.stringify` itself (see client.ts's own `rawFetch`), matching every other
+ * function in this file (e.g. `acknowledgeIncident` above). */
+export function startLiveSession(cameraId: string, protocol: 'hls' | 'webrtc' = 'hls'): Promise<LiveSession> {
+  const body = { protocol };
+  return apiRequest<LiveSession>(`/api/v1/tenant/cameras/${cameraId}/live-session`, { method: 'POST', body });
+}
+
 /** Null is a valid, common answer (no license assigned yet) - the same "not an error"
  * contract the real endpoint documents (license.py's own docstring). */
 export function getLicense(): Promise<LicenseOut | null> {
