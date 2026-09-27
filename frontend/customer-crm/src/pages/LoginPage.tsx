@@ -1,13 +1,38 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useBrand } from "../branding/BrandProvider";
 
 export function LoginPage() {
-  const { login, register } = useAuth();
+  const { login, register, mfaChallenge, isAuthenticated } = useAuth();
   const brand = useBrand();
   const navigate = useNavigate();
+  // login() sets AuthContext's own state (mfaChallenge for an MFA gate, isAuthenticated
+  // for a full sign-in) rather than returning which outcome happened - its signature
+  // stays Promise<void>. Checking either value synchronously right after `await
+  // login(...)` in handleSubmit below would only ever see the value from BEFORE that
+  // call: `mfaChallenge`/`isAuthenticated` here are destructured once per render into
+  // plain consts, and a later setState elsewhere doesn't retroactively change a
+  // closure's already-captured binding - only a fresh render (and effects reacting to
+  // it) sees the new value. So the navigation decision for a login attempt lives in
+  // these two effects instead of inline in handleSubmit. `loginAttempted` guards
+  // against firing on an unrelated isAuthenticated flip (e.g. AuthProvider's own
+  // silent-refresh-on-mount succeeding while this page happens to be showing) rather
+  // than one this page's own submit caused.
+  const loginAttempted = useRef(false);
+
+  useEffect(() => {
+    if (loginAttempted.current && mfaChallenge) {
+      navigate("/mfa-verify");
+    }
+  }, [mfaChallenge, navigate]);
+
+  useEffect(() => {
+    if (loginAttempted.current && isAuthenticated) {
+      navigate("/dashboard");
+    }
+  }, [isAuthenticated, navigate]);
   // A URL that resolves to (or was clearly meant to look like) a specific brand's own
   // private login page must never offer "create a brand-new, unrelated organization"
   // — that's a real security-relevant surface, not just a visual leak, so this checks
@@ -28,11 +53,14 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       if (mode === "login") {
+        loginAttempted.current = true;
         await login(email, password);
+        // Navigation itself happens via the effects above, once AuthContext's state
+        // (mfaChallenge or isAuthenticated) actually reflects the real outcome.
       } else {
         await register(organizationName, email, password, displayName);
+        navigate("/dashboard");
       }
-      navigate("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiRequestError ? err.body.message : "Something went wrong. Please try again.",

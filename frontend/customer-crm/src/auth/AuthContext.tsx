@@ -1,11 +1,19 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiFetch, clearAccessToken, refreshAccessToken, setAccessToken } from "../api/client";
 
+interface MfaChallenge {
+  ticket: string;
+  factor: "totp" | "email_otp";
+}
+
 interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   tenantId: string | null;
+  mfaChallenge: MfaChallenge | null;
   login: (email: string, password: string) => Promise<void>;
+  verifyMfa: (input: { code?: string; recovery_code?: string }) => Promise<void>;
+  cancelMfa: () => void;
   register: (organizationName: string, email: string, password: string, displayName: string) => Promise<void>;
   acceptInvitation: (token: string, password: string) => Promise<void>;
   logout: () => void;
@@ -19,10 +27,23 @@ interface AuthResponse {
   tenant_id: string | null;
 }
 
+// login() and login/mfa-verify both hit this shape (backend/tenant_api/app/api/auth.py's
+// LoginOut) - register/accept-invitation never gate behind MFA so they keep using
+// AuthResponse directly, unchanged below.
+interface LoginResult {
+  status: "authenticated" | "mfa_required";
+  access_token?: string;
+  expires_in?: number;
+  tenant_id?: string | null;
+  mfa_ticket?: string;
+  mfa_factor?: "totp" | "email_otp";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
 
   // React.StrictMode (main.tsx) double-invokes effects in development to surface
   // exactly this kind of non-idempotent effect: without this guard, mount fires the
@@ -48,13 +69,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const data = await apiFetch<AuthResponse>("/api/v1/auth/login", {
+    const data = await apiFetch<LoginResult>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    setAccessToken(data.access_token, data.expires_in);
-    setTenantId(data.tenant_id);
+    if (data.status === "mfa_required") {
+      setMfaChallenge({ ticket: data.mfa_ticket!, factor: data.mfa_factor! });
+      return;
+    }
+    setAccessToken(data.access_token!, data.expires_in!);
+    setTenantId(data.tenant_id ?? null);
     setIsAuthenticated(true);
+  }, []);
+
+  const verifyMfa = useCallback(
+    async (input: { code?: string; recovery_code?: string }) => {
+      if (!mfaChallenge) throw new Error("No MFA challenge in progress.");
+      const data = await apiFetch<LoginResult>("/api/v1/auth/login/mfa-verify", {
+        method: "POST",
+        body: JSON.stringify({ mfa_ticket: mfaChallenge.ticket, ...input }),
+      });
+      setAccessToken(data.access_token!, data.expires_in!);
+      setTenantId(data.tenant_id ?? null);
+      setIsAuthenticated(true);
+      setMfaChallenge(null);
+    },
+    [mfaChallenge],
+  );
+
+  const cancelMfa = useCallback(() => {
+    setMfaChallenge(null);
   }, []);
 
   const register = useCallback(
@@ -93,7 +137,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ isAuthenticated, isLoading, tenantId, login, register, acceptInvitation, logout }}
+      value={{
+        isAuthenticated,
+        isLoading,
+        tenantId,
+        mfaChallenge,
+        login,
+        verifyMfa,
+        cancelMfa,
+        register,
+        acceptInvitation,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

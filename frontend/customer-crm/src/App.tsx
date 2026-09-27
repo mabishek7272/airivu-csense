@@ -11,6 +11,7 @@ import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { Landing3rdiPage } from "./pages/Landing3rdiPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MfaVerifyPage } from "./pages/MfaVerifyPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
 import { ResellerRollupPage } from "./pages/ResellerRollupPage";
@@ -49,6 +50,7 @@ function AppRoutes({ brandSlug, isApex }: { brandSlug: string | null; isApex: bo
           via the catch-all below). */}
       <Route path="/" element={!brandSlug && isApex ? <Landing3rdiPage /> : <Navigate to="/dashboard" replace />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/mfa-verify" element={<MfaVerifyPage />} />
       <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
       <Route
         path="/dashboard"
