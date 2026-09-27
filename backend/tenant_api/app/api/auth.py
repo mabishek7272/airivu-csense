@@ -9,12 +9,13 @@ SECURITY DEFINER lookup). Every other endpoint in this service must use
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.deps import get_app_settings
 from app.repositories.identity import (
@@ -33,9 +34,21 @@ from csense_shared.db.models import Membership, Organization, Tenant, User
 from csense_shared.db.postgres import bootstrap_session, set_tenant_scope, tenant_session
 from csense_shared.errors import ApiError, AuthenticationError, ConflictError
 from csense_shared.licensing.limits import MOBILE_DEVICE_LIMIT, WEB_SESSION_LIMIT, entitlement_limit
+from csense_shared.notifications.bootstrap import build_registry
+from csense_shared.notifications.providers import Message
+from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
 from csense_shared.security.invitation_tickets import consume_invitation_ticket
+from csense_shared.security.login_mfa_tickets import (
+    LoginMfaTicket,
+    consume_login_mfa_ticket,
+    create_login_mfa_ticket,
+    peek_login_mfa_ticket,
+    register_failed_attempt,
+)
 from csense_shared.security.passwords import hash_password, verify_password
+from csense_shared.security.secret_store import read_secret
 from csense_shared.security.tokens import AUDIENCE_CUSTOMER, issue_access_token
+from csense_shared.security.totp import verify_totp
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -68,9 +81,47 @@ class AuthResponse(BaseModel):
     tenant_id: str | None = None
 
 
+class LoginOut(BaseModel):
+    status: str = "authenticated"          # "authenticated" | "mfa_required"
+    access_token: str | None = None
+    token_type: str = "bearer"
+    expires_in: int | None = None
+    tenant_id: str | None = None
+    mfa_ticket: str | None = None
+    mfa_factor: str | None = None          # "totp" | "email_otp"
+
+
+# AuthResponse stays as its own class (register/accept-invitation/refresh still return it
+# directly - they never trigger MFA), but give login() a way to build a LoginOut from one:
+def _authenticated(auth: "AuthResponse") -> LoginOut:
+    return LoginOut(
+        status="authenticated", access_token=auth.access_token, token_type=auth.token_type,
+        expires_in=auth.expires_in, tenant_id=auth.tenant_id,
+    )
+
+
 def _slugify(name: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "org"
     return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
+async def _send_login_otp_email(settings: Settings, *, email: str, code: str) -> bool:
+    registry = build_registry(settings)
+    provider = registry.get("email")
+    if provider is None:
+        return False
+    result = await provider.send(
+        Message(
+            recipient=email,
+            subject="Your CSense sign-in code",
+            body=(
+                f"Your sign-in code is: {code}\n\n"
+                "This code expires in 10 minutes. If you didn't try to sign in, you can "
+                "ignore this email."
+            ),
+        )
+    )
+    return result.accepted
 
 
 def _set_refresh_cookies(response: Response, *, session_id: str, refresh_token: str) -> None:
@@ -231,13 +282,13 @@ async def accept_invitation(
     )
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=LoginOut)
 async def login(
     body: LoginRequest,
     request: Request,
     response: Response,
     settings: Settings = Depends(get_app_settings),
-) -> AuthResponse:
+) -> LoginOut:
     session_factory: async_sessionmaker = request.app.state.session_factory
 
     async with bootstrap_session(session_factory) as db:
@@ -256,32 +307,185 @@ async def login(
         if membership is None:
             raise AuthenticationError("No active tenant membership for this account.")
 
-        permissions = await get_role_permissions(db, membership.role_id)
         user_id, tenant_id, membership_id = user.id, membership.tenant_id, membership.membership_id
 
-        previous_device_session: str | None = None
-        if body.client == "mobile":
-            if not body.device_id:
-                raise ApiError(
-                    status_code=422, code="device_id_required",
-                    message="The mobile app must identify this device to sign in.",
-                )
-            await set_tenant_scope(db, tenant_id)
-            previous_device_session = await admit_device(
-                db, tenant_id=tenant_id, user_id=user_id, device_id=body.device_id,
-                name=body.device_name, platform=body.platform,
-                limit=await entitlement_limit(db, tenant_id, MOBILE_DEVICE_LIMIT),
+        if body.client == "mobile" and not body.device_id:
+            raise ApiError(
+                status_code=422, code="device_id_required",
+                message="The mobile app must identify this device to sign in.",
             )
 
-    if previous_device_session:
-        await revoke_session(request.app.state.redis, settings, session_id=previous_device_session)
+        # MFA gate: check for an enrolled TOTP factor before touching device admission or
+        # issuing anything. user_authenticators carries no RLS (unlike membership-scoped
+        # tables), so this read is safe before any tenant scope is set.
+        totp_row = (
+            await db.execute(
+                text("SELECT 1 FROM user_authenticators WHERE user_id = :uid AND type = 'totp' AND enabled = true"),
+                {"uid": user_id},
+            )
+        ).first()
+        factor = "totp" if totp_row is not None else "email_otp"
 
-    return await _issue_tokens(
-        request, response, settings,
-        user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, permissions=permissions,
-        site_scope_mode=membership.site_scope_mode, site_ids=membership.site_ids,
-        client=body.client, device_id=body.device_id if body.client == "mobile" else None,
+        otp_hash: str | None = None
+        logger_dev_code: str | None = None
+        if factor == "email_otp":
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            otp_hash = hash_password(code, settings)
+            sent = await _send_login_otp_email(settings, email=user.email_display, code=code)
+            if not sent and settings.environment == "local":
+                # Dev convenience only, mirroring memberships.py's invitation_link
+                # fallback - never returned when an email provider is actually configured.
+                logger_dev_code = code
+
+    ticket = await create_login_mfa_ticket(
+        request.app.state.redis, settings,
+        user_id=user_id, tenant_id=tenant_id, membership_id=membership_id, factor=factor,
+        device_id=body.device_id, device_name=body.device_name, platform=body.platform,
+        otp_hash=otp_hash,
     )
+
+    if logger_dev_code is None:
+        return LoginOut(
+            status="mfa_required", mfa_ticket=ticket, mfa_factor=factor,
+            access_token=None, expires_in=None,
+        )
+    return _mfa_required_with_dev_code(ticket, factor, logger_dev_code)
+
+
+def _mfa_required_with_dev_code(ticket: str, factor: str, code: str) -> LoginOut:
+    import logging
+    logging.getLogger("tenant_api.auth").warning(
+        "login_otp_email_unavailable_dev_fallback", extra={"code": code},
+    )
+    return LoginOut(status="mfa_required", mfa_ticket=ticket, mfa_factor=factor)
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_ticket: str
+    code: str | None = Field(default=None, pattern=r"^\d{6}$")
+    recovery_code: str | None = None
+
+
+@router.post("/login/mfa-verify", response_model=LoginOut)
+async def login_mfa_verify(
+    body: MfaVerifyRequest,
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_app_settings),
+) -> LoginOut:
+    if (body.code is None) == (body.recovery_code is None):
+        raise ApiError(
+            status_code=422, code="exactly_one_factor_required",
+            message="Supply exactly one of code or recovery_code.",
+        )
+
+    redis_client = request.app.state.redis
+    ticket = await peek_login_mfa_ticket(redis_client, settings, body.mfa_ticket)
+    if ticket is None:
+        raise AuthenticationError("This code has expired. Please sign in again.")
+
+    session_factory: async_sessionmaker = request.app.state.session_factory
+    used_recovery_code = False
+
+    async with bootstrap_session(session_factory) as db:
+        await set_tenant_scope(db, ticket.tenant_id)
+
+        if ticket.factor == "totp":
+            verified, used_recovery_code = await _verify_totp_or_recovery(db, settings, ticket, body)
+            if not verified:
+                attempts = await register_failed_attempt(redis_client, settings, body.mfa_ticket)
+                if attempts >= 5:
+                    raise AuthenticationError("Too many attempts. Please sign in again.")
+                raise AuthenticationError("Incorrect code.")
+        else:
+            if body.code is None or ticket.otp_hash is None or not verify_password(body.code, ticket.otp_hash, settings):
+                attempts = await register_failed_attempt(redis_client, settings, body.mfa_ticket)
+                if attempts >= 5:
+                    raise AuthenticationError("Too many attempts. Please sign in again.")
+                raise AuthenticationError("Incorrect code.")
+
+        membership = await get_first_active_membership(db, ticket.user_id)
+        if membership is None:
+            await consume_login_mfa_ticket(redis_client, settings, body.mfa_ticket)
+            raise AuthenticationError("No active tenant membership for this account.")
+
+        permissions = await get_role_permissions(db, membership.role_id)
+
+        previous_device_session: str | None = None
+        if ticket.device_id:
+            previous_device_session = await admit_device(
+                db, tenant_id=ticket.tenant_id, user_id=ticket.user_id, device_id=ticket.device_id,
+                name=ticket.device_name, platform=ticket.platform,
+                limit=await entitlement_limit(db, ticket.tenant_id, MOBILE_DEVICE_LIMIT),
+            )
+
+    await consume_login_mfa_ticket(redis_client, settings, body.mfa_ticket)
+
+    if previous_device_session:
+        await revoke_session(redis_client, settings, session_id=previous_device_session)
+
+    auth = await _issue_tokens(
+        request, response, settings,
+        user_id=ticket.user_id, tenant_id=ticket.tenant_id, membership_id=ticket.membership_id,
+        permissions=permissions, site_scope_mode=membership.site_scope_mode, site_ids=membership.site_ids,
+        client="mobile" if ticket.device_id else "web", device_id=ticket.device_id,
+    )
+    return _authenticated(auth)
+
+
+async def _verify_totp_or_recovery(
+    db: AsyncSession, settings: Settings, ticket: "LoginMfaTicket", body: "MfaVerifyRequest"
+) -> tuple[bool, bool]:
+    """Returns (verified, used_recovery_code). Mirrors mfa.py's verify_mfa logic exactly -
+    a TOTP-enrolled user may use either their code or a recovery code at login (owner
+    confirmed this - a lost-phone user should not be locked out of the app entirely)."""
+    if body.code is not None:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT credential_id FROM user_authenticators "
+                    "WHERE user_id = :uid AND type = 'totp' AND enabled = true"
+                ),
+                {"uid": ticket.user_id},
+            )
+        ).first()
+        if row is None:
+            return False, False
+        keyring = keyring_from_settings(settings)
+        try:
+            secret = (
+                await read_secret(
+                    db, keyring, secret_id=uuid.UUID(row[0]), tenant_id=ticket.tenant_id,
+                    purpose="customer.mfa.totp",
+                )
+            ).decode("ascii")
+        except EnvelopeError:
+            return False, False
+        if not verify_totp(secret, body.code):
+            return False, False
+        await db.execute(
+            text(
+                "UPDATE user_authenticators SET last_used_at = now() "
+                "WHERE user_id = :uid AND type = 'totp' AND enabled = true"
+            ),
+            {"uid": ticket.user_id},
+        )
+        return True, False
+
+    candidates = (
+        await db.execute(
+            text(
+                "SELECT id, secret_ciphertext FROM user_authenticators "
+                "WHERE user_id = :uid AND type = 'recovery_code' AND enabled = true"
+            ),
+            {"uid": ticket.user_id},
+        )
+    ).all()
+    for row_id, hashed in candidates:
+        if verify_password(body.recovery_code, hashed.decode(), settings):
+            await db.execute(text("DELETE FROM user_authenticators WHERE id = :id"), {"id": row_id})
+            return True, True
+    return False, False
 
 
 async def _issue_tokens(
