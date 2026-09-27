@@ -6,25 +6,31 @@ import { LoadingState } from '../src/components/States';
 import { BrandProvider } from '../src/theme/BrandProvider';
 
 function RootLayoutNav() {
-  const { isLoggedIn } = useAuth();
+  const { authStage } = useAuth();
 
-  if (isLoggedIn === null) {
+  if (authStage === 'checking') {
     // Still checking SecureStore for an existing session - see AuthContext's own
-    // `isLoggedIn` docstring for why this is a distinct third state from `false`.
+    // `AuthStage` docstring for why this is a distinct state from loggedIn/loggedOut.
     return <LoadingState label="Starting up…" />;
   }
 
   // `Stack.Protected` (expo-router's own auth-gating primitive) mounts exactly one of
-  // these two branches based on `guard`, and re-navigates automatically when it flips -
-  // logging in from src/auth/AuthContext.tsx's `login()` (which sets isLoggedIn: true)
-  // is what actually moves the user off the login screen, not an explicit
-  // `router.replace()` call from the login screen itself.
+  // these three branches based on `guard`, and re-navigates automatically when it
+  // flips - logging in from src/auth/AuthContext.tsx's `login()` (which sets
+  // authStage: 'mfaRequired' or 'loggedIn') is what actually moves the user off the
+  // login screen, not an explicit `router.replace()` call from the login screen
+  // itself; the same is true for `verifyMfa()`/`cancelMfa()` moving the user off the
+  // mfa screen. Exactly one guard is ever true at a time (authStage is a single
+  // three-way enum), so exactly one branch is ever mounted.
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={isLoggedIn}>
+      <Stack.Protected guard={authStage === 'loggedIn'}>
         <Stack.Screen name="(tabs)" />
       </Stack.Protected>
-      <Stack.Protected guard={!isLoggedIn}>
+      <Stack.Protected guard={authStage === 'mfaRequired'}>
+        <Stack.Screen name="mfa" />
+      </Stack.Protected>
+      <Stack.Protected guard={authStage === 'loggedOut'}>
         <Stack.Screen name="login" />
       </Stack.Protected>
     </Stack>

@@ -11,22 +11,29 @@ import { LoadingState } from '../src/components/States';
  * inspection (see mobile/app/README.md's own "What's been verified" section - this file
  * didn't exist because the app had never been run before this).
  *
- * **This redirect must follow the same `isLoggedIn` state `_layout.tsx` gates on, not a
+ * **This redirect must follow the same `authStage` state `_layout.tsx` gates on, not a
  * fixed target.** An unconditional `<Redirect href="/(tabs)/dashboard" />` was tried
- * first and hung the app on a real device: `Stack.Protected guard={isLoggedIn}` removes
- * `(tabs)` from the navigator entirely while logged out, and expo-router doesn't fall
- * back to the visible branch on its own - it keeps re-attempting to resolve a route that
- * doesn't exist, which reads as a silent infinite loop, not an error. Redirecting to
- * `/login` while logged out (mirroring `_layout.tsx`'s own branch, and showing the same
- * loading state during the initial SecureStore check) avoids ever targeting a route the
- * guard has hidden.
+ * first and hung the app on a real device: `Stack.Protected guard={...}` removes a
+ * branch from the navigator entirely while its guard is false, and expo-router doesn't
+ * fall back to the visible branch on its own - it keeps re-attempting to resolve a route
+ * that doesn't exist, which reads as a silent infinite loop, not an error. Redirecting to
+ * whichever of `/login`, `/mfa`, `/(tabs)/dashboard` matches the current `authStage`
+ * (mirroring `_layout.tsx`'s own three branches, and showing the same loading state
+ * during the initial SecureStore check) avoids ever targeting a route the guard has
+ * hidden.
+ *
+ * `/(tabs)/dashboard` (not `/(tabs)/home`) is deliberate for now - a later task
+ * restructures the tabs and will change this target; renaming it here first would break
+ * the link today since `(tabs)/home` doesn't exist yet.
  */
 export default function Index() {
-  const { isLoggedIn } = useAuth();
+  const { authStage } = useAuth();
 
-  if (isLoggedIn === null) {
+  if (authStage === 'checking') {
     return <LoadingState label="Starting up…" />;
   }
-
-  return <Redirect href={isLoggedIn ? '/(tabs)/dashboard' : '/login'} />;
+  if (authStage === 'mfaRequired') {
+    return <Redirect href="/mfa" />;
+  }
+  return <Redirect href={authStage === 'loggedIn' ? '/(tabs)/dashboard' : '/login'} />;
 }

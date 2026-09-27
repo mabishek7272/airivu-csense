@@ -39,12 +39,12 @@ function toBrandState(base: Palette, b: PublicBranding): BrandState {
 
 export function BrandProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<BrandState>({ colors: palette, displayName: 'CSense', logoUrl: null });
-  // NOTE: this codebase's real AuthContext exposes `isLoggedIn: boolean | null`, NOT an
-  // `authStage` enum (that three-way enum is introduced by a LATER task in this same
-  // plan, Task 12 - not yet done at the time of writing). `isLoggedIn === true` is used
-  // below as the "fetch effective branding" trigger; Task 12 will need to revisit this
-  // dependency once `authStage` exists, but that's out of scope here.
-  const { isLoggedIn } = useAuth();
+  // AuthContext now exposes a three-way `authStage` enum (Task 12) instead of a boolean
+  // `isLoggedIn` - `authStage === 'loggedIn'` is the equivalent "fetch effective
+  // branding" trigger (deliberately NOT `'mfaRequired'` - no real session/tenant exists
+  // yet at that stage, only an MFA ticket, so there is nothing to fetch branding for).
+  const { authStage } = useAuth();
+  const isLoggedIn = authStage === 'loggedIn';
 
   // Pre-login: resolve branding from the build-time slug (app.config.ts's own
   // `extra.brandSlug`, defaulting to 'csense' the same way that config does) via the

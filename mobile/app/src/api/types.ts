@@ -31,6 +31,26 @@ export interface AuthResponse {
   tenant_id: string | null;
 }
 
+/**
+ * Mirrors `LoginOut` (backend/tenant_api/app/api/auth.py) exactly - the real response
+ * shape for both `POST /api/v1/auth/login` and `POST /api/v1/auth/login/mfa-verify`.
+ * `login()` on the backend ALWAYS routes through the MFA gate (a TOTP-enrolled user
+ * verifies with their authenticator app, everyone else gets a one-time emailed code) -
+ * there is no direct-to-`authenticated` path from `/login` itself, only from
+ * `/login/mfa-verify` once the challenge is satisfied. The token/tenant fields are only
+ * ever populated when `status === 'authenticated'`; the `mfa_*` fields only when
+ * `status === 'mfa_required'` - never both at once.
+ */
+export interface LoginResult {
+  status: 'authenticated' | 'mfa_required';
+  access_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  tenant_id?: string | null;
+  mfa_ticket?: string;
+  mfa_factor?: 'totp' | 'email_otp';
+}
+
 // --- Errors (csense_shared.errors.ProblemResponse) -----------------------------------
 
 /** Every error this backend returns has this shape (docs/08_API_GUIDE.md's own "Error
