@@ -68,10 +68,6 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={{ backgroundColor: colors.surface }} contentContainerStyle={styles.content}>
-      {/* Profile/Notifications are Task 14+'s job - no screen files yet at
-       * /(tabs)/settings/profile or /(tabs)/settings/notifications; tapping these today
-       * is a runtime 404 (Unmatched Route), not a build/type error, same reasoning as the
-       * other not-yet-built routes this task's own Home boxes and camera rows link to. */}
       <Pressable onPress={() => router.push('/(tabs)/settings/profile')} style={styles.navRow} accessibilityRole="button">
         <Text style={{ color: colors.text }}>Profile</Text>
       </Pressable>

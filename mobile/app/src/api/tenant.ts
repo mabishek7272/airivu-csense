@@ -101,6 +101,19 @@ export function removeDevice(deviceId: string): Promise<void> {
   return apiRequest<void>(`/api/v1/tenant/devices/${deviceId}`, { method: 'DELETE' });
 }
 
+/** `deviceId` is this app's own opaque id (`src/auth/device.ts`'s `getDeviceId()`), the
+ * same value already sent at login - NOT a server-assigned device row id. Matches
+ * `PushTokenIn`/`set_push_token` (backend/tenant_api/app/api/devices.py) exactly: 204 on
+ * success, scoped server-side by `tenant_id`/`user_id`/`device_id` together, so this can
+ * only ever touch the caller's own device row. `body` is a plain object - `apiRequest`
+ * does the one `JSON.stringify` itself, matching every other function in this file. */
+export function registerPushToken(deviceId: string, token: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/tenant/devices/${deviceId}/push-token`, {
+    method: 'POST',
+    body: { push_token: token },
+  });
+}
+
 /** The signed-in user's own profile - session-authenticated only, no special permission
  * required. A 404 (no active membership for the caller's own tenant) is a real, if
  * unlikely, error case surfaced as an `ApiError` like any other. */
