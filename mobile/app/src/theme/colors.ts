@@ -1,3 +1,5 @@
+import { createContext, useContext } from 'react';
+
 /**
  * The exact same palette as frontend/customer-crm/src/styles.css's `:root` block - copied
  * hex-for-hex rather than re-derived, so a severity/status colour means the same thing on
@@ -7,8 +9,11 @@
  * therefore no more `light`/`dark` split here, matching the web CRM's own removal of its
  * `prefers-color-scheme` branch - `useColors()` keeps its existing call signature (no
  * screen has to change how it reads the palette) but no longer branches on the OS scheme.
+ *
+ * Exported (rather than module-private) so `BrandProvider.tsx` can use it as the
+ * fallback/base that a tenant's branding colors get merged onto.
  */
-const palette = {
+export const palette = {
   canvas: '#241c21',
   well: '#1a1418',
   raised: '#2a2026',
@@ -45,9 +50,34 @@ const palette = {
 
 export type Palette = typeof palette;
 
+/** The shape `BrandProvider` publishes and `useColors`/`useBrand` both read. Defined
+ * here (not in `BrandProvider.tsx`) so the dependency between this file and
+ * `BrandProvider.tsx` only ever runs one way: `BrandProvider.tsx` imports `palette`,
+ * `Palette` and `BrandContext` from `colors.ts`, and `colors.ts` imports nothing back
+ * from `BrandProvider.tsx`. Putting the `createContext` call in `BrandProvider.tsx`
+ * instead would make that file the one both sides need (`colors.ts` -> `BrandProvider.tsx`
+ * for the context, `BrandProvider.tsx` -> `colors.ts` for `palette`/`Palette`) - a real
+ * circular import. Keeping the context itself here avoids that entirely. */
+export interface BrandState {
+  colors: Palette;
+  displayName: string;
+  logoUrl: string | null;
+}
+
+export const BrandContext = createContext<BrandState>({
+  colors: palette,
+  displayName: 'CSense',
+  logoUrl: null,
+});
+
 /** Kept as a hook (rather than a plain export) so every existing call site
  * (`const colors = useColors()`) needed zero changes when this stopped branching on the
- * OS colour scheme - only this function's own body changed. */
+ * OS colour scheme - only this function's own body changed, first to return the static
+ * palette directly, now to read it from `BrandContext` (populated by `BrandProvider`,
+ * mounted in `app/_layout.tsx`) so a tenant's branding colors reach every existing call
+ * site with zero changes there too. Outside a `BrandProvider` (there should never be such
+ * a place in this app, but defensively) this still returns the static fallback palette,
+ * since `BrandContext`'s default value above already is `{ colors: palette, ... }`. */
 export function useColors(): Palette {
-  return palette;
+  return useContext(BrandContext).colors;
 }

@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { LoadingState } from '../src/components/States';
+import { BrandProvider } from '../src/theme/BrandProvider';
 
 function RootLayoutNav() {
   const { isLoggedIn } = useAuth();
@@ -33,12 +34,17 @@ function RootLayoutNav() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      {/* "light" (light icons/text), not "auto" - the app has one theme now (the dark
-          "Technical Atmosphere" canvas), not an OS-follows-light-or-dark split, so the
-          status bar content should always be light, never auto-flip to dark icons on a
-          dark background. */}
-      <StatusBar style="light" />
-      <RootLayoutNav />
+      {/* Inside AuthProvider - BrandProvider reads useAuth() to know when a real session
+          exists (so it can fetch the tenant's own effective branding, replacing whatever
+          the pre-login slug implied). */}
+      <BrandProvider>
+        {/* "light" (light icons/text), not "auto" - the app has one theme now (the dark
+            "Technical Atmosphere" canvas), not an OS-follows-light-or-dark split, so the
+            status bar content should always be light, never auto-flip to dark icons on a
+            dark background. */}
+        <StatusBar style="light" />
+        <RootLayoutNav />
+      </BrandProvider>
     </AuthProvider>
   );
 }

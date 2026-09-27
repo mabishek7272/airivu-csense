@@ -63,3 +63,31 @@ export function listDevices(): Promise<DevicesOut> {
 export function removeDevice(deviceId: string): Promise<void> {
   return apiRequest<void>(`/api/v1/tenant/devices/${deviceId}`, { method: 'DELETE' });
 }
+
+/** Matches `PublicBrandingOut` exactly (backend/tenant_api/app/api/public_branding.py) -
+ * shared verbatim by `branding.py`'s authenticated `/tenant/branding/effective` too (its
+ * own docstring: "Reuses public_branding.py's own response shape"), so one type here
+ * covers both `fetchPublicBranding` and `fetchEffectiveBranding` below. */
+export interface PublicBranding {
+  slug: string;
+  display_name: string;
+  logo_url: string | null;
+  favicon_url: string | null;
+  color_primary: string | null;
+  color_accent: string | null;
+  color_canvas: string | null;
+}
+
+/** Unauthenticated, slug-addressed lookup for the pre-login screen - `auth: false` since
+ * there is no session yet (see public_branding.py's own docstring on the trust
+ * boundary this sits on). */
+export function fetchPublicBranding(slug: string): Promise<PublicBranding> {
+  return apiRequest<PublicBranding>(`/api/v1/public/branding/${slug}`, { auth: false });
+}
+
+/** The authenticated counterpart - resolves the caller's own session's organization,
+ * never a client-supplied slug. `null` is the normal "unbranded tenant" answer, not an
+ * error (see branding.py's own docstring). */
+export function fetchEffectiveBranding(): Promise<PublicBranding | null> {
+  return apiRequest<PublicBranding | null>('/api/v1/tenant/branding/effective');
+}
