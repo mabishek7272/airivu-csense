@@ -164,6 +164,87 @@ export interface CameraOut {
   created_at: string;
 }
 
+// --- Detections (backend/tenant_api/app/api/detections.py) ---------------------------
+
+/** Normalised 0..1 against the frame - no client-side bounding-box overlay in v1, but the
+ * shape is carried through so a future screen can add one without another backend read. */
+export interface BoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface DetectedObjectOut {
+  class_name: string;
+  confidence: number;
+  bbox: BoundingBox;
+  track_id: string | null;
+  attributes: unknown;
+}
+
+/** Mirrors the backend's `LocationOut` for a detection's nested site/zone summary - named
+ * `DetectionLocationSummary` (not a bare `LocationOut`, which doesn't exist elsewhere in
+ * this file today but could collide with something else added later) to keep it
+ * unambiguous. */
+export interface DetectionLocationSummary {
+  site_id: string;
+  site_name: string;
+  site_code: string;
+  zone_name: string | null;
+  address: unknown;
+  latitude: number | null;
+  longitude: number | null;
+  timezone: string;
+}
+
+/** Mirrors the backend's `CameraOut` nested inside a detection - a small summary, NOT the
+ * same shape as the top-level `CameraOut` above (that one is `id/name/code/...` for the
+ * Cameras list). Named `DetectionCameraSummary` to avoid colliding with that export. */
+export interface DetectionCameraSummary {
+  camera_id: string;
+  camera_name: string;
+  camera_code: string;
+  vendor: string | null;
+  model: string | null;
+}
+
+/** `variant` is `"annotated" | "masked" | "original"` - list/detail only ever return the
+ * first two unless the caller holds `evidence.download` (mobile users won't). `url` can be
+ * null if the presign itself failed (object missing) - a real case, guard image rendering
+ * on this. */
+export interface EvidenceOut {
+  evidence_id: string;
+  variant: string;
+  url: string | null;
+  sha256: string;
+  captured_at: string;
+}
+
+/** Mirrors `DetectionOut` exactly. `captured_at` (when the event happened at the edge) is
+ * the primary timestamp to show, per the backend docstring's own reasoning -
+ * `cloud_received_at` (when the platform found out) can differ after an offline spool
+ * replay. */
+export interface DetectionOut {
+  detection_id: string;
+  event_type: string;
+  source_event_id: string;
+  confidence: number;
+  captured_at: string;
+  cloud_received_at: string;
+  objects: DetectedObjectOut[];
+  camera: DetectionCameraSummary;
+  location: DetectionLocationSummary;
+  evidence: EvidenceOut[];
+  incident_id: string | null;
+  incident_number: number | null;
+}
+
+export interface DetectionPage {
+  items: DetectionOut[];
+  next_cursor: string | null;
+}
+
 // --- License (backend/tenant_api/app/api/license.py) ---------------------------------
 
 export interface EntitlementOut {

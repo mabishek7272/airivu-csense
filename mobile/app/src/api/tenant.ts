@@ -2,6 +2,8 @@ import { apiRequest } from './client';
 import type {
   CameraOut,
   DashboardOut,
+  DetectionOut,
+  DetectionPage,
   DevicesOut,
   IncidentDetail,
   IncidentPage,
@@ -44,6 +46,21 @@ export function resolveIncident(incidentId: string, resolutionCode: string, reas
 export function dismissIncident(incidentId: string, resolutionCode: string, reason?: string | null): Promise<IncidentTransitionResult> {
   const body: ResolveRequest = { resolution_code: resolutionCode, reason: reason ?? null };
   return apiRequest<IncidentTransitionResult>(`/api/v1/tenant/incidents/${incidentId}/dismiss`, { method: 'POST', body });
+}
+
+/** No `status` filter here - unlike an incident, a raw detection has no status concept,
+ * so unlike `listIncidents` this takes only `cursor`. The backend supports several other
+ * optional filters (`camera_id`, `min_confidence`, etc) but nothing in this v1 screen's
+ * scope needs them exposed. */
+export function listDetections(params: { cursor?: string | null } = {}): Promise<DetectionPage> {
+  const query = new URLSearchParams();
+  if (params.cursor) query.set('cursor', params.cursor);
+  const suffix = query.toString();
+  return apiRequest<DetectionPage>(`/api/v1/tenant/detections${suffix ? `?${suffix}` : ''}`);
+}
+
+export function getDetection(detectionId: string): Promise<DetectionOut> {
+  return apiRequest<DetectionOut>(`/api/v1/tenant/detections/${detectionId}`);
 }
 
 export function listCameras(): Promise<CameraOut[]> {
