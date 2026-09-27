@@ -101,13 +101,38 @@ class Recipient:
     # person's own do-not-disturb window - not a step's, not the policy's. Two people in
     # the same escalation step can be reached at different times because of it.
     active_schedule: dict | None = None
+    # This recipient's currently-registered Expo push tokens (mobile_devices.push_token,
+    # migration 0067), resolved by load_recipients()'s own join - not looked up here,
+    # since address_for/addresses_for are synchronous and have no session to query with.
+    # A plural tuple, not a single value: unlike email/phone, a person may have several
+    # signed-in devices (mobile_device.count allows more than one), and each is a
+    # separate deliverable address.
+    push_tokens: tuple[str, ...] = ()
 
     def address_for(self, channel: Channel) -> str | None:
+        """One deliverable address for `channel`, or None. Kept returning a single
+        `str | None` - the shape every existing channel here has always used - rather
+        than inventing a new return type just for WEB_PUSH. For a recipient with more
+        than one registered device this only surfaces the first token; callers that must
+        reach every device (create_notification, below) use addresses_for() instead."""
         if channel is Channel.EMAIL:
             return self.email
         if channel in (Channel.WHATSAPP, Channel.SMS):
             return self.phone_e164
+        if channel is Channel.WEB_PUSH:
+            return self.push_tokens[0] if self.push_tokens else None
         return None
+
+    def addresses_for(self, channel: Channel) -> tuple[str, ...]:
+        """All deliverable addresses for `channel` - the fan-out form. For every other
+        channel this is just address_for() wrapped in a 0-or-1 tuple; WEB_PUSH is the one
+        channel that can genuinely return more than one, since each of a person's
+        registered devices needs its own notification_deliveries row (recipient_ref is
+        part of that table's uniqueness key, so two tokens cannot share one row)."""
+        if channel is Channel.WEB_PUSH:
+            return self.push_tokens
+        address = self.address_for(channel)
+        return (address,) if address else ()
 
 
 _VALID_CHANNELS = {c.value for c in Channel}
@@ -135,7 +160,22 @@ async def load_recipients(
             text(
                 """
                 SELECT m.display_name, m.email, m.phone_e164, m.channels, m.active_schedule,
-                       u.display_name AS user_name, u.email_display AS user_email
+                       u.display_name AS user_name, u.email_display AS user_email,
+                       -- Every push token this member's linked user currently has
+                       -- registered (mobile_devices.push_token, migration 0067) - a
+                       -- correlated subquery rather than a join+GROUP BY, since it's the
+                       -- one column here that can be plural and everything else is
+                       -- already a single row per member. A bare contact with no
+                       -- user_id (m.user_id NULL) simply gets an empty array.
+                       COALESCE(
+                           (SELECT array_agg(md.push_token ORDER BY md.last_seen_at DESC)
+                            FROM mobile_devices md
+                            WHERE md.tenant_id = m.tenant_id
+                              AND md.user_id = m.user_id
+                              AND md.revoked_at IS NULL
+                              AND md.push_token IS NOT NULL),
+                           ARRAY[]::text[]
+                       ) AS push_tokens
                 FROM recipient_group_members m
                 LEFT JOIN users u ON u.id = m.user_id
                 -- An archived group must stop notifying its members, not just hide from
@@ -153,7 +193,9 @@ async def load_recipients(
     ).all()
 
     recipients = []
-    for display_name, email, phone, channels, active_schedule, user_name, user_email in rows:
+    for (
+        display_name, email, phone, channels, active_schedule, user_name, user_email, push_tokens,
+    ) in rows:
         recipients.append(
             Recipient(
                 name=display_name or user_name,
@@ -163,6 +205,7 @@ async def load_recipients(
                 phone_e164=phone,
                 channels=_parse_channels(channels),
                 active_schedule=active_schedule if isinstance(active_schedule, dict) else None,
+                push_tokens=tuple(push_tokens or []),
             )
         )
     return recipients
@@ -257,36 +300,38 @@ async def create_notification(
             # Only channels this recipient actually accepts.
             if recipient.channels and channel not in recipient.channels:
                 continue
-            address = recipient.address_for(channel)
-            if not address:
-                continue
             # Held past scheduled_at if it falls inside this recipient's own quiet hours
             # and the severity is not one that overrides them - the delivery row still
             # exists (queued, not skipped), it just is not due yet.
             held_until = _quiet_hours_delay(recipient, severity, scheduled_at)
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO notification_deliveries
-                        (tenant_id, notification_id, channel, recipient_ref, recipient_name,
-                         provider_code, status, next_attempt_at)
-                    VALUES (:tenant_id, :notification_id, CAST(:channel AS notification_channel),
-                            :recipient_ref, :recipient_name, :provider_code, 'queued', :next_attempt_at)
-                    ON CONFLICT (notification_id, channel, recipient_ref) DO NOTHING
-                    """
-                ),
-                {
-                    "tenant_id": tenant_id,
-                    "notification_id": notification_id,
-                    "channel": str(channel),
-                    "recipient_ref": address,
-                    "recipient_name": recipient.name,
-                    # Resolved at send time; recorded now so an unconfigured channel is
-                    # visible as a queued delivery rather than a missing row.
-                    "provider_code": "pending",
-                    "next_attempt_at": held_until or scheduled_at,
-                },
-            )
+            # addresses_for(), not address_for(): every channel but WEB_PUSH ever
+            # resolves to at most one address, but a recipient can have several
+            # registered devices, and each needs its own delivery row (recipient_ref is
+            # part of the uniqueness key just below, so two tokens cannot share one row).
+            for address in recipient.addresses_for(channel):
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO notification_deliveries
+                            (tenant_id, notification_id, channel, recipient_ref, recipient_name,
+                             provider_code, status, next_attempt_at)
+                        VALUES (:tenant_id, :notification_id, CAST(:channel AS notification_channel),
+                                :recipient_ref, :recipient_name, :provider_code, 'queued', :next_attempt_at)
+                        ON CONFLICT (notification_id, channel, recipient_ref) DO NOTHING
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "notification_id": notification_id,
+                        "channel": str(channel),
+                        "recipient_ref": address,
+                        "recipient_name": recipient.name,
+                        # Resolved at send time; recorded now so an unconfigured channel is
+                        # visible as a queued delivery rather than a missing row.
+                        "provider_code": "pending",
+                        "next_attempt_at": held_until or scheduled_at,
+                    },
+                )
 
     return notification_id
 

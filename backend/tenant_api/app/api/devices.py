@@ -10,7 +10,7 @@ import datetime as dt
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,3 +104,42 @@ async def remove_device(
         after_patch={"name": row[0]},
         correlation_id=uuid.UUID(context.correlation_id) if context.correlation_id else None,
     )
+
+
+class PushTokenIn(BaseModel):
+    push_token: str = Field(min_length=1, max_length=400)
+
+
+@router.post("/{device_id}/push-token", status_code=204)
+async def set_push_token(
+    device_id: str,
+    body: PushTokenIn,
+    context: TenantContext = Depends(current_tenant_context),
+    db: AsyncSession = Depends(db_session_for_tenant),
+) -> None:
+    """Lets a signed-in device register (or refresh) its Expo push token, so the
+    notification dispatcher's WEB_PUSH channel has something to send to
+    (`Recipient.address_for` in `csense_shared.notifications.dispatcher`).
+
+    No `require_permission` call here, unlike `list_devices`/`remove_device` above -
+    those manage *any* device in the tenant (an account-owner action), this only ever
+    touches the caller's own: the WHERE clause below scopes to `tenant_id` AND `user_id`
+    AND `device_id` all matching the caller's own JWT-derived context, not just the
+    `device_id` path segment, so one user cannot overwrite another user's device's token
+    by guessing its `device_id` (unique only per-tenant, per migration 0065 - not
+    per-user).
+    """
+    result = await db.execute(
+        text(
+            "UPDATE mobile_devices SET push_token = :token "
+            "WHERE tenant_id = :tenant_id AND user_id = :user_id AND device_id = :device_id"
+        ),
+        {
+            "token": body.push_token,
+            "tenant_id": context.tenant_id,
+            "user_id": context.user_id,
+            "device_id": device_id,
+        },
+    )
+    if result.rowcount == 0:
+        raise NotFoundError("No such device for this account.")
