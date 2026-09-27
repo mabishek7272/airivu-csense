@@ -17,14 +17,13 @@ import { LoadingState } from '../src/components/States';
  * branch from the navigator entirely while its guard is false, and expo-router doesn't
  * fall back to the visible branch on its own - it keeps re-attempting to resolve a route
  * that doesn't exist, which reads as a silent infinite loop, not an error. Redirecting to
- * whichever of `/login`, `/mfa`, `/(tabs)/dashboard` matches the current `authStage`
+ * whichever of `/login`, `/mfa`, `/(tabs)/home` matches the current `authStage`
  * (mirroring `_layout.tsx`'s own three branches, and showing the same loading state
  * during the initial SecureStore check) avoids ever targeting a route the guard has
  * hidden.
  *
- * `/(tabs)/dashboard` (not `/(tabs)/home`) is deliberate for now - a later task
- * restructures the tabs and will change this target; renaming it here first would break
- * the link today since `(tabs)/home` doesn't exist yet.
+ * `/(tabs)/home` is the permanent target as of the tabs restructure (formerly
+ * `/(tabs)/dashboard`, before the 4-tab layout collapsed to Home + Settings).
  */
 export default function Index() {
   const { authStage } = useAuth();
@@ -35,5 +34,5 @@ export default function Index() {
   if (authStage === 'mfaRequired') {
     return <Redirect href="/mfa" />;
   }
-  return <Redirect href={authStage === 'loggedIn' ? '/(tabs)/dashboard' : '/login'} />;
+  return <Redirect href={authStage === 'loggedIn' ? '/(tabs)/home' : '/login'} />;
 }

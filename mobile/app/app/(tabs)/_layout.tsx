@@ -2,7 +2,7 @@ import React from 'react';
 import type { ColorValue } from 'react-native';
 import { Tabs } from 'expo-router';
 import { useColors } from '../../src/theme/colors';
-import { AccountIcon, CameraIcon, DashboardIcon, IncidentIcon, type IconProps } from '../../src/components/Icons';
+import { AccountIcon, DashboardIcon as HomeIcon, type IconProps } from '../../src/components/Icons';
 
 export default function TabsLayout() {
   const colors = useColors();
@@ -22,7 +22,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      initialRouteName="dashboard"
+      initialRouteName="home"
       screenOptions={{
         tabBarActiveTintColor: colors.rose,
         tabBarInactiveTintColor: colors.faint,
@@ -31,15 +31,11 @@ export default function TabsLayout() {
         headerTintColor: colors.text,
       }}
     >
-      <Tabs.Screen name="dashboard" options={{ title: 'Dashboard', tabBarIcon: tabIcon(DashboardIcon) }} />
-      {/* Its own Stack (incidents/_layout.tsx) renders the header for both the list and
-       * detail screens - the tab bar's header would otherwise show twice. */}
-      <Tabs.Screen
-        name="incidents"
-        options={{ title: 'Incidents', headerShown: false, tabBarIcon: tabIcon(IncidentIcon) }}
-      />
-      <Tabs.Screen name="cameras" options={{ title: 'Cameras', tabBarIcon: tabIcon(CameraIcon) }} />
-      <Tabs.Screen name="account" options={{ title: 'Account', tabBarIcon: tabIcon(AccountIcon) }} />
+      {/* Each tab is now a nested Stack (home/_layout.tsx, settings/_layout.tsx) that
+       * renders its own header - same "avoid a double header" reason the old `incidents`
+       * tab already used `headerShown: false` for. */}
+      <Tabs.Screen name="home" options={{ title: 'Home', headerShown: false, tabBarIcon: tabIcon(HomeIcon) }} />
+      <Tabs.Screen name="settings" options={{ title: 'Settings', headerShown: false, tabBarIcon: tabIcon(AccountIcon) }} />
     </Tabs>
   );
 }

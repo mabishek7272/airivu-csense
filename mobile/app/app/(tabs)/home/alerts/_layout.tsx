@@ -1,6 +1,6 @@
 import React from 'react';
 import { Stack } from 'expo-router';
-import { useColors } from '../../../src/theme/colors';
+import { useColors } from '../../../../src/theme/colors';
 
 export default function IncidentsStackLayout() {
   const colors = useColors();

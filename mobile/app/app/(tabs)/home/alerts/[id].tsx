@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { useIncidentDetail } from '../../../src/hooks/useIncidentDetail';
-import { SeverityBadge, StatusBadge } from '../../../src/components/Badges';
-import { LoadingState, ErrorState } from '../../../src/components/States';
-import { useColors } from '../../../src/theme/colors';
+import { useIncidentDetail } from '../../../../src/hooks/useIncidentDetail';
+import { SeverityBadge, StatusBadge } from '../../../../src/components/Badges';
+import { LoadingState, ErrorState } from '../../../../src/components/States';
+import { useColors } from '../../../../src/theme/colors';
 
 /** Mirrors frontend/customer-crm/src/pages/IncidentDetailPage.tsx's own action map -
  * only acknowledge/investigate/resolve/dismiss are real endpoints

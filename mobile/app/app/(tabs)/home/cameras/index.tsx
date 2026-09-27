@@ -1,9 +1,10 @@
 import React from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useCameras } from '../../src/hooks/useCameras';
-import { LoadingState, ErrorState, EmptyState } from '../../src/components/States';
-import { useColors } from '../../src/theme/colors';
-import type { CameraOut } from '../../src/api/types';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Link } from 'expo-router';
+import { useCameras } from '../../../../src/hooks/useCameras';
+import { LoadingState, ErrorState, EmptyState } from '../../../../src/components/States';
+import { useColors } from '../../../../src/theme/colors';
+import type { CameraOut } from '../../../../src/api/types';
 
 /** Same status→tone mapping as frontend/customer-crm/src/styles.css's own
  * `.pill-ready/.pill-online` etc - camera status isn't a Severity, so it gets its own
@@ -18,26 +19,31 @@ function CameraRow({ camera }: { camera: CameraOut }) {
   const colors = useColors();
   const tone = statusTone(colors, camera.status);
   return (
-    <View style={[styles.row, { borderBottomColor: colors.border }]}>
-      <View style={styles.rowHeader}>
-        <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
-          {camera.name}
-        </Text>
-        <View style={[styles.pill, { backgroundColor: tone.bg }]}>
-          <Text style={{ color: tone.fg, fontSize: 12, fontWeight: '600', textTransform: 'capitalize' }}>
-            {camera.status}
+    // Camera detail (Task 14's job) has no screen file yet - this is a runtime 404
+    // (Unmatched Route) if tapped today, not a build/type error, since typed routes
+    // aren't enabled in app.config.ts (`Link`'s href is a plain string here).
+    <Link href={`/(tabs)/home/cameras/${camera.id}`} asChild>
+      <Pressable style={[styles.row, { borderBottomColor: colors.border }]} accessibilityRole="button">
+        <View style={styles.rowHeader}>
+          <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
+            {camera.name}
           </Text>
+          <View style={[styles.pill, { backgroundColor: tone.bg }]}>
+            <Text style={{ color: tone.fg, fontSize: 12, fontWeight: '600', textTransform: 'capitalize' }}>
+              {camera.status}
+            </Text>
+          </View>
         </View>
-      </View>
-      <Text style={[styles.rowMeta, { color: colors.textMuted }]}>
-        {camera.site_name ?? 'Unassigned site'} · {camera.code}
-      </Text>
-      {camera.last_error ? (
-        <Text style={[styles.rowMeta, { color: colors.critical }]} numberOfLines={2}>
-          {camera.last_error}
+        <Text style={[styles.rowMeta, { color: colors.textMuted }]}>
+          {camera.site_name ?? 'Unassigned site'} · {camera.code}
         </Text>
-      ) : null}
-    </View>
+        {camera.last_error ? (
+          <Text style={[styles.rowMeta, { color: colors.critical }]} numberOfLines={2}>
+            {camera.last_error}
+          </Text>
+        ) : null}
+      </Pressable>
+    </Link>
   );
 }
 

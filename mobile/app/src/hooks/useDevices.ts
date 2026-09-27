@@ -23,8 +23,11 @@ export function useDevices() {
   }, []);
 
   useEffect(() => {
-    // Fetch once when this screen mounts - see useDashboard.ts's own comment on this
-    // same, deliberate `react-hooks/set-state-in-effect` suppression.
+    // Fetch once when this screen mounts - `load` has no reactive dependency (there's
+    // nothing to parameterize this fetch by), which is exactly the shape
+    // `react-hooks/set-state-in-effect` flags as a possible anti-pattern; it isn't one
+    // here; there's no props-based alternative, and `refresh` (pull-to-refresh, retry)
+    // reuses the same function deliberately.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);

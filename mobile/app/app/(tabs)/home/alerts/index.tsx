@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { Link } from 'expo-router';
-import { useIncidents } from '../../../src/hooks/useIncidents';
-import { SeverityBadge, StatusBadge } from '../../../src/components/Badges';
-import { LoadingState, ErrorState, EmptyState } from '../../../src/components/States';
-import { useColors } from '../../../src/theme/colors';
-import type { IncidentStatusFilter, IncidentSummary } from '../../../src/api/types';
+import { useIncidents } from '../../../../src/hooks/useIncidents';
+import { SeverityBadge, StatusBadge } from '../../../../src/components/Badges';
+import { LoadingState, ErrorState, EmptyState } from '../../../../src/components/States';
+import { useColors } from '../../../../src/theme/colors';
+import type { IncidentStatusFilter, IncidentSummary } from '../../../../src/api/types';
 
 const FILTERS: { label: string; value: IncidentStatusFilter }[] = [
   { label: 'Active', value: 'active' },
@@ -40,7 +40,7 @@ function FilterTabs({ value, onChange }: { value: IncidentStatusFilter; onChange
 function IncidentRow({ item }: { item: IncidentSummary }) {
   const colors = useColors();
   return (
-    <Link href={`/(tabs)/incidents/${item.id}`} asChild>
+    <Link href={`/(tabs)/home/alerts/${item.id}`} asChild>
       <Pressable style={[styles.row, { borderBottomColor: colors.border }]} accessibilityRole="button">
         <View style={styles.rowHeader}>
           <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>

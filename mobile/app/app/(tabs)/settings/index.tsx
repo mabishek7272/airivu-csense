@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { removeDevice } from '../../src/api/tenant';
-import { useDevices } from '../../src/hooks/useDevices';
-import { errorMessage } from '../../src/utils/errorMessage';
-import { useAuth } from '../../src/auth/AuthContext';
-import { useLicense } from '../../src/hooks/useLicense';
-import { LoadingState, ErrorState } from '../../src/components/States';
-import { useColors } from '../../src/theme/colors';
+import { useRouter } from 'expo-router';
+import { removeDevice } from '../../../src/api/tenant';
+import { useDevices } from '../../../src/hooks/useDevices';
+import { errorMessage } from '../../../src/utils/errorMessage';
+import { useAuth } from '../../../src/auth/AuthContext';
+import { useLicense } from '../../../src/hooks/useLicense';
+import { LoadingState, ErrorState } from '../../../src/components/States';
+import { useColors } from '../../../src/theme/colors';
 
 function QuotaRow({ code, limit, consumed }: { code: string; limit: number; consumed: number }) {
   const colors = useColors();
@@ -26,7 +27,8 @@ function QuotaRow({ code, limit, consumed }: { code: string; limit: number; cons
   );
 }
 
-export default function AccountScreen() {
+export default function SettingsScreen() {
+  const router = useRouter();
   const colors = useColors();
   const { logout } = useAuth();
   const { data: license, loading, error, refresh } = useLicense();
@@ -66,6 +68,21 @@ export default function AccountScreen() {
 
   return (
     <ScrollView style={{ backgroundColor: colors.surface }} contentContainerStyle={styles.content}>
+      {/* Profile/Notifications are Task 14+'s job - no screen files yet at
+       * /(tabs)/settings/profile or /(tabs)/settings/notifications; tapping these today
+       * is a runtime 404 (Unmatched Route), not a build/type error, same reasoning as the
+       * other not-yet-built routes this task's own Home boxes and camera rows link to. */}
+      <Pressable onPress={() => router.push('/(tabs)/settings/profile')} style={styles.navRow} accessibilityRole="button">
+        <Text style={{ color: colors.text }}>Profile</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => router.push('/(tabs)/settings/notifications')}
+        style={styles.navRow}
+        accessibilityRole="button"
+      >
+        <Text style={{ color: colors.text }}>Notifications</Text>
+      </Pressable>
+
       <Text style={[styles.sectionTitle, { color: colors.text }]}>License</Text>
       {loading ? (
         <LoadingState label="Loading license…" />
@@ -144,6 +161,7 @@ export default function AccountScreen() {
 
 const styles = StyleSheet.create({
   content: { padding: 16, gap: 16 },
+  navRow: { paddingVertical: 6 },
   sectionTitle: { fontSize: 15, fontWeight: '600' },
   muted: { fontSize: 13 },
   card: { borderRadius: 10, borderWidth: 1, gap: 6, padding: 14 },
