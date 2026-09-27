@@ -9,7 +9,11 @@ import type {
   IncidentPage,
   IncidentTransitionResult,
   LicenseOut,
+  MfaStatusOut,
+  ProfileOut,
   ResolveRequest,
+  TotpConfirmOut,
+  TotpEnrollOut,
   TransitionRequest,
 } from './types';
 
@@ -95,6 +99,31 @@ export function listDevices(): Promise<DevicesOut> {
 
 export function removeDevice(deviceId: string): Promise<void> {
   return apiRequest<void>(`/api/v1/tenant/devices/${deviceId}`, { method: 'DELETE' });
+}
+
+/** The signed-in user's own profile - session-authenticated only, no special permission
+ * required. A 404 (no active membership for the caller's own tenant) is a real, if
+ * unlikely, error case surfaced as an `ApiError` like any other. */
+export function getProfile(): Promise<ProfileOut> {
+  return apiRequest<ProfileOut>('/api/v1/tenant/profile');
+}
+
+export function getMfaStatus(): Promise<MfaStatusOut> {
+  return apiRequest<MfaStatusOut>('/api/v1/tenant/auth/mfa/status');
+}
+
+/** 201 on success; 409 `ConflictError` if already enrolled - a real, reachable error
+ * (double-tapping "Enroll", or a stale re-fetch), not a crash - surfaced as an
+ * `ApiError` for the screen to display. */
+export function enrollTotp(): Promise<TotpEnrollOut> {
+  return apiRequest<TotpEnrollOut>('/api/v1/tenant/auth/mfa/totp/enroll', { method: 'POST' });
+}
+
+/** `body` is a plain object, not a pre-stringified string - `apiRequest` does the one
+ * `JSON.stringify` itself (see client.ts's own `rawFetch`). 409 (no pending enrollment)
+ * and 401 (wrong code) are both real, reachable errors, not crashes. */
+export function confirmTotp(code: string): Promise<TotpConfirmOut> {
+  return apiRequest<TotpConfirmOut>('/api/v1/tenant/auth/mfa/totp/confirm', { method: 'POST', body: { code } });
 }
 
 /** Matches `PublicBrandingOut` exactly (backend/tenant_api/app/api/public_branding.py) -

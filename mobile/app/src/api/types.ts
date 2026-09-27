@@ -277,6 +277,45 @@ export interface LicenseOut {
   quota_usage: QuotaUsageOut[];
 }
 
+// --- Profile (backend/tenant_api/app/api/profile.py) ---------------------------------
+
+/** Mirrors `ProfileOut` exactly - the signed-in user's own profile, plus a couple of
+ * tenant-level fields for display (organization name). `404` (no active membership for
+ * the caller's own tenant) is a real, if unlikely, error case - not modeled as a nullable
+ * field here since the backend raises `NotFoundError` for it rather than returning a
+ * shape with blanks. */
+export interface ProfileOut {
+  user_id: string;
+  email: string;
+  display_name: string;
+  locale: string | null;
+  timezone: string | null;
+  tenant_id: string;
+  organization_display_name: string;
+}
+
+// --- MFA (backend/tenant_api/app/api/mfa.py) ------------------------------------------
+
+/** Mirrors `StatusOut`. Named `MfaStatusOut` (not a bare `StatusOut`) - too generic a
+ * name for this shared types namespace. */
+export interface MfaStatusOut {
+  enrolled: boolean;
+  recovery_codes_remaining: number;
+}
+
+/** Mirrors `EnrollOut` - returned by `POST .../totp/enroll` (201). No QR code rendering
+ * in v1 (per the plan); `secret`/`otpauth_uri` are shown as manual-entry text. */
+export interface TotpEnrollOut {
+  secret: string;
+  otpauth_uri: string;
+}
+
+/** Mirrors `ConfirmOut` - the 10 recovery codes are shown exactly once, by design (never
+ * retrievable again after this response). */
+export interface TotpConfirmOut {
+  recovery_codes: string[];
+}
+
 // --- Devices (backend/tenant_api/app/api/devices.py) -------------------------------------
 
 export interface DeviceOut {
