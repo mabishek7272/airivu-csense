@@ -22,6 +22,11 @@ export default (): ExpoConfig => ({
   orientation: 'portrait',
   icon: `./brand/${VARIANT}/icon.png`,
   userInterfaceStyle: 'automatic',
+  // A real, supported Expo config field (works today in app.json) - this SDK's own
+  // `@expo/config-types` declaration file hasn't caught up to it yet, a known upstream
+  // types lag rather than a real config error. The `as ExpoConfig` cast below (not just
+  // the function's own return-type annotation) is what actually suppresses the excess-
+  // property check this object literal would otherwise fail.
   newArchEnabled: true,
   ios: {
     supportsTablet: true,
@@ -49,4 +54,4 @@ export default (): ExpoConfig => ({
     }],
   ],
   extra: { brandSlug: VARIANT },
-});
+} as ExpoConfig);
