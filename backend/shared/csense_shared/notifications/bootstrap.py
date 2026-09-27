@@ -15,6 +15,7 @@ import logging
 
 from csense_shared.config import Settings
 from csense_shared.notifications.dummy_sms import DummySmsProvider
+from csense_shared.notifications.expo_push import ExpoPushProvider
 from csense_shared.notifications.providers import ProviderRegistry
 from csense_shared.notifications.resend_email import ResendEmailProvider
 from csense_shared.notifications.whatsapp import EvolutionGoWhatsAppProvider
@@ -55,6 +56,13 @@ def build_registry(settings: Settings) -> ProviderRegistry:
     # for a real provider (Twilio, Vonage, AWS SNS, etc.) by registering a different
     # NotificationProvider implementation.
     registry.register(DummySmsProvider())
+
+    # Push (mobile, via Expo): needs no credential of its own - Expo's push service is
+    # the relay for both APNs and FCM - so unlike email/WhatsApp above this is not
+    # conditional on a configured secret. It occupies Channel.WEB_PUSH, the one push
+    # slot migration 0015 defined; see expo_push.py's module docstring for why no new
+    # Channel member was added for it.
+    registry.register(ExpoPushProvider())
 
     logger.info("notification_providers_ready", extra={"providers": registry.describe()})
     return registry
