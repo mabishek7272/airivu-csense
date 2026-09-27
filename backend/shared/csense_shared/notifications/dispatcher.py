@@ -587,4 +587,24 @@ async def _record_failure(
                 "attempts": attempt,
             },
         )
+
+    # `expo_push.py`'s own docstring promises this: "DeviceNotRegistered is the case the
+    # caller should clear the stored token for ... cleared by the caller." Without this,
+    # a dead token (app uninstalled, or the OS revoked it) keeps being queued a WEB_PUSH
+    # delivery on every future incident, forever, each one silently abandoned - not a
+    # correctness bug, but real, permanent, useless work.  `recipient_ref` is the actual
+    # token this delivery targeted (create_notification's own INSERT sets it from
+    # `addresses_for()`), so this only clears the one dead token, not every device this
+    # tenant has registered.
+    if delivery["channel"] == Channel.WEB_PUSH and failure_code == "device_not_registered":
+        await session.execute(
+            text(
+                """
+                UPDATE mobile_devices SET push_token = NULL
+                WHERE tenant_id = :tenant_id AND push_token = :token
+                """
+            ),
+            {"tenant_id": delivery["tenant_id"], "token": delivery["recipient_ref"]},
+        )
+
     return status

@@ -57,10 +57,18 @@ def _async_dsn() -> str:
 class FakeProvider:
     """Records what it was asked to send and returns a scripted outcome."""
 
-    def __init__(self, channel: Channel, outcome: DeliveryOutcome, *, code: str = "fake") -> None:
+    def __init__(
+        self,
+        channel: Channel,
+        outcome: DeliveryOutcome,
+        *,
+        code: str = "fake",
+        failure_code: str = "scripted_failure",
+    ) -> None:
         self._channel = channel
         self._outcome = outcome
         self._code = code
+        self._failure_code = failure_code
         self.sent: list[Message] = []
 
     @property
@@ -72,14 +80,18 @@ class FakeProvider:
         return self._channel
 
     def validate_recipient(self, recipient: str) -> bool:
-        return "@" in recipient if self._channel is Channel.EMAIL else recipient.startswith("+")
+        if self._channel is Channel.EMAIL:
+            return "@" in recipient
+        if self._channel is Channel.WEB_PUSH:
+            return recipient.startswith("ExponentPushToken[")
+        return recipient.startswith("+")
 
     async def send(self, message: Message) -> SendResult:
         self.sent.append(message)
         if self._outcome is DeliveryOutcome.ACCEPTED:
             return SendResult(DeliveryOutcome.ACCEPTED, provider_message_id=f"msg-{len(self.sent)}")
         return SendResult(
-            self._outcome, failure_code="scripted_failure", failure_summary="scripted"
+            self._outcome, failure_code=self._failure_code, failure_summary="scripted"
         )
 
 
@@ -366,6 +378,58 @@ async def test_permanent_failure_is_abandoned_immediately(ctx):
     )).first()
     assert row[0] == "abandoned"
     assert row[1] is None
+
+
+async def test_device_not_registered_clears_the_dead_push_token(ctx):
+    """expo_push.py's own docstring promises this: 'DeviceNotRegistered is the case the
+    caller should clear the stored token for ... cleared by the caller.' Without it, a
+    dead token (app uninstalled, OS revoked it) gets queued a WEB_PUSH delivery on every
+    future incident forever, each one silently abandoned - real, permanent, useless work.
+    """
+    email = f"guard-{uuid.uuid4().hex[:8]}@example.com"
+    user_id = (await ctx["session"].execute(
+        text("INSERT INTO users (email_normalized, email_display, display_name) "
+             "VALUES (:en, :ed, 'Guard') RETURNING id"),
+        {"en": email, "ed": email},
+    )).scalar_one()
+    await ctx["session"].execute(
+        text("INSERT INTO recipient_group_members "
+             "(tenant_id, recipient_group_id, user_id, display_name, channels) "
+             "VALUES (:t, :g, :u, 'Guard', CAST('[\"web_push\"]' AS jsonb))"),
+        {"t": ctx["tenant_id"], "g": ctx["group_id"], "u": user_id},
+    )
+    dead_token = f"ExponentPushToken[{uuid.uuid4().hex[:16]}]"
+    live_token = f"ExponentPushToken[{uuid.uuid4().hex[:16]}]"
+    for token in (dead_token, live_token):
+        await ctx["session"].execute(
+            text("INSERT INTO mobile_devices (tenant_id, user_id, device_id, push_token) "
+                 "VALUES (:t, :u, :d, :p)"),
+            {"t": ctx["tenant_id"], "u": user_id, "d": uuid.uuid4().hex[:16], "p": token},
+        )
+
+    await _create(ctx, channels=(Channel.WEB_PUSH,))
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(
+        Channel.WEB_PUSH, DeliveryOutcome.FAILED_PERMANENT, failure_code="device_not_registered",
+    ))
+
+    due = await claim_due_deliveries(ctx["session"], now=NOW + dt.timedelta(seconds=1))
+    # One delivery per registered device (addresses_for fans WEB_PUSH out to every token).
+    assert len(due) == 2
+    dead_delivery = next(d for d in due if d["recipient_ref"] == dead_token)
+
+    status = await send_delivery(ctx["session"], registry, dead_delivery, subject="s", body="b",
+                                 now=NOW + dt.timedelta(seconds=1))
+    assert status == "abandoned"
+
+    remaining = set((await ctx["session"].execute(
+        text("SELECT push_token FROM mobile_devices WHERE tenant_id = :t AND user_id = :u"),
+        {"t": ctx["tenant_id"], "u": user_id},
+    )).scalars().all())
+    # The dead token is cleared; the untouched device (never sent to in this test) keeps
+    # its own token - this only clears the one token the failed delivery actually used,
+    # not every device this recipient has registered.
+    assert remaining == {None, live_token}
 
 
 async def test_unconfigured_channel_fails_clearly_rather_than_crashing(ctx):
