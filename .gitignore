@@ -60,3 +60,4 @@ artifacts/
 
 # Isolated git worktrees for subagent-driven feature work - not source.
 /.worktrees/
+backend/.venv-test/
