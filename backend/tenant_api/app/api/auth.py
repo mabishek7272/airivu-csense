@@ -39,6 +39,7 @@ from csense_shared.notifications.providers import Message
 from csense_shared.security.envelope import EnvelopeError, keyring_from_settings
 from csense_shared.security.invitation_tickets import consume_invitation_ticket
 from csense_shared.security.login_mfa_tickets import (
+    MAX_VERIFY_ATTEMPTS,
     LoginMfaTicket,
     consume_login_mfa_ticket,
     create_login_mfa_ticket,
@@ -286,7 +287,6 @@ async def accept_invitation(
 async def login(
     body: LoginRequest,
     request: Request,
-    response: Response,
     settings: Settings = Depends(get_app_settings),
 ) -> LoginOut:
     session_factory: async_sessionmaker = request.app.state.session_factory
@@ -327,15 +327,22 @@ async def login(
         factor = "totp" if totp_row is not None else "email_otp"
 
         otp_hash: str | None = None
-        logger_dev_code: str | None = None
+        dev_only_code: str | None = None
         if factor == "email_otp":
+            # Known gap, accepted for v1: no per-account/per-IP throttle on how often a
+            # caller can trigger a fresh OTP email via repeated /login calls. Requires a
+            # valid password to reach this branch at all (not a pre-auth enumeration
+            # vector), but someone who already has a victim's password could email-bomb
+            # them or burn the email provider's send quota. Revisit before this reaches a
+            # real pilot tenant - see the code-quality review for Task 3 in this plan's
+            # history for the full reasoning.
             code = f"{secrets.randbelow(1_000_000):06d}"
             otp_hash = hash_password(code, settings)
             sent = await _send_login_otp_email(settings, email=user.email_display, code=code)
             if not sent and settings.environment == "local":
                 # Dev convenience only, mirroring memberships.py's invitation_link
                 # fallback - never returned when an email provider is actually configured.
-                logger_dev_code = code
+                dev_only_code = code
 
     ticket = await create_login_mfa_ticket(
         request.app.state.redis, settings,
@@ -344,12 +351,12 @@ async def login(
         otp_hash=otp_hash,
     )
 
-    if logger_dev_code is None:
+    if dev_only_code is None:
         return LoginOut(
             status="mfa_required", mfa_ticket=ticket, mfa_factor=factor,
             access_token=None, expires_in=None,
         )
-    return _mfa_required_with_dev_code(ticket, factor, logger_dev_code)
+    return _mfa_required_with_dev_code(ticket, factor, dev_only_code)
 
 
 def _mfa_required_with_dev_code(ticket: str, factor: str, code: str) -> LoginOut:
@@ -384,6 +391,7 @@ async def login_mfa_verify(
     if ticket is None:
         raise AuthenticationError("This code has expired. Please sign in again.")
 
+    correlation_id = getattr(request.state, "correlation_id", None)
     session_factory: async_sessionmaker = request.app.state.session_factory
     used_recovery_code = False
 
@@ -394,13 +402,13 @@ async def login_mfa_verify(
             verified, used_recovery_code = await _verify_totp_or_recovery(db, settings, ticket, body)
             if not verified:
                 attempts = await register_failed_attempt(redis_client, settings, body.mfa_ticket)
-                if attempts >= 5:
+                if attempts >= MAX_VERIFY_ATTEMPTS:
                     raise AuthenticationError("Too many attempts. Please sign in again.")
                 raise AuthenticationError("Incorrect code.")
         else:
             if body.code is None or ticket.otp_hash is None or not verify_password(body.code, ticket.otp_hash, settings):
                 attempts = await register_failed_attempt(redis_client, settings, body.mfa_ticket)
-                if attempts >= 5:
+                if attempts >= MAX_VERIFY_ATTEMPTS:
                     raise AuthenticationError("Too many attempts. Please sign in again.")
                 raise AuthenticationError("Incorrect code.")
 
@@ -410,6 +418,25 @@ async def login_mfa_verify(
             raise AuthenticationError("No active tenant membership for this account.")
 
         permissions = await get_role_permissions(db, membership.role_id)
+
+        await record_audit_and_outbox(
+            db,
+            tenant_id=ticket.tenant_id,
+            actor_type="user",
+            actor_id=str(ticket.user_id),
+            action="auth.login.mfa_verified",
+            outcome="success",
+            target_type="user",
+            target_id=str(ticket.user_id),
+            reason="recovery code" if used_recovery_code else ("totp code" if ticket.factor == "totp" else "email code"),
+            before_patch=None,
+            after_patch=None,
+            correlation_id=uuid.UUID(correlation_id) if correlation_id else None,
+            event_type="auth.login.mfa_verified.v1",
+            event_payload={"user_id": str(ticket.user_id), "factor": ticket.factor, "used_recovery_code": used_recovery_code},
+            aggregate_type="user",
+            aggregate_id=str(ticket.user_id),
+        )
 
         previous_device_session: str | None = None
         if ticket.device_id:
