@@ -50,6 +50,63 @@ export const palette = {
 
 export type Palette = typeof palette;
 
+/** A second, genuinely different base palette - not a recolored version of the dark
+ * one - for brands that should ship as a light theme (Apti, chosen 2026-09-27; the
+ * other three brands stay on the dark palette above). Every field mirrors the dark
+ * palette's own role exactly (same names, same consumers - no screen needs to know
+ * which base is active), but severity/status colours (`critical`/`high`/`medium`/`low`
+ * and their `*Subtle` tints) are recalibrated, not just copied: the dark palette's own
+ * values (e.g. `medium: '#e0be72'`, a light gold) are near-invisible against a light
+ * canvas, so a light theme needs its own darker, still-legible set for the same
+ * semantic meaning, not the same hex values reused on the wrong background. */
+export const lightPalette: Palette = {
+  canvas: '#faf9fc',
+  well: '#f1eef5',
+  raised: '#ffffff',
+  hair: '#e2dee8',
+  hairStrong: '#cdc6d6',
+  emerald: '#0f9d68',
+  rose: '#4a1187',
+  crimson: '#8a1a4a',
+  ink: '#241c21',
+  dim: '#6e5f67',
+  faint: '#a2929a',
+
+  surface: '#faf9fc',
+  surfaceSunken: '#f1eef5',
+  border: '#e2dee8',
+  text: '#241c21',
+  textMuted: '#6e5f67',
+  textInverse: '#ffffff',
+  accent: '#4a1187',
+  accentHover: '#6b2aa8',
+  accentSubtle: 'rgba(74, 17, 135, 0.10)',
+
+  critical: '#c81e4a',
+  criticalSubtle: 'rgba(200, 30, 74, 0.12)',
+  high: '#b8541f',
+  highSubtle: 'rgba(184, 84, 31, 0.14)',
+  medium: '#8a6a1e',
+  mediumSubtle: 'rgba(138, 106, 30, 0.14)',
+  low: '#0f9d68',
+  lowSubtle: 'rgba(15, 157, 104, 0.12)',
+  info: '#6e5f67',
+  infoSubtle: '#f1eef5',
+};
+
+/** Which base palette a build-time brand variant starts from, keyed by
+ * `app.config.ts`'s own `extra.brandSlug` (and `BrandProvider.tsx`'s pre-login
+ * fetch, which reads that same slug). Not derived from anything in `org_branding` -
+ * a reseller's branding row supplies accent/button colours (see `BrandProvider.tsx`'s
+ * `withOverrides`), not the light-vs-dark choice itself, which is a per-brand product
+ * decision made once, here. */
+export const BRAND_MODE: Record<string, 'dark' | 'light'> = {
+  apti: 'light',
+  eaigleye: 'dark',
+  '3rdi': 'dark',
+  csense: 'dark',
+};
+
 /** The shape `BrandProvider` publishes and `useColors`/`useBrand` both read. Defined
  * here (not in `BrandProvider.tsx`) so the dependency between this file and
  * `BrandProvider.tsx` only ever runs one way: `BrandProvider.tsx` imports `palette`,
