@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_tenant_context, db_session_for_tenant
+from csense_shared.errors import NotFoundError
 from csense_shared.security.tenant_context import TenantContext
 
 router = APIRouter(prefix="/api/v1/tenant/profile", tags=["tenant-profile"])
@@ -34,16 +35,25 @@ async def get_profile(
     row = (
         await db.execute(
             text(
+                # Correlated through memberships (not just two independently-bound-param
+                # joins on users/tenants) so a user_id/tenant_id pair that doesn't actually
+                # share an active membership returns 0 rows - a clean 404 - instead of
+                # silently joining unrelated rows. users/tenants/organizations carry no RLS
+                # (only memberships/membership_resource_scopes/audit_events do, per
+                # migration 0001), so this correlation is the only thing enforcing it.
                 "SELECT u.email_display, u.display_name, u.locale, u.timezone, "
                 "       o.display_name AS organization_display_name "
-                "FROM users u "
-                "JOIN tenants t ON t.id = :tenant_id "
+                "FROM memberships m "
+                "JOIN users u ON u.id = m.user_id "
+                "JOIN tenants t ON t.id = m.tenant_id "
                 "JOIN organizations o ON o.id = t.organization_id "
-                "WHERE u.id = :user_id"
+                "WHERE m.user_id = :user_id AND m.tenant_id = :tenant_id AND m.status = 'active'"
             ),
             {"tenant_id": context.tenant_id, "user_id": context.user_id},
         )
     ).first()
+    if row is None:
+        raise NotFoundError("No active membership found for this account.")
     return ProfileOut(
         user_id=str(context.user_id), email=row.email_display, display_name=row.display_name,
         locale=row.locale, timezone=row.timezone, tenant_id=str(context.tenant_id),
