@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { tokenStore } from './tokenStore';
 import * as authApi from '../api/auth';
 import { ApiError, NetworkError } from '../api/client';
@@ -40,12 +40,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  // `isLoggingIn` only reflects reality after a re-render - a rapid double-tap on
+  // "Verify"/"Sign in" fires a second call before that first render lands, since
+  // `isLoggingIn` is still `false` from the caller's point of view. `login_mfa_tickets.py`
+  // deliberately does NOT consume the ticket until success (so a mistyped code can be
+  // retried), so two concurrent, both-correct `/login/mfa-verify` calls can both succeed,
+  // both call `admit_device()`/`_issue_tokens()`, and silently orphan one of the two
+  // sessions (last write to `mobile_devices.session_id` wins) - not an auth bypass, but a
+  // real, unguarded race. This ref is checked and set synchronously, before either
+  // function's first `await`, which a `useState` value cannot do.
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     tokenStore.isLoggedIn().then((loggedIn) => setAuthStage(loggedIn ? 'loggedIn' : 'loggedOut'));
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setIsLoggingIn(true);
     setLoginError(null);
     try {
@@ -71,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       throw error;
     } finally {
+      submittingRef.current = false;
       setIsLoggingIn(false);
     }
   }, []);
@@ -80,6 +93,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mfaChallenge) {
         throw new Error('verifyMfa called with no active MFA challenge');
       }
+      if (submittingRef.current) return;
+      submittingRef.current = true;
       setIsLoggingIn(true);
       setLoginError(null);
       try {
@@ -97,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         throw error;
       } finally {
+        submittingRef.current = false;
         setIsLoggingIn(false);
       }
     },
