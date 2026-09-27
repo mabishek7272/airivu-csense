@@ -17,7 +17,7 @@ const BRAND_BACKGROUND: Record<string, string> = {
 export default (): ExpoConfig => ({
   name: BRAND_NAMES[VARIANT] ?? 'CSense',
   slug: 'csense-mobile',
-  scheme: `csense-${VARIANT}`,
+  scheme: VARIANT === 'csense' ? 'csense' : `csense-${VARIANT}`,
   version: '1.0.0',
   orientation: 'portrait',
   icon: `./brand/${VARIANT}/icon.png`,
