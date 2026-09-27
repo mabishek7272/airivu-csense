@@ -50,7 +50,7 @@ _EXPO_TOKEN_RE = re.compile(r"^Expo(nent)?PushToken\[.+\]$")
 
 
 class ExpoPushProvider:
-    def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         # Not defaulted to a stored `httpx.AsyncClient()` here, deliberately - matching
         # resend_email.py/whatsapp.py's pattern in this same package. `build_registry()`
         # constructs a fresh provider on every call, including per-request (auth.py,
@@ -58,7 +58,7 @@ class ExpoPushProvider:
         # __init__ would mean a new, never-closed connection pool every such call. Only
         # an injected client (this test suite's fake) is held; otherwise one is opened
         # and closed per send via `async with`, same as the other two adapters.
-        self._client = http_client
+        self._client = client
 
     @property
     def code(self) -> str:
@@ -99,7 +99,16 @@ class ExpoPushProvider:
                 failure_summary=redact(body),
             )
 
-        data = response.json().get("data", {})
+        try:
+            data = response.json().get("data", {})
+        except Exception:  # noqa: BLE001 - body may not be JSON even on a 200
+            logger.warning("expo_push_bad_response_body", extra={"status": response.status_code})
+            return SendResult(
+                DeliveryOutcome.FAILED_RETRYABLE,
+                failure_code="invalid_response_body",
+                failure_summary=None,
+            )
+
         if data.get("status") != "ok":
             detail = data.get("details") or {}
             error = detail.get("error")

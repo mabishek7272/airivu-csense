@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from csense_shared.notifications.expo_push import ExpoPushProvider
-from csense_shared.notifications.providers import Message
+from csense_shared.notifications.providers import DeliveryOutcome, Message
 
 
 class _FakeResponse:
@@ -32,7 +32,7 @@ class _FakeHttpClient:
 @pytest.mark.asyncio
 async def test_a_successful_send_reports_accepted():
     http = _FakeHttpClient(_FakeResponse(200, {"data": {"status": "ok"}}))
-    provider = ExpoPushProvider(http_client=http)
+    provider = ExpoPushProvider(client=http)
 
     result = await provider.send(Message(recipient="ExponentPushToken[abc123]", subject="Alert", body="Something happened"))
 
@@ -47,18 +47,21 @@ async def test_a_device_not_registered_error_is_reported_as_not_accepted():
     http = _FakeHttpClient(
         _FakeResponse(200, {"data": {"status": "error", "details": {"error": "DeviceNotRegistered"}}})
     )
-    provider = ExpoPushProvider(http_client=http)
+    provider = ExpoPushProvider(client=http)
 
     result = await provider.send(Message(recipient="ExponentPushToken[stale]", subject="Alert", body="Something happened"))
 
     assert result.accepted is False
+    assert result.outcome is DeliveryOutcome.FAILED_PERMANENT
+    assert result.failure_code == "device_not_registered"
 
 
 @pytest.mark.asyncio
 async def test_an_http_error_is_reported_as_not_accepted():
     http = _FakeHttpClient(_FakeResponse(500, {}))
-    provider = ExpoPushProvider(http_client=http)
+    provider = ExpoPushProvider(client=http)
 
     result = await provider.send(Message(recipient="ExponentPushToken[abc]", subject="Alert", body="body"))
 
     assert result.accepted is False
+    assert result.outcome is DeliveryOutcome.FAILED_RETRYABLE
