@@ -53,5 +53,11 @@ export default (): ExpoConfig => ({
       backgroundColor: BRAND_BACKGROUND[VARIANT] ?? BRAND_BACKGROUND.csense,
     }],
   ],
-  extra: { brandSlug: VARIANT },
+  extra: {
+    brandSlug: VARIANT,
+    // Created via `eas init --account apti-services` (2026-09-27) - one real EAS
+    // project (@apti-services/csense-mobile) serves every brand variant built from
+    // this same slug/codebase, not a project per brand.
+    eas: { projectId: '5414786d-97dc-4d0c-9a6d-5eeeae661c22' },
+  },
 } as ExpoConfig);
