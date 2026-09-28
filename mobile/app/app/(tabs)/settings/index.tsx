@@ -69,14 +69,14 @@ export default function SettingsScreen() {
   return (
     <ScrollView style={{ backgroundColor: colors.surface }} contentContainerStyle={styles.content}>
       <Pressable onPress={() => router.push('/(tabs)/settings/profile')} style={styles.navRow} accessibilityRole="button">
-        <Text style={{ color: colors.text }}>Profile</Text>
+        <Text style={{ color: colors.text, fontFamily: 'Inter_400Regular' }}>Profile</Text>
       </Pressable>
       <Pressable
         onPress={() => router.push('/(tabs)/settings/notifications')}
         style={styles.navRow}
         accessibilityRole="button"
       >
-        <Text style={{ color: colors.text }}>Notifications</Text>
+        <Text style={{ color: colors.text, fontFamily: 'Inter_400Regular' }}>Notifications</Text>
       </Pressable>
 
       <Text style={[styles.sectionTitle, { color: colors.text }]}>License</Text>
@@ -126,7 +126,9 @@ export default function SettingsScreen() {
           {devices.data.devices.map((device) => (
             <View key={device.id} style={styles.deviceRow}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{device.name ?? 'Unnamed device'}</Text>
+                <Text style={{ color: colors.text, fontFamily: 'Inter_600SemiBold' }}>
+                  {device.name ?? 'Unnamed device'}
+                </Text>
                 <Text style={[styles.muted, { color: colors.textMuted }]}>
                   Last active {new Date(device.last_seen_at).toLocaleDateString()}
                 </Text>
@@ -136,7 +138,7 @@ export default function SettingsScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${device.name ?? 'device'}`}
               >
-                <Text style={{ color: colors.critical, fontWeight: '600' }}>Remove</Text>
+                <Text style={{ color: colors.critical, fontFamily: 'Inter_600SemiBold' }}>Remove</Text>
               </Pressable>
             </View>
           ))}
@@ -149,7 +151,9 @@ export default function SettingsScreen() {
         style={[styles.logoutButton, { borderColor: colors.critical, opacity: loggingOut ? 0.6 : 1 }]}
         accessibilityRole="button"
       >
-        <Text style={{ color: colors.critical, fontWeight: '600' }}>{loggingOut ? 'Signing out…' : 'Sign out'}</Text>
+        <Text style={{ color: colors.critical, fontFamily: 'Inter_600SemiBold' }}>
+          {loggingOut ? 'Signing out…' : 'Sign out'}
+        </Text>
       </Pressable>
     </ScrollView>
   );
@@ -158,15 +162,15 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   content: { padding: 16, gap: 16 },
   navRow: { paddingVertical: 6 },
-  sectionTitle: { fontSize: 15, fontWeight: '600' },
-  muted: { fontSize: 13 },
+  sectionTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  muted: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   card: { borderRadius: 10, borderWidth: 1, gap: 6, padding: 14 },
-  planName: { fontSize: 17, fontWeight: '700' },
+  planName: { fontSize: 17, fontFamily: 'Inter_700Bold' },
   quotaBlock: { gap: 10, marginTop: 8 },
   quotaRow: { gap: 4 },
   quotaLabelRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  quotaLabel: { fontSize: 12, fontWeight: '600' },
-  quotaValue: { fontSize: 12 },
+  quotaLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  quotaValue: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   quotaBar: { borderRadius: 3, height: 6, overflow: 'hidden' },
   quotaBarFill: { height: '100%' },
   deviceRow: { alignItems: 'center', flexDirection: 'row', gap: 12, paddingTop: 8 },

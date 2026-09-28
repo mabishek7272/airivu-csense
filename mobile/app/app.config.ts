@@ -10,8 +10,13 @@ const BRAND_IDS: Record<string, string> = {
   apti: 'ai.airivu.apti.client', eaigleye: 'ai.airivu.eaigleye', '3rdi': 'ai.airivu.threerdi', csense: 'ai.airivu.csense',
 };
 
+// Native splash/adaptive-icon background per brand - must match that brand's own
+// in-app canvas colour (src/theme/colors.ts's BRAND_PALETTE), or the OS-level splash
+// visibly flashes the wrong colour before the JS UI mounts. CSense moved to its own
+// light "Majestic White & Cherry Purple" canvas (#f8f7fb) on 2026-09-28, replacing the
+// old dark navy that matched its now-retired dark theme.
 const BRAND_BACKGROUND: Record<string, string> = {
-  apti: '#f3f5fe', eaigleye: '#0F2A43', '3rdi': '#0F2A43', csense: '#0F2A43',
+  apti: '#f3f5fe', eaigleye: '#0F2A43', '3rdi': '#0F2A43', csense: '#f8f7fb',
 };
 
 export default (): ExpoConfig => ({
@@ -48,6 +53,7 @@ export default (): ExpoConfig => ({
   plugins: [
     'expo-router',
     'expo-secure-store',
+    'expo-font',
     ['expo-splash-screen', {
       image: `./brand/${VARIANT}/splash-icon.png`,
       backgroundColor: BRAND_BACKGROUND[VARIANT] ?? BRAND_BACKGROUND.csense,

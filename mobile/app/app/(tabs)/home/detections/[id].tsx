@@ -37,6 +37,7 @@ export default function DetectionDetailScreen() {
   }, [id]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
@@ -75,7 +76,7 @@ export default function DetectionDetailScreen() {
                 key={item.evidence_id}
                 style={[styles.evidenceImage, styles.evidenceMissing, { backgroundColor: colors.surfaceSunken }]}
               >
-                <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
                   {item.variant} image unavailable
                 </Text>
               </View>
@@ -114,15 +115,15 @@ export default function DetectionDetailScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 16, padding: 16 },
-  title: { fontSize: 20, fontWeight: '700', textTransform: 'capitalize' },
-  meta: { fontSize: 13 },
-  incidentLink: { fontSize: 14, fontWeight: '600' },
+  title: { fontSize: 20, textTransform: 'capitalize', fontFamily: 'Inter_700Bold' },
+  meta: { fontSize: 13, fontFamily: 'Inter_400Regular' },
+  incidentLink: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   section: { gap: 8 },
-  sectionTitle: { fontSize: 15, fontWeight: '600' },
+  sectionTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   evidenceImage: { borderRadius: 10, height: 220, width: '100%' },
   evidenceMissing: { alignItems: 'center', justifyContent: 'center' },
   metaBlock: { borderRadius: 10, borderWidth: 1, gap: 4, padding: 12 },
-  metaLine: { fontSize: 13 },
+  metaLine: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   objectRow: { borderTopWidth: 1, gap: 2, paddingTop: 8 },
-  objectClass: { fontSize: 14, fontWeight: '600', textTransform: 'capitalize' },
+  objectClass: { fontSize: 14, textTransform: 'capitalize', fontFamily: 'Inter_600SemiBold' },
 });

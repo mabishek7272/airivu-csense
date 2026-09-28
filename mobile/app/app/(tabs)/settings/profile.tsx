@@ -138,7 +138,7 @@ function EnrollTotpSection({ onCancel, onEnrolled }: { onCancel: () => void; onE
       {phase === 'codes' && (
         <View style={styles.sectionGap}>
           <Text style={{ color: colors.text }}>
-            <Text style={{ fontWeight: '700' }}>Save these recovery codes.</Text> Each can be used once if you lose
+            <Text style={{ fontFamily: 'Inter_700Bold' }}>Save these recovery codes.</Text> Each can be used once if you lose
             access to your authenticator app. They will not be shown again.
           </Text>
           <View style={styles.codesGrid}>
@@ -154,7 +154,7 @@ function EnrollTotpSection({ onCancel, onEnrolled }: { onCancel: () => void; onE
             accessibilityRole="button"
             testID="mfa-enroll-ack"
           >
-            <Text style={[styles.buttonText, { color: colors.textInverse }]}>I've saved these codes</Text>
+            <Text style={[styles.buttonText, { color: colors.textInverse }]}>I&apos;ve saved these codes</Text>
           </Pressable>
         </View>
       )}
@@ -186,7 +186,7 @@ export default function ProfileScreen() {
           <View style={[styles.card, { borderColor: colors.border }]}>
             <View style={styles.rowBetween}>
               <View>
-                <Text style={{ color: colors.text, fontWeight: '600' }}>
+                <Text style={{ color: colors.text, fontFamily: 'Inter_600SemiBold' }}>
                   {data.mfa.enrolled ? 'Turned on' : 'Turned off'}
                 </Text>
                 {data.mfa.enrolled ? (
@@ -228,9 +228,9 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   content: { padding: 16, gap: 16 },
-  sectionTitle: { fontSize: 15, fontWeight: '600' },
+  sectionTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   card: { borderRadius: 10, borderWidth: 1, gap: 6, padding: 14 },
-  name: { fontSize: 17, fontWeight: '700' },
+  name: { fontSize: 17, fontFamily: 'Inter_700Bold' },
   rowBetween: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   enrollSection: { marginTop: 12 },
   sectionGap: { gap: 10 },
@@ -239,6 +239,6 @@ const styles = StyleSheet.create({
   input: { borderRadius: 8, borderWidth: 1, fontSize: 16, paddingHorizontal: 12, paddingVertical: 10 },
   actionsRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   button: { borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
-  buttonText: { fontWeight: '600' },
+  buttonText: { fontFamily: 'Inter_600SemiBold' },
   codesGrid: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 4 },
 });

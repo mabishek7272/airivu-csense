@@ -4,11 +4,10 @@ import { createContext, useContext } from 'react';
  * The exact same palette as frontend/customer-crm/src/styles.css's `:root` block - copied
  * hex-for-hex rather than re-derived, so a severity/status colour means the same thing on
  * the web CRM and on this app. "Technical Atmosphere" (design/csense-ui/System.dc.html) -
- * one theme, deliberately, same as the web app: this palette is the product's own
- * identity, specified by the owner, not a dark-mode variant of a light default. There is
- * therefore no more `light`/`dark` split here, matching the web CRM's own removal of its
- * `prefers-color-scheme` branch - `useColors()` keeps its existing call signature (no
- * screen has to change how it reads the palette) but no longer branches on the OS scheme.
+ * still the identity for eAIgleye/3RDi (both placeholder-asset brands today), and not an
+ * OS-`prefers-color-scheme` toggle for any brand - `useColors()` never branches on the OS
+ * scheme, only on which brand a build is (see `BRAND_PALETTE` below). CSense itself moved
+ * off this palette on 2026-09-28 onto its own light `csensePalette`.
  *
  * Exported (rather than module-private) so `BrandProvider.tsx` can use it as the
  * fallback/base that a tenant's branding colors get merged onto.
@@ -51,15 +50,14 @@ export const palette = {
 export type Palette = typeof palette;
 
 /** A second, genuinely different base palette - not a recolored version of the dark
- * one - for brands that should ship as a light theme (Apti, chosen 2026-09-27; the
- * other three brands stay on the dark palette above). Every field mirrors the dark
- * palette's own role exactly (same names, same consumers - no screen needs to know
- * which base is active), but severity/status colours (`critical`/`high`/`medium`/`low`
- * and their `*Subtle` tints) are recalibrated, not just copied: the dark palette's own
- * values (e.g. `medium: '#e0be72'`, a light gold) are near-invisible against a light
- * canvas, so a light theme needs its own darker, still-legible set for the same
- * semantic meaning, not the same hex values reused on the wrong background. */
-export const lightPalette: Palette = {
+ * one - for Apti (chosen 2026-09-27). Every field mirrors the dark palette's own role
+ * exactly (same names, same consumers - no screen needs to know which base is active),
+ * but severity/status colours (`critical`/`high`/`medium`/`low` and their `*Subtle`
+ * tints) are recalibrated, not just copied: the dark palette's own values (e.g.
+ * `medium: '#e0be72'`, a light gold) are near-invisible against a light canvas, so a
+ * light theme needs its own darker, still-legible set for the same semantic meaning,
+ * not the same hex values reused on the wrong background. */
+export const aptiPalette: Palette = {
   canvas: '#faf9fc',
   well: '#f1eef5',
   raised: '#ffffff',
@@ -94,17 +92,80 @@ export const lightPalette: Palette = {
   infoSubtle: '#f1eef5',
 };
 
+/** CSense's own light palette - "Majestic White & Cherry Purple" (2026-09-28),
+ * replacing the dark "Technical Atmosphere" palette above as CSense's identity. A
+ * genuinely different palette from Apti's (different brand, different colours), not a
+ * shared "the" light theme - which is why this file now keys a base palette per brand
+ * (`BRAND_PALETTE` below) rather than picking between exactly two options. Severity
+ * colours are recalibrated the same way Apti's were, for the same reason: the dark
+ * palette's own light-on-dark values don't carry over to a light canvas. */
+export const csensePalette: Palette = {
+  canvas: '#f8f7fb',
+  well: '#f1eef7',
+  raised: '#ffffff',
+  hair: '#e3e1ea',
+  hairStrong: '#cbc7d6',
+  emerald: '#24a148',
+  rose: '#7b2cbf',
+  crimson: '#5a189a',
+  ink: '#2b2b35',
+  dim: '#6c6c7a',
+  faint: '#a8a6b3',
+
+  surface: '#f8f7fb',
+  surfaceSunken: '#f1eef7',
+  border: '#d9d9e3',
+  text: '#2b2b35',
+  textMuted: '#6c6c7a',
+  textInverse: '#ffffff',
+  accent: '#7b2cbf',
+  // Darker on press/hover, not brighter - correct for a light theme (the dark
+  // palette's own accentHover goes brighter, which would read as backwards here).
+  accentHover: '#6b21a8',
+  accentSubtle: '#eadcf8',
+
+  critical: '#d7263d',
+  criticalSubtle: 'rgba(215, 38, 61, 0.12)',
+  // The design brief this palette is drawn from names only 4 alert colours for what is
+  // actually a 5-level severity system - `high` has no direct source colour, so this is
+  // derived (a burnt orange between the brief's red and amber) to keep all 5 severities
+  // visually distinct rather than reusing `critical` or `medium`'s hue.
+  high: '#e8590c',
+  highSubtle: 'rgba(232, 89, 12, 0.14)',
+  medium: '#f4a300',
+  mediumSubtle: 'rgba(244, 163, 0, 0.16)',
+  low: '#24a148',
+  lowSubtle: 'rgba(36, 161, 72, 0.12)',
+  info: '#3a86ff',
+  infoSubtle: 'rgba(58, 134, 255, 0.12)',
+};
+
 /** Which base palette a build-time brand variant starts from, keyed by
  * `app.config.ts`'s own `extra.brandSlug` (and `BrandProvider.tsx`'s pre-login
  * fetch, which reads that same slug). Not derived from anything in `org_branding` -
  * a reseller's branding row supplies accent/button colours (see `BrandProvider.tsx`'s
- * `withOverrides`), not the light-vs-dark choice itself, which is a per-brand product
- * decision made once, here. */
-export const BRAND_MODE: Record<string, 'dark' | 'light'> = {
-  apti: 'light',
-  eaigleye: 'dark',
-  '3rdi': 'dark',
-  csense: 'dark',
+ * `withOverrides`), not which base palette a brand starts from, which is a per-brand
+ * product decision made once, here. A direct per-brand map, not a `dark`/`light` mode
+ * switch - with both Apti and CSense now on their own distinct light palettes, "light
+ * mode" no longer names a single palette. */
+export const BRAND_PALETTE: Record<string, Palette> = {
+  apti: aptiPalette,
+  csense: csensePalette,
+  eaigleye: palette,
+  '3rdi': palette,
+};
+
+/** Whether a brand's real `org_branding.color_canvas` is allowed to override its base
+ * palette's background fields (`canvas`/`surface`/`surfaceSunken`). Every branding row
+ * that has ever been configured used a dark tone (it predates any light-themed brand
+ * existing) - applying it to a light-palette brand would silently turn its app dark
+ * again the moment branding resolves. `false` for every brand on a light base palette,
+ * `true` for brands still on the shared dark palette. */
+export const BRAND_ALLOW_CANVAS_OVERRIDE: Record<string, boolean> = {
+  apti: false,
+  csense: false,
+  eaigleye: true,
+  '3rdi': true,
 };
 
 /** The shape `BrandProvider` publishes and `useColors`/`useBrand` both read. Defined
@@ -123,7 +184,7 @@ export interface BrandState {
 
 export const BrandContext = createContext<BrandState>({
   colors: palette,
-  displayName: 'CSense',
+  displayName: '',
   logoUrl: null,
 });
 

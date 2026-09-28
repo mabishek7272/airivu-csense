@@ -97,8 +97,8 @@ export default function NotificationsScreen() {
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
       {banner ? (
         <View style={[styles.banner, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
-          <Text style={{ color: colors.text, fontWeight: '600' }}>New alert</Text>
-          <Text style={{ color: colors.textMuted, fontSize: 12 }} numberOfLines={1}>
+          <Text style={{ color: colors.text, fontFamily: 'Inter_600SemiBold' }}>New alert</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular' }} numberOfLines={1}>
             Incident {banner.incident_id} - {banner.type}
           </Text>
         </View>
@@ -108,9 +108,11 @@ export default function NotificationsScreen() {
       <View style={[styles.card, { borderColor: colors.border }]}>
         <View style={styles.rowBetween}>
           <View style={styles.rowText}>
-            <Text style={{ color: colors.text }}>Notify me about new alerts while the app is open</Text>
+            <Text style={{ color: colors.text, fontFamily: 'Inter_400Regular' }}>
+              Notify me about new alerts while the app is open
+            </Text>
             {socketEnabled ? (
-              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
                 {socketStatus === 'open' ? 'Connected' : socketStatus === 'connecting' ? 'Connecting…' : 'Reconnecting…'}
               </Text>
             ) : null}
@@ -130,11 +132,11 @@ export default function NotificationsScreen() {
 
       <Text style={[styles.sectionTitle, { color: colors.text }]}>Push notifications</Text>
       <View style={[styles.card, { borderColor: colors.border }]}>
-        <Text style={{ color: colors.text }}>
+        <Text style={{ color: colors.text, fontFamily: 'Inter_400Regular' }}>
           This device registers for push notifications automatically when you visit this screen.
         </Text>
         {pushError ? (
-          <Text style={{ color: colors.critical, marginTop: 6 }} accessibilityRole="alert">
+          <Text style={{ color: colors.critical, marginTop: 6, fontFamily: 'Inter_400Regular' }} accessibilityRole="alert">
             {pushError}
           </Text>
         ) : null}
@@ -146,9 +148,9 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, gap: 16, padding: 16 },
   banner: { borderRadius: 10, borderWidth: 1, gap: 2, padding: 12 },
-  sectionTitle: { fontSize: 15, fontWeight: '600' },
+  sectionTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   card: { borderRadius: 10, borderWidth: 1, gap: 8, padding: 14 },
   rowBetween: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   rowText: { flex: 1 },
-  hint: { fontSize: 12 },
+  hint: { fontSize: 12, fontFamily: 'Inter_400Regular' },
 });

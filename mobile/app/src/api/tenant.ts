@@ -12,6 +12,7 @@ import type {
   MfaStatusOut,
   ProfileOut,
   ResolveRequest,
+  SiteOut,
   TotpConfirmOut,
   TotpEnrollOut,
   TransitionRequest,
@@ -19,6 +20,14 @@ import type {
 
 export function getDashboard(): Promise<DashboardOut> {
   return apiRequest<DashboardOut>('/api/v1/tenant/dashboard');
+}
+
+export function listSites(): Promise<SiteOut[]> {
+  return apiRequest<SiteOut[]>('/api/v1/tenant/sites');
+}
+
+export function getSite(siteId: string): Promise<SiteOut> {
+  return apiRequest<SiteOut>(`/api/v1/tenant/sites/${siteId}`);
 }
 
 export function listIncidents(params: { status?: string | null; cursor?: string | null } = {}): Promise<IncidentPage> {

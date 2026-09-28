@@ -11,12 +11,16 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../src/auth/AuthContext';
-import { useBrand } from '../src/theme/BrandProvider';
+import { BRAND_LOCAL_LOGO, useBrand } from '../src/theme/BrandProvider';
 import { useColors } from '../src/theme/colors';
 
 export default function LoginScreen() {
   const colors = useColors();
   const brand = useBrand();
+  // A remote, tenant-fetched logo wins once it resolves; until then (or for a brand
+  // with no org_branding row at all, like CSense - see BrandProvider.tsx's own
+  // comment) this build's own bundled mark shows instead of nothing.
+  const logoSource = brand.logoUrl ? { uri: brand.logoUrl } : BRAND_LOCAL_LOGO;
   const { login, isLoggingIn, loginError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -80,9 +84,7 @@ export default function LoginScreen() {
         <Animated.View
           style={{ transform: [{ scale: logoScale }, { translateY: logoTranslateY }] }}
         >
-          {brand.logoUrl ? (
-            <Image source={{ uri: brand.logoUrl }} style={styles.logo} resizeMode="contain" />
-          ) : null}
+          {logoSource ? <Image source={logoSource} style={styles.logo} resizeMode="contain" /> : null}
           {brand.displayName ? (
             <Text style={[styles.title, { color: colors.text }]}>{brand.displayName}</Text>
           ) : null}
@@ -144,10 +146,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center' },
   form: { padding: 24, gap: 12 },
   logo: { width: 72, height: 72, marginBottom: 12 },
-  title: { fontSize: 28, fontWeight: '700' },
-  subtitle: { fontSize: 15, marginBottom: 16 },
-  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  error: { fontSize: 13 },
+  title: { fontSize: 28, fontFamily: 'Inter_700Bold' },
+  subtitle: { fontSize: 15, marginBottom: 16, fontFamily: 'Inter_400Regular' },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: 'Inter_400Regular',
+  },
+  error: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   button: { borderRadius: 8, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  buttonText: { color: '#fff', fontSize: 16, fontFamily: 'Inter_600SemiBold' },
 });

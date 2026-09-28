@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useColors } from '../../../src/theme/colors';
 import { useBrand } from '../../../src/theme/BrandProvider';
 import { useDashboard } from '../../../src/hooks/useDashboard';
-import { CameraIcon, IncidentIcon, SearchIcon, type IconProps } from '../../../src/components/Icons';
+import { CameraIcon, IncidentIcon, SearchIcon, ZoneIcon, type IconProps } from '../../../src/components/Icons';
 
 function StatCard({ label, value, loading }: { label: string; value: number | undefined; loading: boolean }) {
   const colors = useColors();
@@ -38,8 +38,12 @@ function Box({
         <Icon size={22} color={colors.accent} />
       </View>
       <View style={styles.boxText}>
-        <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>{title}</Text>
-        {subtitle ? <Text style={{ color: colors.textMuted, fontSize: 13, marginTop: 2 }}>{subtitle}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold' }}>{title}</Text>
+        {subtitle ? (
+          <Text style={{ color: colors.textMuted, fontSize: 13, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
+            {subtitle}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -86,6 +90,12 @@ export default function HomeScreen() {
           onPress={() => router.push('/(tabs)/home/alerts')}
         />
         <Box title="Detections" Icon={SearchIcon} onPress={() => router.push('/(tabs)/home/detections')} />
+        <Box
+          title="Sites"
+          subtitle={!loading && data ? `${data.sites_count} site${data.sites_count === 1 ? '' : 's'}` : undefined}
+          Icon={ZoneIcon}
+          onPress={() => router.push('/(tabs)/home/sites')}
+        />
       </View>
     </ScrollView>
   );
@@ -93,11 +103,11 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   content: { padding: 16, gap: 16, paddingBottom: 32 },
-  heading: { fontSize: 22, fontWeight: '700' },
+  heading: { fontSize: 22, fontFamily: 'Inter_700Bold' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statCard: { flexBasis: '47%', flexGrow: 1, borderRadius: 12, borderWidth: 1, padding: 14, gap: 4 },
-  statValue: { fontSize: 22, fontWeight: '700' },
-  statLabel: { fontSize: 12 },
+  statValue: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  statLabel: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   boxes: { gap: 12 },
   box: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 12, borderWidth: 1 },
   boxIcon: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

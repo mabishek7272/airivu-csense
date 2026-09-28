@@ -29,7 +29,7 @@ function CameraRow({ camera }: { camera: CameraOut }) {
             {camera.name}
           </Text>
           <View style={[styles.pill, { backgroundColor: tone.bg }]}>
-            <Text style={{ color: tone.fg, fontSize: 12, fontWeight: '600', textTransform: 'capitalize' }}>
+            <Text style={{ color: tone.fg, fontSize: 12, textTransform: 'capitalize', fontFamily: 'Inter_600SemiBold' }}>
               {camera.status}
             </Text>
           </View>
@@ -69,7 +69,7 @@ export default function CamerasScreen() {
 const styles = StyleSheet.create({
   row: { borderBottomWidth: 1, padding: 16, gap: 4 },
   rowHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  rowTitle: { fontSize: 15, fontWeight: '600', flexShrink: 1 },
-  rowMeta: { fontSize: 12 },
+  rowTitle: { fontSize: 15, flexShrink: 1, fontFamily: 'Inter_600SemiBold' },
+  rowMeta: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   pill: { borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 },
 });

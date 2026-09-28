@@ -332,3 +332,23 @@ export interface DevicesOut {
   web_session_limit: number | null;
   devices: DeviceOut[];
 }
+
+// --- Sites (backend/tenant_api/app/api/sites.py) --------------------------------------
+
+/** Mirrors `SiteOut` exactly. `camera_count`/`device_count` are computed server-side
+ * per site (a correlated subquery, not a client-side aggregation) specifically so "what
+ * breaks if I remove this site" is visible before anyone tries, per that endpoint's own
+ * docstring - shown here as the Sites list's own per-row summary for the same reason. */
+export interface SiteOut {
+  id: string;
+  name: string;
+  code: string;
+  timezone: string;
+  address: Record<string, unknown> | null;
+  latitude: number | null;
+  longitude: number | null;
+  status: string;
+  camera_count: number;
+  device_count: number;
+  created_at: string;
+}

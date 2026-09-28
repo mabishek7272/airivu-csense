@@ -24,7 +24,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
           style={[styles.button, { borderColor: colors.accent }]}
           accessibilityRole="button"
         >
-          <Text style={{ color: colors.accent, fontWeight: '600' }}>Try again</Text>
+          <Text style={{ color: colors.accent, fontFamily: 'Inter_600SemiBold' }}>Try again</Text>
         </Pressable>
       ) : null}
     </View>
@@ -50,10 +50,11 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: 'Inter_600SemiBold',
   },
   muted: {
     fontSize: 14,
+    fontFamily: 'Inter_400Regular',
   },
   button: {
     borderRadius: 8,

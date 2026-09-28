@@ -64,7 +64,7 @@ export default function MfaScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.form}>
-        <Text style={[styles.title, { color: colors.text }]}>Verify it's you</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Verify it&apos;s you</Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
           {useRecoveryCode ? 'Enter one of your saved recovery codes.' : factorLabel}
         </Text>
@@ -128,11 +128,18 @@ export default function MfaScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center' },
   form: { padding: 24, gap: 12 },
-  title: { fontSize: 28, fontWeight: '700' },
-  subtitle: { fontSize: 15, marginBottom: 16 },
-  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  error: { fontSize: 13 },
+  title: { fontSize: 28, fontFamily: 'Inter_700Bold' },
+  subtitle: { fontSize: 15, marginBottom: 16, fontFamily: 'Inter_400Regular' },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: 'Inter_400Regular',
+  },
+  error: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   button: { borderRadius: 8, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  link: { fontSize: 14, textAlign: 'center', marginTop: 8 },
+  buttonText: { color: '#fff', fontSize: 16, fontFamily: 'Inter_600SemiBold' },
+  link: { fontSize: 14, textAlign: 'center', marginTop: 8, fontFamily: 'Inter_400Regular' },
 });

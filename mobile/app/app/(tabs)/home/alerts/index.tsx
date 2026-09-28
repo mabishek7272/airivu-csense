@@ -27,7 +27,12 @@ function FilterTabs({ value, onChange }: { value: IncidentStatusFilter; onChange
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
           >
-            <Text style={{ color: active ? colors.accent : colors.textMuted, fontWeight: active ? '600' : '400' }}>
+            <Text
+              style={{
+                color: active ? colors.accent : colors.textMuted,
+                fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular',
+              }}
+            >
               {filter.label}
             </Text>
           </Pressable>
@@ -95,7 +100,7 @@ const styles = StyleSheet.create({
   filterTab: { paddingHorizontal: 16, paddingVertical: 12 },
   row: { borderBottomWidth: 1, padding: 16, gap: 8 },
   rowHeader: { flexDirection: 'row' },
-  rowTitle: { fontSize: 15, fontWeight: '600', flexShrink: 1 },
+  rowTitle: { fontSize: 15, flexShrink: 1, fontFamily: 'Inter_600SemiBold' },
   badgeRow: { flexDirection: 'row', gap: 8 },
-  rowMeta: { fontSize: 12 },
+  rowMeta: { fontSize: 12, fontFamily: 'Inter_400Regular' },
 });

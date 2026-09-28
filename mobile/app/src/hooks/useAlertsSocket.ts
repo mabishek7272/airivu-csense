@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { apiRequest } from '../api/client';
 import { API_BASE_URL, API_HOST_HEADER } from '../api/config';
 
@@ -77,7 +77,16 @@ function wsUrl(ticket: string): string {
 export function useAlertsSocket(enabled: boolean, onEvent: (event: AlertEvent) => void): SocketStatus {
   const [status, setStatus] = useState<SocketStatus>('closed');
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  // Kept fresh via an effect, not a synchronous assignment during render - this repo's
+  // eslint config enforces React's newer "no ref mutation during render" rule (the same
+  // one login.tsx's own Animated.Value refs ran into). A `useLayoutEffect` (not
+  // `useEffect`) is deliberate: it runs synchronously before the browser/JS engine
+  // paints, matching the old synchronous-assignment's timing as closely as possible, so
+  // a message arriving between render and a plain `useEffect` running can never see a
+  // stale `onEvent`.
+  useLayoutEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   useEffect(() => {
     if (!enabled) {

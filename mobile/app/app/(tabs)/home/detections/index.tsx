@@ -74,6 +74,6 @@ const styles = StyleSheet.create({
   thumb: { borderRadius: 8, height: 64, width: 64 },
   thumbPlaceholder: {},
   rowBody: { flex: 1, gap: 4, justifyContent: 'center' },
-  rowTitle: { fontSize: 15, fontWeight: '600' },
-  rowMeta: { fontSize: 12 },
+  rowTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  rowMeta: { fontSize: 12, fontFamily: 'Inter_400Regular' },
 });
