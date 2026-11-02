@@ -57,6 +57,8 @@ TYPE_CODES = (
     "crowd.density",
     "vehicle.unauthorised",
     "fall.detected",
+    "face.unknown",
+    "face.watchlist",
 )
 
 # Above this, a rule will miss detections on an infrared night frame - measured at 0.09 to

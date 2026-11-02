@@ -17,6 +17,12 @@ from app.api import (
     organizations,
     pipelines,
     support,
+    tenant_cameras,
+    tenant_edge_devices,
+    tenant_pipeline_assignments,
+    tenant_rules,
+    tenant_sites,
+    tenant_zones,
 )
 from csense_shared.config import get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory
@@ -93,3 +99,9 @@ app.include_router(notifications.router)
 app.include_router(licensing.router)
 app.include_router(mfa.router)
 app.include_router(support.router)
+app.include_router(tenant_sites.router)
+app.include_router(tenant_zones.router)
+app.include_router(tenant_cameras.router)
+app.include_router(tenant_edge_devices.router)
+app.include_router(tenant_rules.router)
+app.include_router(tenant_pipeline_assignments.router)

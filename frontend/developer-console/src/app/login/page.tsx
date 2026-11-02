@@ -28,31 +28,30 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={{ maxWidth: 380, margin: "10vh auto" }}>
-      <h1 style={{ fontSize: 20 }}>AIRIVU CSense</h1>
-      <p style={{ color: "#555", marginBottom: 24 }}>Developer Console — platform operator sign-in</p>
-      <p style={{ color: "#a15c00", fontSize: 13, marginBottom: 16 }}>
-        MFA enforcement for platform accounts lands in Phase&nbsp;2 (see CHECKLIST.md).
-      </p>
+    <div className="auth-shell">
+      <div className="card auth-card">
+        <h1>AIRIVU CSense</h1>
+        <p>Developer Console — platform operator sign-in</p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <label>
-          Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </label>
-        {error && (
-          <p role="alert" style={{ color: "#b00020" }}>
-            {error}
-          </p>
-        )}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Please wait…" : "Sign in"}
-        </button>
-      </form>
-    </main>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label>
+            Email
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          </label>
+          <label>
+            Password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </label>
+          {error && (
+            <p role="alert" className="field-error">
+              {error}
+            </p>
+          )}
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Please wait…" : "Sign in"}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }

@@ -256,6 +256,8 @@ async def ingest_detection(
                 "class": o.class_name,
                 "confidence": round(o.confidence, 4),
                 "bbox": [round(v, 5) for v in o.bbox],
+                # Only present for recognised faces (identity_id/name/similarity).
+                **({"attributes": o.attributes} if o.attributes else {}),
             }
             for o in objects
         ],
@@ -327,7 +329,9 @@ async def ingest_detection(
                 annotations=[
                     Annotation(
                         bbox=o.bbox,
-                        label=o.class_name,
+                        # A recognised person is labelled with their name; everything
+                        # else keeps its class.
+                        label=(o.attributes or {}).get("name") or o.class_name,
                         confidence=o.confidence,
                         triggered=o.bbox in matched_boxes,
                     )

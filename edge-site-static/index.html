@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="./doc-page.js"></script>
+<script src="./image-slot.js"></script>
+<style>
+  @page {
+    size: 210mm 297mm;
+    margin: 0 !important;
+  }
+  doc-page:not(:defined) { display: block !important; visibility: visible !important; opacity: 1 !important; }
+  doc-page:not(:defined) .page { display: flex !important; flex-direction: column !important; margin: 0 auto 2rem auto !important; width: 100% !important; max-width: 210mm !important; }
+  html, body { margin: 0; padding: 0; background: #fff !important; }
+  body { font-family: 'Inter', system-ui, sans-serif; color: #111111; -webkit-font-smoothing: antialiased; }
+  h1,h2,h3,h4,h5,h6 { margin: 0; font-family: 'Montserrat', sans-serif; letter-spacing: -0.01em; font-weight: 700; color: #111111; }
+  p { margin: 0; }
+  a { color: #7D00CC; text-decoration: none; }
+  a:hover { color: #A100FF; }
+  .page * { box-sizing: border-box; }
+
+  .page {
+    width: 210mm !important;
+    height: 297mm !important;
+    max-height: 297mm !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  @media print {
+    html, body {
+      width: 210mm !important;
+      height: 297mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    doc-page {
+      display: block !important;
+      width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .page {
+      width: 210mm !important;
+      height: 297mm !important;
+      max-height: 297mm !important;
+      margin: 0 !important;
+      box-sizing: border-box !important;
+      overflow: hidden !important;
+      zoom: 0.88 !important;
+      page-break-before: auto !important;
+      page-break-after: always !important;
+      page-break-inside: avoid !important;
+      break-before: auto !important;
+      break-after: page !important;
+      break-inside: avoid !important;
+    }
+  }
+
+  /* Mobile Responsive Viewport Styles */
+  @media screen and (max-width: 820px) {
+    html, body {
+      width: 100% !important;
+      max-width: 100vw !important;
+      overflow-x: hidden !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    doc-page {
+      display: block !important;
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100vw !important;
+      padding: 10px 0 !important;
+      box-sizing: border-box !important;
+      overflow-x: hidden !important;
+    }
+    .page {
+      width: 100% !important;
+      max-width: 100vw !important;
+      height: auto !important;
+      min-height: auto !important;
+      aspect-ratio: auto !important;
+      box-sizing: border-box !important;
+      padding: 24px 16px !important;
+      margin: 0 0 16px 0 !important;
+      border-radius: 12px !important;
+      overflow: hidden !important;
+    }
+    .page h1 {
+      font-size: 26pt !important;
+      line-height: 1.1 !important;
+      max-width: 100% !important;
+    }
+    .page h2 {
+      font-size: 22pt !important;
+      line-height: 1.15 !important;
+      max-width: 100% !important;
+    }
+    .page p {
+      font-size: 11pt !important;
+      max-width: 100% !important;
+    }
+    /* Product Spec Footers on Mobile */
+    .page [style*="grid-template-columns:1fr 1fr 1fr 1fr 1.2fr"],
+    .page [style*="grid-template-columns: 1fr 1fr 1fr 1fr 1.2fr"] {
+      grid-template-columns: 1fr 1fr !important;
+      gap: 16px 12px !important;
+      padding: 16px !important;
+    }
+    /* 4-column feature grids on Mobile */
+    .page [style*="grid-template-columns:1fr 1fr 1fr 1fr"],
+    .page [style*="grid-template-columns: 1fr 1fr 1fr 1fr"] {
+      grid-template-columns: 1fr 1fr !important;
+      gap: 12px !important;
+    }
+    /* 3-column feature grids on Mobile */
+    .page [style*="grid-template-columns:1fr 1fr 1fr"],
+    .page [style*="grid-template-columns: 1fr 1fr 1fr"] {
+      grid-template-columns: 1fr !important;
+      gap: 12px !important;
+    }
+    /* 2-column feature grids on Mobile */
+    .page [style*="grid-template-columns:1.6fr 1fr"],
+    .page [style*="grid-template-columns: 1.6fr 1fr"] {
+      grid-template-columns: 1fr !important;
+      gap: 16px !important;
+    }
+    /* Image slots on Mobile */
+    .page image-slot, .page img {
+      max-width: 100% !important;
+      max-height: 240px !important;
+    }
+  }
+</style>
+</helmet>
+
+<doc-page size="a4" orientation="portrait">
+
+<!-- ============================ PAGE 01 · COVER ============================ -->
+<section class="page" id="p01" style="padding:0;background:#FFFFFF;color:#111111;font-family:'Inter',sans-serif;position:relative;overflow:hidden;display:flex;flex-direction:column">
+  <!-- corner gradient wash -->
+  <div style="position:absolute;top:-120mm;right:-120mm;width:280mm;height:280mm;border-radius:50%;background:radial-gradient(circle at center, rgba(161,0,255,0.18), rgba(255,140,26,0.08) 45%, rgba(255,255,255,0) 70%);filter:blur(4px);pointer-events:none"></div>
+  <div style="position:absolute;bottom:-100mm;left:-80mm;width:200mm;height:200mm;border-radius:50%;background:radial-gradient(circle at center, rgba(125,0,204,0.12), rgba(255,255,255,0) 65%);pointer-events:none"></div>
+
+  <!-- Top brand strip -->
+  <div style="padding:16mm 18mm 0 18mm;display:flex;align-items:center;justify-content:space-between;position:relative;z-index:2">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="width:22px;height:22px;border-radius:50%;background:conic-gradient(from 220deg, #7D00CC, #A100FF, #FF8C1A, #FFA93A, #7D00CC);box-shadow:0 4px 16px rgba(125,0,204,0.25)"></div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:800;letter-spacing:0.02em;font-size:14pt;color:#111">e<span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">AI</span>gleye</div>
+    </div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em;text-transform:uppercase">reAInmaker AI · 2026 Edition</div>
+  </div>
+
+  <!-- Hero device slot -->
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:12mm 18mm 0 18mm;position:relative;z-index:1">
+    <div style="width:100%;max-width:150mm;aspect-ratio:1/1;position:relative">
+      <div style="position:absolute;inset:6% 6%;border-radius:50%;background:radial-gradient(circle at 40% 35%, rgba(161,0,255,0.25), rgba(255,140,26,0.12) 55%, rgba(255,255,255,0) 75%);filter:blur(2px)"></div>
+      <image-slot id="cover_device" src="./image.png" shape="rounded" radius="24" fit="contain" placeholder="Hero device render — Edge Pro / product family" style="width:100%;height:100%;position:relative"></image-slot>
+    </div>
+  </div>
+
+  <!-- Title block -->
+  <div style="padding:0 18mm 22mm 18mm;position:relative;z-index:2">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase;margin-bottom:10mm">Enterprise AI Appliances</div>
+    <h1 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:38pt;line-height:1.02;letter-spacing:-0.02em;color:#111;text-wrap:balance;max-width:170mm">e<span style="background:linear-gradient(120deg,#7D00CC 0%,#A100FF 45%,#FF8C1A 100%);-webkit-background-clip:text;background-clip:text;color:transparent">AI</span>gleye<br>Edge Device Portfolio</h1>
+    <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A);margin:12mm 0 10mm 0;width:60mm"></div>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:20mm">
+      <div style="font-family:'Inter',sans-serif;font-weight:300;font-size:13pt;line-height:1.4;color:#333;max-width:110mm;text-wrap:pretty">
+        AI-Powered Edge Intelligence.<br>
+        <span style="color:#111;font-weight:500">Built for Real-Time Safety.</span>
+      </div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em;text-transform:uppercase;text-align:right">Portfolio<br>Vol. 01</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 02 · CONTENTS ============================ -->
+<section class="page" id="p02" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:12mm;position:relative">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Contents</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">02 / 23</div>
+  </div>
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:26pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm;text-wrap:balance">A complete AI appliance portfolio — engineered for enterprise deployment.</h2>
+  <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A,rgba(255,140,26,0));width:80mm"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:14mm;row-gap:3mm;margin-top:4mm;font-family:'Space Grotesk',monospace;font-size:10pt;color:#111">
+    <div style="display:contents"></div>
+    <!-- entries -->
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">01</span><span style="flex:1">Cover</span><span style="color:#6B6B6B">01</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">02</span><span style="flex:1">Contents</span><span style="color:#6B6B6B">02</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">03</span><span style="flex:1">Why Edge AI</span><span style="color:#6B6B6B">03</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">04</span><span style="flex:1">The eAIgleye Difference</span><span style="color:#6B6B6B">04</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">05</span><span style="flex:1">Product Portfolio</span><span style="color:#6B6B6B">05</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">06</span><span style="flex:1">Edge Lite</span><span style="color:#6B6B6B">06</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">07</span><span style="flex:1">Edge Pro</span><span style="color:#6B6B6B">07</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">08</span><span style="flex:1">Edge Enterprise — continued</span><span style="color:#6B6B6B">08</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">09</span><span style="flex:1">Edge Enterprise ★</span><span style="color:#6B6B6B">09</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">10</span><span style="flex:1">Edge Ultra</span><span style="color:#6B6B6B">10</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">11</span><span style="flex:1">Standard Hardware</span><span style="color:#6B6B6B">11</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">12</span><span style="flex:1">Recommended Configuration</span><span style="color:#6B6B6B">12</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">13</span><span style="flex:1">Technical Specifications</span><span style="color:#6B6B6B">13</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">14</span><span style="flex:1">Comparison Table</span><span style="color:#6B6B6B">14</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">15</span><span style="flex:1">The AI Pipeline</span><span style="color:#6B6B6B">15</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">16</span><span style="flex:1">Internal Architecture</span><span style="color:#6B6B6B">16</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">17</span><span style="flex:1">Why Clients Choose eAIgleye</span><span style="color:#6B6B6B">17</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">18</span><span style="flex:1">Industries</span><span style="color:#6B6B6B">18</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">19</span><span style="flex:1">Deployment Workflow</span><span style="color:#6B6B6B">19</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">20</span><span style="flex:1">Enterprise Support</span><span style="color:#6B6B6B">20</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">21</span><span style="flex:1">Contact &amp; Demo</span><span style="color:#6B6B6B">21</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">22</span><span style="flex:1">reAInmaker AI</span><span style="color:#6B6B6B">22</span></div>
+    <div style="display:flex;align-items:baseline;gap:6mm;padding:2.5mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#A100FF;width:8mm;font-weight:500">23</span><span style="flex:1">Back Cover</span><span style="color:#6B6B6B">23</span></div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 03 · WHY EDGE AI ============================ -->
+<section class="page" id="p03" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:10mm;position:relative;overflow:hidden">
+  <div style="position:absolute;top:-40mm;right:-40mm;width:140mm;height:140mm;border-radius:50%;background:radial-gradient(circle,rgba(125,0,204,0.08),rgba(255,255,255,0) 70%);pointer-events:none"></div>
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;position:relative;z-index:1">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Our Vision</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">03 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:34pt;line-height:1.03;letter-spacing:-0.02em;max-width:150mm;text-wrap:balance;position:relative;z-index:1">Why <span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">Edge AI?</span></h2>
+
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:12.5pt;line-height:1.55;color:#444;max-width:150mm;text-wrap:pretty;position:relative;z-index:1">Cloud is not fast enough, not private enough, and not always there. eAIgleye brings intelligence directly to the place where it is needed — inside the building, on the site, at the edge — so decisions happen in milliseconds, and nothing sensitive ever has to leave.</p>
+
+  <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A,rgba(255,140,26,0));width:70mm;margin-top:2mm"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8mm;margin-top:6mm;position:relative;z-index:1">
+    <!-- benefit card -->
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#7D00CC,#A100FF);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">01</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">No Cloud Dependency</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Every model runs locally. Zero reliance on remote servers or third-party APIs.</p>
+    </div>
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#A100FF,#FF8C1A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">02</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">Real-Time Intelligence</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Detection, classification and alerting the moment an event happens — not seconds later.</p>
+    </div>
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#FF8C1A,#FFA93A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">03</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">Privacy First</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Video and biometric data remain on-premise. Encryption by default, at rest and in motion.</p>
+    </div>
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#7D00CC,#FF8C1A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">04</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">Ultra-Low Latency</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Sub-second inference at the source. No round-trip to a datacentre, no throttling.</p>
+    </div>
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#A100FF,#7D00CC);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">05</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">Local Processing</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Full pipeline — capture, inference, storage, retrieval — runs on the appliance itself.</p>
+    </div>
+    <div style="padding:8mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:14px;box-shadow:0 2px 8px rgba(17,17,17,0.03)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#FFA93A,#A100FF);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:12pt;margin-bottom:6mm">06</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm;color:#111">Enterprise Security</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Signed firmware, hardware root of trust, and role-based access across every layer.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 04 · DIFFERENCE ============================ -->
+<section class="page" id="p04" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm;position:relative">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">The eAIgleye Difference</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">04 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:30pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">An intelligence stack, not just a device.</h2>
+
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:11.5pt;line-height:1.55;color:#555;max-width:150mm;text-wrap:pretty">Every eAIgleye appliance ships with the full reAInmaker AI platform preloaded — from computer-vision models to CRM, incident workflows and mobile access. One integrated system, delivered ready-to-run.</p>
+
+  <!-- Ecosystem diagram -->
+  <div style="flex:1;position:relative;margin-top:4mm;min-height:0;flex:1;display:flex;align-items:center;justify-content:center">
+    <!-- outer ring dashed -->
+    <div style="position:absolute;width:130mm;height:130mm;border-radius:50%;border:1px dashed rgba(125,0,204,0.25)"></div>
+    <div style="position:absolute;width:95mm;height:95mm;border-radius:50%;border:1px dashed rgba(255,140,26,0.25)"></div>
+
+    <!-- Center core -->
+    <div style="width:52mm;height:52mm;border-radius:50%;background:radial-gradient(circle at 35% 30%,#A100FF,#7D00CC 60%,#5A0092);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 20px 50px rgba(125,0,204,0.35),inset 0 -6px 20px rgba(0,0,0,0.15);position:relative;z-index:2">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7pt;letter-spacing:0.28em;text-transform:uppercase;opacity:0.75">Platform</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:16pt;margin-top:2mm">eAIgleye</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;opacity:0.85">Core</div>
+    </div>
+
+    <!-- Eight nodes -->
+    <!-- top -->
+    <div style="position:absolute;top:0mm;left:50%;transform:translate(-50%,0);width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase">01</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">Edge AI</div>
+    </div>
+    <!-- top-right -->
+    <div style="position:absolute;top:14mm;right:8mm;width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#A100FF;letter-spacing:0.16em;text-transform:uppercase">02</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">CRM</div>
+    </div>
+    <!-- right -->
+    <div style="position:absolute;top:50%;right:0mm;transform:translate(0,-50%);width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FF8C1A;letter-spacing:0.16em;text-transform:uppercase">03</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">UID Engine</div>
+    </div>
+    <!-- bottom-right -->
+    <div style="position:absolute;bottom:14mm;right:8mm;width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.16em;text-transform:uppercase">04</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">Incident Engine</div>
+    </div>
+    <!-- bottom -->
+    <div style="position:absolute;bottom:0mm;left:50%;transform:translate(-50%,0);width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FF8C1A;letter-spacing:0.16em;text-transform:uppercase">05</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">Mobile Platform</div>
+    </div>
+    <!-- bottom-left -->
+    <div style="position:absolute;bottom:14mm;left:8mm;width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#A100FF;letter-spacing:0.16em;text-transform:uppercase">06</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">Cyber Security</div>
+    </div>
+    <!-- left -->
+    <div style="position:absolute;top:50%;left:0mm;transform:translate(0,-50%);width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase">07</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">Compliance</div>
+    </div>
+    <!-- top-left -->
+    <div style="position:absolute;top:14mm;left:8mm;width:38mm;padding:5mm 6mm;background:#fff;border:1px solid rgba(17,17,17,0.08);border-radius:12px;box-shadow:0 6px 18px rgba(17,17,17,0.06);text-align:center">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase">08</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:10.5pt;margin-top:1mm">AI Support</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 05 · PORTFOLIO ============================ -->
+<section class="page" id="p05" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:10mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Product Portfolio</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">05 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:30pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">Four appliances. <span style="color:#6B6B6B">One platform.</span></h2>
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:11.5pt;line-height:1.55;color:#555;max-width:150mm">From a single-site pilot to a national deployment — the eAIgleye range scales continuously in compute and camera capacity while running one identical software stack.</p>
+
+  <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A,rgba(255,140,26,0));width:60mm"></div>
+
+  <!-- Portfolio table -->
+  <div style="border:1px solid rgba(17,17,17,0.08);border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(17,17,17,0.04)">
+    <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.7fr 0.7fr 1fr;padding:5mm 8mm;background:#F8F8F8;font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;color:#6B6B6B">
+      <div>Appliance</div><div>Powered By</div><div>Compute</div><div>Cameras</div><div>Price (AUD)</div>
+    </div>
+    <!-- rows -->
+    <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.7fr 0.7fr 1fr;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Edge Lite</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#333">Raspberry Pi 5 + AI HAT</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt;color:#7D00CC">13 TOPS</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt">Up to 4</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10.5pt;font-weight:600;color:#111">$1,086 AU$</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.7fr 0.7fr 1fr;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Edge Pro</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#333">NVIDIA Jetson Orin NX 16GB</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt;color:#7D00CC">100 TOPS</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt">Up to 16</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10.5pt;font-weight:600;color:#111">$1,863 AU$</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.7fr 0.7fr 1fr;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center;background:linear-gradient(90deg,rgba(125,0,204,0.05),rgba(255,140,26,0.05));position:relative">
+      <div style="display:flex;flex-direction:column;gap:1mm">
+        <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:12pt">Edge Enterprise <span style="color:#FF8C1A">★</span></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:7pt;color:#7D00CC;letter-spacing:0.18em;text-transform:uppercase">Most Popular</div>
+      </div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#333">NVIDIA Jetson AGX Orin</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt;color:#7D00CC;font-weight:600">275 TOPS</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt">Up to 32</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10.5pt;font-weight:700;color:#7D00CC">$2,552 AU$</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.7fr 0.7fr 1fr;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Edge Ultra</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#333">NVIDIA DGX Spark</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt;color:#7D00CC">1,000 TOPS</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10pt">Unlimited</div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:10.5pt;font-weight:600;color:#111">$7,696 AU$</div>
+    </div>
+  </div>
+
+  <p style="font-family:'Inter',sans-serif;font-size:9pt;line-height:1.5;color:#8A8A8A;max-width:150mm;margin-top:2mm">The NVIDIA and Raspberry Pi boards are the compute engines inside each appliance; the eAIgleye product is the complete, deployment-ready system delivered around them.</p>
+</section>
+
+<!-- ============================ PAGE 06 · EDGE LITE ============================ -->
+<section class="page" id="p06" style="padding:0;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;position:relative;display:flex;flex-direction:column;overflow:hidden">
+  <div style="padding:22mm 20mm 0 20mm;display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Product · 01/04</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">06 / 23</div>
+  </div>
+  <div style="padding:8mm 20mm 0 20mm">
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF;letter-spacing:0.24em;text-transform:uppercase;margin-bottom:4mm">eAIgleye</div>
+    <h2 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:44pt;line-height:1;letter-spacing:-0.03em">Edge Lite</h2>
+    <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:13pt;line-height:1.5;color:#444;max-width:120mm;margin-top:6mm">The most accessible entry into on-premise AI — a compact appliance built for pilots, small facilities, and first-time deployments.</p>
+  </div>
+
+  <!-- Device area -->
+  <div style="flex:1;position:relative;min-height:0;flex:1;margin-top:6mm">
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,#FFFFFF,#F8F8F8)"></div>
+    <div style="position:absolute;inset:0;padding:6mm 20mm;display:flex;align-items:center;justify-content:center">
+      <image-slot id="lite_device" src="./rasperi_pi.png" shape="rounded" radius="16" fit="contain" placeholder="Edge Lite device render" style="width:100%;height:100%"></image-slot>
+    </div>
+  </div>
+
+  <!-- Spec footer -->
+  <div style="padding:8mm 20mm 20mm 20mm;background:#111;color:#fff;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1.2fr;gap:4mm">
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Powered By</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">Raspberry Pi 5<br>+ AI HAT</div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Compute</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm">13<span style="font-size:10pt;color:#B8B8B8;margin-left:2mm">TOPS</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Cameras</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm">4<span style="font-size:10pt;color:#B8B8B8;margin-left:2mm">max</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Price</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:18pt;margin-top:1mm;color:#fff">$1,086<span style="font-size:9pt;color:#FFA93A;margin-left:2mm">AU$</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Best For</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.4;margin-top:2mm">Pilot deployments<br>Small daycare<br>Startup facilities</div>
+    </div>
+  </div>
+</section>
+<!-- ============================ PAGE 08 · EDGE PRO ============================ -->
+<section class="page" id="p07" style="padding:0;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;position:relative;display:flex;flex-direction:column;overflow:hidden">
+  <div style="padding:22mm 20mm 0 20mm;display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Product · 02/04</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">07 / 23</div>
+  </div>
+  <div style="padding:8mm 20mm 0 20mm">
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF;letter-spacing:0.24em;text-transform:uppercase;margin-bottom:4mm">eAIgleye</div>
+    <h2 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:44pt;line-height:1;letter-spacing:-0.03em">Edge Pro</h2>
+    <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:13pt;line-height:1.5;color:#444;max-width:120mm;margin-top:6mm">A 100 TOPS AI engine, 16 concurrent camera streams, and enterprise-grade thermal design in one silent, sealed unit.</p>
+  </div>
+  <div style="flex:1;position:relative;min-height:0;flex:1;margin-top:6mm">
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,#FFFFFF,#F8F8F8)"></div>
+    <div style="position:absolute;inset:0;padding:6mm 20mm;display:flex;align-items:center;justify-content:center">
+      <image-slot id="pro_device" src="./orin_nx.png" shape="rounded" radius="16" fit="contain" placeholder="Edge Pro device render" style="width:100%;height:100%"></image-slot>
+    </div>
+  </div>
+  <div style="padding:8mm 20mm 20mm 20mm;background:#111;color:#fff;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1.2fr;gap:4mm">
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Powered By</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">Jetson Orin<br>NX 16GB</div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Compute</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm">100<span style="font-size:10pt;color:#B8B8B8;margin-left:2mm">TOPS</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Cameras</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm">16<span style="font-size:10pt;color:#B8B8B8;margin-left:2mm">max</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Price</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:18pt;margin-top:1mm;color:#fff">$1,863<span style="font-size:9pt;color:#FFA93A;margin-left:2mm">AU$</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Best For</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.4;margin-top:2mm">Mid-size deployments<br>Full-scale daycare<br>Corporate campuses</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 09 · EDGE ENTERPRISE CONT ============================ -->
+<section class="page" id="p08" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:10mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Edge Enterprise · in depth</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">08 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">Why Edge Enterprise fits <span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">most sites.</span></h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10mm">
+    <!-- Left column: reasons -->
+    <div style="display:flex;flex-direction:column;gap:6mm">
+      <div style="padding:7mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:2mm">Performance</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm">275 TOPS of dedicated AI</h4>
+        <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Run detection, classification, tracking and OCR simultaneously across 32 streams without dropping frames.</p>
+      </div>
+      <div style="padding:7mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:2mm">Thermal</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm">Sealed, silent, 24×7</h4>
+        <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Aluminum chassis with active cooling holds sustained performance in commercial ambient temperatures.</p>
+      </div>
+      <div style="padding:7mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.05);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FF8C1A;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:2mm">Deployment</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-bottom:2mm">Two-hour installation</h4>
+        <p style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.5;color:#555">Rack, wall, or desk mount. The full eAIgleye platform boots pre-configured from first power-on.</p>
+      </div>
+    </div>
+
+    <!-- Right column: mini spec sheet -->
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB);box-shadow:0 6px 22px rgba(17,17,17,0.05)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:4mm">Specification Sheet</div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:14pt;margin-bottom:6mm">Edge Enterprise</h4>
+      <div style="display:flex;flex-direction:column;gap:2.5mm;font-family:'Space Grotesk',monospace;font-size:9.5pt">
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Compute</span><span style="color:#111">275 TOPS</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">GPU</span><span style="color:#111">2048-core Ampere</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">CPU</span><span style="color:#111">12-core Arm Cortex</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">RAM</span><span style="color:#111">32 GB LPDDR5</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Storage</span><span style="color:#111">1 TB+ NVMe</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Cameras</span><span style="color:#111">Up to 32</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Power</span><span style="color:#111">120W adapter</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Cooling</span><span style="color:#111">Active</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0;border-bottom:1px solid rgba(17,17,17,0.06)"><span style="color:#6B6B6B">Networking</span><span style="color:#111">10 GbE · Wi-Fi 6</span></div>
+        <div style="display:flex;justify-content:space-between;padding:2mm 0"><span style="color:#6B6B6B">Warranty</span><span style="color:#111">3 years</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 10 · EDGE ENTERPRISE (HERO) ============================ -->
+<section class="page" id="p09" style="padding:0;background:#0B0B12;color:#fff;font-family:'Inter',sans-serif;position:relative;display:flex;flex-direction:column;overflow:hidden">
+  <!-- Ambient glow -->
+  <div style="position:absolute;top:-60mm;right:-60mm;width:240mm;height:240mm;border-radius:50%;background:radial-gradient(circle,rgba(161,0,255,0.4),rgba(125,0,204,0.18) 40%,rgba(11,11,18,0) 70%);pointer-events:none"></div>
+  <div style="position:absolute;bottom:-60mm;left:-40mm;width:200mm;height:200mm;border-radius:50%;background:radial-gradient(circle,rgba(255,140,26,0.28),rgba(11,11,18,0) 65%);pointer-events:none"></div>
+
+  <div style="padding:22mm 20mm 0 20mm;display:flex;align-items:baseline;justify-content:space-between;position:relative;z-index:2">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#FFA93A;letter-spacing:0.24em;text-transform:uppercase">Product · 03/04 · Hero</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#8A8A9A;letter-spacing:0.16em">09 / 23</div>
+  </div>
+
+  <div style="padding:8mm 20mm 0 20mm;position:relative;z-index:2">
+    <div style="display:inline-flex;align-items:center;gap:6px;padding:2mm 5mm;background:linear-gradient(135deg,rgba(161,0,255,0.15),rgba(255,140,26,0.15));border:1px solid rgba(255,140,26,0.6);border-radius:999px;font-family:'Space Grotesk',monospace;font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:6mm;box-shadow:0 4px 16px rgba(255,140,26,0.15)">★ Most Popular &amp; Recommended</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF;letter-spacing:0.24em;text-transform:uppercase;margin-bottom:2mm">eAIgleye</div>
+    <h2 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:56pt;line-height:0.95;letter-spacing:-0.03em;color:#fff">Edge <span style="background:linear-gradient(120deg,#A100FF 0%,#FF8C1A 100%);-webkit-background-clip:text;background-clip:text;color:transparent">Enterprise</span></h2>
+    <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:13pt;line-height:1.5;color:#C8C8D6;max-width:130mm;margin-top:8mm">Campus-scale AI in a single appliance. 275 TOPS of compute drives 32 concurrent streams across large sites — hospitals, universities, government facilities.</p>
+  </div>
+
+  <div style="flex:1;position:relative;min-height:0;flex:1;margin-top:6mm">
+    <div style="position:absolute;inset:0;padding:6mm 20mm;display:flex;align-items:center;justify-content:center">
+      <div style="width:100%;height:100%;position:relative">
+        <div style="position:absolute;inset:5%;border-radius:28px;background:radial-gradient(ellipse at center,rgba(161,0,255,0.45),rgba(255,140,26,0.2) 45%,rgba(11,11,18,0) 70%);filter:blur(24px)"></div>
+        <image-slot id="ent_device" src="./agx_orin.png" shape="rounded" radius="20" fit="contain" placeholder="Edge Enterprise device render" style="width:100%;height:100%;position:relative"></image-slot>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:8mm 20mm 20mm 20mm;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1.2fr;gap:4mm;position:relative;z-index:2;border-top:1px solid rgba(255,255,255,0.12);background:rgba(11,11,18,0.6);backdrop-filter:blur(10px)">
+    <div style="padding-top:6mm">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Powered By</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm;color:#fff">Jetson AGX<br>Orin</div>
+    </div>
+    <div style="padding-top:6mm">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Compute</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:22pt;margin-top:1mm;background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">275<span style="font-size:10pt;color:#8A8A9A;margin-left:2mm;-webkit-text-fill-color:#8A8A9A">TOPS</span></div>
+    </div>
+    <div style="padding-top:6mm">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Cameras</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:22pt;margin-top:1mm;color:#fff">32<span style="font-size:10pt;color:#8A8A9A;margin-left:2mm">max</span></div>
+    </div>
+    <div style="padding-top:6mm">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Price</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm;background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">$2,552<span style="font-size:9pt;color:#FFA93A;margin-left:2mm;-webkit-text-fill-color:#FFA93A">AU$</span></div>
+    </div>
+    <div style="padding-top:6mm">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Best For</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.4;margin-top:2mm;color:#E8E8F0">Large campuses<br>Hospitals · Government<br>Universities</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 11 · EDGE ULTRA ============================ -->
+<section class="page" id="p10" style="padding:0;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;position:relative;display:flex;flex-direction:column;overflow:hidden">
+  <div style="padding:22mm 20mm 0 20mm;display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Product · 04/04 · Flagship</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">10 / 23</div>
+  </div>
+  <div style="padding:8mm 20mm 0 20mm">
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF;letter-spacing:0.24em;text-transform:uppercase;margin-bottom:4mm">eAIgleye</div>
+    <h2 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:44pt;line-height:1;letter-spacing:-0.03em">Edge <span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">Ultra</span></h2>
+    <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:13pt;line-height:1.5;color:#444;max-width:120mm;margin-top:6mm">One petaop of AI at the edge. Built for national infrastructure, AI datacentres, and smart-city deployments where compute has no ceiling.</p>
+  </div>
+  <div style="flex:1;position:relative;min-height:0;flex:1;margin-top:6mm">
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,#FFFFFF,#F8F8F8)"></div>
+    <div style="position:absolute;top:0;right:0;width:60%;height:100%;background:radial-gradient(circle at 70% 50%,rgba(161,0,255,0.12),rgba(255,255,255,0) 60%);pointer-events:none"></div>
+    <div style="position:absolute;inset:0;padding:6mm 20mm;display:flex;align-items:center;justify-content:center">
+      <image-slot id="ultra_device" src="./dgx.png" shape="rounded" radius="16" fit="contain" placeholder="Edge Ultra device render" style="width:100%;height:100%"></image-slot>
+    </div>
+  </div>
+  <div style="padding:8mm 20mm 20mm 20mm;background:linear-gradient(120deg,#111,#2A1040);color:#fff;display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1.2fr;gap:4mm">
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Powered By</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">NVIDIA<br>DGX Spark</div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Compute</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:20pt;margin-top:1mm;background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">1,000<span style="font-size:10pt;color:#B8B8B8;margin-left:2mm;-webkit-text-fill-color:#B8B8B8">TOPS</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Cameras</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:16pt;margin-top:1mm">Unlimited<div style="font-size:8.5pt;color:#B8B8B8;font-weight:400;margin-top:1mm">via expansion</div></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Price</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:18pt;margin-top:1mm;color:#fff">$7,696<span style="font-size:9pt;color:#FFA93A;margin-left:2mm">AU$</span></div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Best For</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;line-height:1.4;margin-top:2mm">National infrastructure<br>AI datacentres<br>Smart cities</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 12 · STANDARD HARDWARE ============================ -->
+<section class="page" id="p11" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Standard Hardware Included</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">11 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">Delivered as a complete appliance.</h2>
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:11.5pt;line-height:1.55;color:#555;max-width:150mm">Every eAIgleye Edge Device ships as a deployment-ready system — chassis, storage, power, and thermal design integrated as one product.</p>
+
+  <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A,rgba(255,140,26,0));width:60mm"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8mm;margin-top:2mm">
+    <!-- 1: Enclosure -->
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB);box-shadow:0 4px 16px rgba(17,17,17,0.04)">
+      <div style="display:flex;align-items:center;gap:4mm;margin-bottom:4mm">
+        <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7D00CC,#A100FF);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:11pt">01</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:13pt">Premium CNC Aluminum Enclosure</h4>
+      </div>
+      <ul style="margin:0;padding:0;list-style:none;font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#444">
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Precision CNC-machined chassis</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Industrial-grade construction</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Passive or active thermal cooling</li>
+        <li style="padding:1.5mm 0">Airflow optimised for 24×7 operation</li>
+      </ul>
+    </div>
+
+    <!-- 2: Storage -->
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB);box-shadow:0 4px 16px rgba(17,17,17,0.04)">
+      <div style="display:flex;align-items:center;gap:4mm;margin-bottom:4mm">
+        <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#A100FF,#FF8C1A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:11pt">02</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:13pt">High-Speed Storage</h4>
+      </div>
+      <ul style="margin:0;padding:0;list-style:none;font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#444">
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">1 TB NVMe SSD (pre-installed)</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">High-performance local model storage</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Incident database on-device</li>
+        <li style="padding:1.5mm 0">Video metadata &amp; logs</li>
+      </ul>
+    </div>
+
+    <!-- 3: Power -->
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB);box-shadow:0 4px 16px rgba(17,17,17,0.04)">
+      <div style="display:flex;align-items:center;gap:4mm;margin-bottom:4mm">
+        <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#FF8C1A,#FFA93A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:11pt">03</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:13pt">Industrial Power Supply</h4>
+      </div>
+      <ul style="margin:0;padding:0;list-style:none;font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#444">
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">90W industrial power adapter</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Universal AC input (100–240V)</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Regional power cord included</li>
+        <li style="padding:1.5mm 0">Continuous operation on site power (no UPS)</li>
+      </ul>
+    </div>
+
+    <!-- 4: Dust-resistant -->
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB);box-shadow:0 4px 16px rgba(17,17,17,0.04)">
+      <div style="display:flex;align-items:center;gap:4mm;margin-bottom:4mm">
+        <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7D00CC,#FF8C1A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk',monospace;font-weight:600;font-size:11pt">04</div>
+        <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:13pt">Dust-Resistant Design</h4>
+      </div>
+      <ul style="margin:0;padding:0;list-style:none;font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#444">
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Integrated dust-resistant ventilation</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Filtered airflow system</li>
+        <li style="padding:1.5mm 0;border-bottom:1px dashed rgba(17,17,17,0.08)">Low-maintenance thermal management</li>
+        <li style="padding:1.5mm 0">Long-term commercial deployment</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 13 · RECOMMENDED CONFIG ============================ -->
+<section class="page" id="p12" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm;position:relative;overflow:hidden">
+  <div style="position:absolute;bottom:-40mm;left:-40mm;width:160mm;height:160mm;border-radius:50%;background:radial-gradient(circle,rgba(255,140,26,0.08),rgba(255,255,255,0) 65%);pointer-events:none"></div>
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;position:relative">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Recommended Configuration</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">12 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">The premium hardware envelope — <span style="color:#6B6B6B">one line item.</span></h2>
+
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:11.5pt;line-height:1.55;color:#555;max-width:150mm">The following premium components are recommended as a single bundled configuration for every eAIgleye Edge Device. Included as standard on every appliance in the portfolio.</p>
+
+  <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:10mm;margin-top:4mm;position:relative">
+    <!-- List -->
+    <div style="border:1px solid rgba(17,17,17,0.08);border-radius:14px;overflow:hidden">
+      <div style="padding:5mm 8mm;background:#F8F8F8;font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;color:#6B6B6B">Included Components</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05)">
+        <div>
+          <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11.5pt">Premium CNC Aluminum Enclosure</div>
+          <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#6B6B6B;margin-top:1mm">Passive / active cooling per model</div>
+        </div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#7D00CC">01</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05)">
+        <div>
+          <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11.5pt">1 TB NVMe SSD</div>
+          <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#6B6B6B;margin-top:1mm">Pre-installed, factory-imaged</div>
+        </div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF">02</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05)">
+        <div>
+          <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11.5pt">90W Industrial Power Adapter</div>
+          <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#6B6B6B;margin-top:1mm">Universal AC · regional cord</div>
+        </div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#FF8C1A">03</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6mm 8mm;border-top:1px solid rgba(17,17,17,0.05)">
+        <div>
+          <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11.5pt">Dust-Resistant Airflow System</div>
+          <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#6B6B6B;margin-top:1mm">Filtered, low-maintenance</div>
+        </div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#FFA93A">04</div>
+      </div>
+    </div>
+
+    <!-- Cost card -->
+    <div style="padding:10mm;background:linear-gradient(135deg,#111,#2A1040);color:#fff;border-radius:16px;box-shadow:0 12px 32px rgba(125,0,204,0.2);display:flex;flex-direction:column;justify-content:space-between">
+      <div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FFA93A;letter-spacing:0.24em;text-transform:uppercase">Bundled Cost</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#B8B8C8;margin-top:2mm">Recommended additional hardware, per appliance.</div>
+      </div>
+      <div style="margin-top:8mm">
+        <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#B8B8C8">Approximately</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:44pt;line-height:1;margin-top:2mm;background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">$340<span style="font-size:14pt;color:#fff;-webkit-text-fill-color:#fff;margin-left:2mm">AU$</span></div>
+        <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#B8B8C8;margin-top:3mm;line-height:1.5">Per eAIgleye appliance,<br>included as standard.</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="font-family:'Inter',sans-serif;font-size:9pt;line-height:1.5;color:#8A8A8A;max-width:150mm;margin-top:2mm">Pricing indicative in Australian Dollars (AUD), subject to region and volume. UPS not included — appliances are designed for continuous operation on client's existing power infrastructure.</p>
+</section>
+
+<!-- ============================ PAGE 14 · TECH SPECS ============================ -->
+<section class="page" id="p13" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Technical Specifications</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">13 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:26pt;line-height:1.05;letter-spacing:-0.02em">Engineering, at a glance.</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6mm;font-family:'Space Grotesk',monospace">
+    <!-- generic spec categories -->
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Compute</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">13 → 1,000 TOPS across the portfolio, matched to camera count and workload.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Memory</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">8–64 GB unified LPDDR5. Zero-copy pipelines between CPU and AI accelerator.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Storage</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">1 TB NVMe standard. Optional 2 TB / 4 TB expansion for long retention windows.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Power</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">15W idle to 90W peak. Universal 100–240V industrial adapter, regional cord included.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Camera Capacity</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">4 to unlimited streams. RTSP, ONVIF, and reAInmaker native protocol supported.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Operating Temp</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">0°C to 45°C ambient. Extended range models available on request.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Cooling</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">Passive on Lite. Active with dust filter on Pro/Enterprise/Ultra.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Networking</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">Gigabit / 2.5 GbE, Wi-Fi 6, optional 10 GbE and 4G/5G LTE modules.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Deployment</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">Desk, wall, VESA and 1U rack mount. Pre-configured, plug-and-run.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Warranty</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">3-year standard hardware warranty. Extended plans available.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Support</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">24×7 technical, remote diagnostics, OTA firmware and AI model updates.</div>
+    </div>
+    <div style="padding:6mm 7mm;background:#FAFAFB;border-radius:10px;border:1px solid rgba(17,17,17,0.05)">
+      <div style="font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Expandable</div>
+      <div style="font-family:'Inter',sans-serif;font-size:9.5pt;color:#555;margin-top:2mm;line-height:1.5">Storage, network, and compute modules field-upgradable on Enterprise and Ultra.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 15 · COMPARISON ============================ -->
+<section class="page" id="p14" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Portfolio Comparison</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">14 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:26pt;line-height:1.05;letter-spacing:-0.02em">Side by side.</h2>
+
+  <div style="border:1px solid rgba(17,17,17,0.08);border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(17,17,17,0.04);font-family:'Space Grotesk',monospace;font-size:9pt">
+    <!-- header row -->
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;background:#F8F8F8;padding:5mm 6mm;font-size:8pt;color:#6B6B6B;letter-spacing:0.14em;text-transform:uppercase">
+      <div>Spec</div>
+      <div style="text-align:center">Lite</div>
+      <div style="text-align:center">Pro</div>
+      <div style="text-align:center;color:#7D00CC">Enterprise ★</div>
+      <div style="text-align:center">Ultra</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">TOPS</div><div style="text-align:center">13</div><div style="text-align:center">100</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;color:#7D00CC;font-weight:600">275</div><div style="text-align:center">1,000</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">RAM</div><div style="text-align:center">8 GB</div><div style="text-align:center">16 GB</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;color:#111;font-weight:600">32 GB</div><div style="text-align:center">64 GB</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Storage</div><div style="text-align:center">1 TB</div><div style="text-align:center">1 TB</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">1 TB+</div><div style="text-align:center">2 TB+</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Cameras</div><div style="text-align:center">4</div><div style="text-align:center">16</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">32</div><div style="text-align:center">∞</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Cooling</div><div style="text-align:center">Passive</div><div style="text-align:center">Active</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">Active</div><div style="text-align:center">Active+</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Power</div><div style="text-align:center">30W</div><div style="text-align:center">90W</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">120W</div><div style="text-align:center">240W</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Networking</div><div style="text-align:center">1 GbE</div><div style="text-align:center">2.5 GbE</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">10 GbE</div><div style="text-align:center">10 GbE ×2</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B;font-weight:600">Price (AUD)</div><div style="text-align:center">$1,086 AU$</div><div style="text-align:center">$1,863 AU$</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;color:#7D00CC;font-weight:700">$2,552 AU$</div><div style="text-align:center">$7,696 AU$</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center">
+      <div style="color:#6B6B6B">Deployment</div><div style="text-align:center">Desk</div><div style="text-align:center">Rack/Wall</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">1U Rack</div><div style="text-align:center">Rack</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr 1fr;padding:4mm 6mm;border-top:1px solid rgba(17,17,17,0.05);align-items:center;font-family:'Inter',sans-serif;font-size:8.5pt">
+      <div style="color:#6B6B6B;font-family:'Space Grotesk',monospace">Best Use</div><div style="text-align:center">Pilots</div><div style="text-align:center">Most sites</div><div style="text-align:center;background:linear-gradient(90deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-radius:6px;padding:2mm;font-weight:600">Campus</div><div style="text-align:center">National</div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:3mm;margin-top:2mm">
+    <div style="width:14px;height:14px;background:linear-gradient(90deg,rgba(125,0,204,0.4),rgba(255,140,26,0.4));border-radius:4px"></div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.14em;text-transform:uppercase">Edge Enterprise · Most Popular</div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 16 · AI PIPELINE ============================ -->
+<section class="page" id="p15" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">The AI Pipeline</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">15 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">From lens to notification, <span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">in under a second.</span></h2>
+
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:6mm;margin-top:4mm">
+    <!-- pipeline steps as horizontal cards with connector -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4mm;position:relative">
+      <div style="padding:6mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.06);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase">01 · Capture</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">Camera</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#555;margin-top:2mm;line-height:1.5">RTSP / ONVIF streams into the appliance.</div>
+      </div>
+      <div style="padding:6mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.06);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.16em;text-transform:uppercase">02 · Ingress</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">Edge Device</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#555;margin-top:2mm;line-height:1.5">Decode &amp; buffer on the appliance.</div>
+      </div>
+      <div style="padding:6mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.06);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FF8C1A;letter-spacing:0.16em;text-transform:uppercase">03 · Inference</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">AI Detection</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#555;margin-top:2mm;line-height:1.5">Object, action, and identity models.</div>
+      </div>
+      <div style="padding:6mm;background:#FAFAFB;border:1px solid rgba(17,17,17,0.06);border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FFA93A;letter-spacing:0.16em;text-transform:uppercase">04 · Decide</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">Incident Engine</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;color:#555;margin-top:2mm;line-height:1.5">Policy → severity → routing.</div>
+      </div>
+    </div>
+
+    <!-- connector arrow -->
+    <div style="height:1px;background:linear-gradient(90deg,rgba(125,0,204,0.5),rgba(255,140,26,0.5));margin:2mm 30mm"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4mm">
+      <div style="padding:6mm;background:linear-gradient(135deg,#7D00CC,#A100FF);color:#fff;border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;opacity:0.85">05 · Persist</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">CRM</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;margin-top:2mm;line-height:1.5;opacity:0.9">On-device records &amp; audit trail.</div>
+      </div>
+      <div style="padding:6mm;background:linear-gradient(135deg,#A100FF,#FF8C1A);color:#fff;border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;opacity:0.85">06 · Notify</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">Mobile App</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;margin-top:2mm;line-height:1.5;opacity:0.9">Push alerts to responders instantly.</div>
+      </div>
+      <div style="padding:6mm;background:linear-gradient(135deg,#FF8C1A,#FFA93A);color:#fff;border-radius:12px">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.16em;text-transform:uppercase;opacity:0.85">07 · Report</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:3mm">Reports</div>
+        <div style="font-family:'Inter',sans-serif;font-size:9pt;margin-top:2mm;line-height:1.5;opacity:0.9">Dashboards, exports, compliance.</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="font-family:'Inter',sans-serif;font-size:9pt;color:#8A8A8A;line-height:1.5;max-width:150mm">Every stage runs on the appliance itself. The cloud never sees raw video.</p>
+</section>
+
+<!-- ============================ PAGE 17 · INTERNAL ARCHITECTURE ============================ -->
+<section class="page" id="p16" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm;position:relative">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Internal Architecture</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">16 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:26pt;line-height:1.05;letter-spacing:-0.02em">Inside every appliance.</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10mm;flex:1">
+    <!-- Left: exploded illustration slot -->
+    <div style="position:relative;background:linear-gradient(180deg,#FAFAFB,#FFFFFF);border-radius:16px;border:1px solid rgba(17,17,17,0.06);overflow:hidden;min-height:0;flex:1">
+      <div style="position:absolute;inset:0;padding:8mm">
+        <image-slot id="arch_exploded" src="./inside.png" shape="rounded" radius="12" fit="contain" placeholder="Exploded architecture illustration — modules, chassis, cooling" style="width:100%;height:100%"></image-slot>
+      </div>
+    </div>
+
+    <!-- Right: labelled components -->
+    <div style="display:flex;flex-direction:column;gap:3mm;font-family:'Space Grotesk',monospace;font-size:10pt">
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#7D00CC;width:10mm">01</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">CPU</span>
+        <span style="color:#6B6B6B;font-size:9pt">Arm 64-bit multi-core</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#A100FF;width:10mm">02</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">GPU</span>
+        <span style="color:#6B6B6B;font-size:9pt">NVIDIA Ampere / Blackwell</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#FF8C1A;width:10mm">03</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">AI Accelerator</span>
+        <span style="color:#6B6B6B;font-size:9pt">Tensor cores · DLA engines</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#FFA93A;width:10mm">04</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">RAM</span>
+        <span style="color:#6B6B6B;font-size:9pt">LPDDR5 unified memory</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#7D00CC;width:10mm">05</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">NVMe SSD</span>
+        <span style="color:#6B6B6B;font-size:9pt">1 TB, PCIe Gen4</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#A100FF;width:10mm">06</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">Cooling System</span>
+        <span style="color:#6B6B6B;font-size:9pt">Passive fin + filtered fan</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#FF8C1A;width:10mm">07</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">Power Module</span>
+        <span style="color:#6B6B6B;font-size:9pt">90W industrial adapter</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0;border-bottom:1px solid rgba(17,17,17,0.06)">
+        <span style="color:#FFA93A;width:10mm">08</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">Networking</span>
+        <span style="color:#6B6B6B;font-size:9pt">GbE · Wi-Fi 6 · optional LTE</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:5mm;padding:3mm 0">
+        <span style="color:#7D00CC;width:10mm">09</span>
+        <span style="flex:1;font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt">Aluminum Chassis</span>
+        <span style="color:#6B6B6B;font-size:9pt">CNC-machined, EMI-shielded</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 18 · WHY CLIENTS CHOOSE ============================ -->
+<section class="page" id="p17" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Why Clients Choose eAIgleye</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">17 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">The metrics that matter.</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6mm;flex:1;margin-top:4mm">
+    <div style="padding:9mm;background:linear-gradient(135deg,#7D00CC,#A100FF);color:#fff;border-radius:14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 8px 24px rgba(125,0,204,0.18)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.2em;text-transform:uppercase;opacity:0.85">Response Time</div>
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:38pt;line-height:1">&lt;1s</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10pt;margin-top:2mm;opacity:0.9">Sub-second AI on every frame</div>
+      </div>
+    </div>
+    <div style="padding:9mm;background:#FAFAFB;color:#111;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between">
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.2em;text-transform:uppercase;color:#7D00CC">Locality</div>
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:38pt;line-height:1;background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">99.9%</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10pt;margin-top:2mm;color:#555">Processing that stays on-premise</div>
+      </div>
+    </div>
+    <div style="padding:9mm;background:#FAFAFB;color:#111;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between">
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.2em;text-transform:uppercase;color:#FF8C1A">Security</div>
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:34pt;line-height:1">AES-256</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10pt;margin-top:2mm;color:#555">Encrypted storage at rest &amp; in motion</div>
+      </div>
+    </div>
+    <div style="padding:9mm;background:linear-gradient(135deg,#FF8C1A,#FFA93A);color:#fff;border-radius:14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 8px 24px rgba(255,140,26,0.18)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;letter-spacing:0.2em;text-transform:uppercase;opacity:0.85">Continuity</div>
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:34pt;line-height:1">Offline-ready</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10pt;margin-top:2mm;opacity:0.9">Full operation without connectivity</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- secondary strip -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4mm;margin-top:2mm">
+    <div style="padding:5mm;border:1px solid rgba(17,17,17,0.08);border-radius:10px">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#7D00CC;letter-spacing:0.16em;text-transform:uppercase">Retrieval</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">Instant incident<br>retrieval</div>
+    </div>
+    <div style="padding:5mm;border:1px solid rgba(17,17,17,0.08);border-radius:10px">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#A100FF;letter-spacing:0.16em;text-transform:uppercase">Identity</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">UID Engine<br>on-device</div>
+    </div>
+    <div style="padding:5mm;border:1px solid rgba(17,17,17,0.08);border-radius:10px">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FF8C1A;letter-spacing:0.16em;text-transform:uppercase">Compliance</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">Audit-ready<br>by default</div>
+    </div>
+    <div style="padding:5mm;border:1px solid rgba(17,17,17,0.08);border-radius:10px">
+      <div style="font-family:'Space Grotesk',monospace;font-size:7.5pt;color:#FFA93A;letter-spacing:0.16em;text-transform:uppercase">Intelligence</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:11pt;margin-top:2mm">Edge learning<br>on-device</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 19 · INDUSTRIES ============================ -->
+<section class="page" id="p18" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Industries</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">18 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">Deployed where safety is measurable.</h2>
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:11.5pt;line-height:1.55;color:#555;max-width:150mm">The same appliance family serves environments with very different demands — from a fifty-child nursery to a hundred-hectare industrial site.</p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6mm;margin-top:4mm;flex:1">
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#7D00CC" stroke-width="1.5"><path d="M4 20V10l8-6 8 6v10"/><path d="M9 20v-6h6v6"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Daycare</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#A100FF" stroke-width="1.5"><path d="M3 9l9-5 9 5-9 5-9-5z"/><path d="M6 11v6c0 1 3 3 6 3s6-2 6-3v-6"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Schools</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FF8C1A" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 9v6M9 12h6"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Hospitals</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FFA93A" stroke-width="1.5"><rect x="3" y="7" width="18" height="12"/><path d="M3 11h18M8 7V4h8v3"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Warehouses</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#7D00CC" stroke-width="1.5"><path d="M3 20V9l6 4V9l6 4V4l6 4v12"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Factories</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#A100FF" stroke-width="1.5"><path d="M3 20l4-12h4l4 12M11 8l3-4h3l3 4M6 20h14"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Construction</div>
+    </div>
+    <div style="padding:8mm 6mm;background:#FAFAFB;border-radius:14px;border:1px solid rgba(17,17,17,0.05);display:flex;flex-direction:column;justify-content:space-between;min-height:50mm">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FF8C1A" stroke-width="1.5"><path d="M4 20V8l8-4 8 4v12"/><path d="M8 20v-4h8v4M8 12h8"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Government</div>
+    </div>
+    <div style="padding:8mm 6mm;background:linear-gradient(135deg,#7D00CC,#FF8C1A);color:#fff;border-radius:14px;display:flex;flex-direction:column;justify-content:space-between;min-height:50mm;box-shadow:0 8px 24px rgba(125,0,204,0.15)">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:4mm">Smart Cities</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 20 · DEPLOYMENT ============================ -->
+<section class="page" id="p19" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Deployment Workflow</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">19 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">Consultation to go-live, <span style="color:#6B6B6B">on one timeline.</span></h2>
+
+  <div style="flex:1;display:flex;flex-direction:column;gap:3mm;margin-top:4mm">
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#7D00CC;font-weight:500">01</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Consultation</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">Discovery call. Understanding site, cameras, incident types, compliance envelope.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#A100FF;font-weight:500">02</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Site Survey</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">On-site or remote audit — camera positions, network topology, power planning.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#FF8C1A;font-weight:500">03</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Installation</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">Rack, wall, or desk mount. Cameras linked, power connected, boot to platform.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#FFA93A;font-weight:500">04</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">AI Configuration</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">Models selected per use case. Detection zones, alert routing, user roles.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#7D00CC;font-weight:500">05</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Environment Training</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">Models tuned to site-specific lighting, angles, and behaviour patterns.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.08)">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;color:#A100FF;font-weight:500">06</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt">Testing</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">End-to-end verification against your acceptance criteria and incident library.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:14mm 40mm 1fr;gap:4mm;align-items:center;padding:5mm 0">
+      <div style="font-family:'Space Grotesk',monospace;font-size:14pt;font-weight:600;background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">07</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:12pt">Go Live</div>
+      <div style="font-family:'Inter',sans-serif;font-size:10pt;color:#555;line-height:1.5">Handover to operations. 24×7 support and continuous OTA model improvements.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 21 · SUPPORT ============================ -->
+<section class="page" id="p20" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:8mm">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Enterprise Support</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">20 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:28pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">A service commitment behind every appliance.</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6mm;flex:1;margin-top:4mm">
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#7D00CC;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Always-on</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">24×7 Technical Support</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">Reach a real engineer at any hour, in any timezone. Escalations tracked to resolution.</p>
+    </div>
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#A100FF;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Zero-touch</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">Remote Diagnostics</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">Health telemetry, log capture, and issue reproduction — without a site visit.</p>
+    </div>
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#FF8C1A;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Continuous</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">OTA Software Updates</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">Signed firmware and platform updates delivered over the air, without downtime.</p>
+    </div>
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#FFA93A;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Improving</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">AI Model Updates</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">New detection classes and accuracy improvements pushed to every appliance.</p>
+    </div>
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#7D00CC;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Named</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">Dedicated Engineer</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">Enterprise accounts get a named technical contact who knows your deployment.</p>
+    </div>
+    <div style="padding:8mm;border:1px solid rgba(17,17,17,0.08);border-radius:14px;background:linear-gradient(180deg,#FFFFFF,#FAFAFB)">
+      <div style="display:flex;align-items:center;gap:3mm;margin-bottom:4mm">
+        <div style="width:8px;height:8px;background:#A100FF;border-radius:50%"></div>
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Annual</div>
+      </div>
+      <h4 style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:14pt;margin-bottom:2mm">Maintenance Programs</h4>
+      <p style="font-family:'Inter',sans-serif;font-size:10pt;line-height:1.55;color:#555">On-site health checks, filter replacements, and hardware refresh planning.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 22 · CONTACT / QR ============================ -->
+<section class="page" id="p21" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:10mm;position:relative;overflow:hidden">
+  <div style="position:absolute;top:-40mm;right:-40mm;width:160mm;height:160mm;border-radius:50%;background:radial-gradient(circle,rgba(125,0,204,0.08),rgba(255,255,255,0) 65%);pointer-events:none"></div>
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;position:relative">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">Contact &amp; Demo</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">21 / 23</div>
+  </div>
+
+  <h2 style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:32pt;line-height:1.05;letter-spacing:-0.02em;max-width:150mm">See it running on your site.</h2>
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:12pt;line-height:1.55;color:#555;max-width:150mm">Book a live demonstration with the reAInmaker AI team. Bring your camera streams — we will show inference happening on the appliance in real time.</p>
+
+  <div style="display:grid;grid-template-columns:1fr 60mm;gap:14mm;align-items:center;flex:1">
+    <!-- contact list -->
+    <div style="display:flex;flex-direction:column;gap:6mm">
+      <div style="padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.1)">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Website</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:16pt;margin-top:2mm">reainmaker.ai</div>
+      </div>
+      <div style="padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.1)">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Email</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:2mm;line-height:1.6">info@reainmaker.ai · ak@reainmaker.ai · am@reainmaker.ai</div>
+      </div>
+      <div style="padding:5mm 0;border-bottom:1px solid rgba(17,17,17,0.1)">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Phone</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:16pt;margin-top:2mm">+60 17-240 3080</div>
+      </div>
+      <div style="padding:5mm 0">
+        <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FFA93A;letter-spacing:0.2em;text-transform:uppercase">Schedule</div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:16pt;margin-top:2mm">reainmaker.ai/demo</div>
+      </div>
+    </div>
+
+    <!-- QR code -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:4mm">
+      <div style="width:60mm;height:60mm;background:#fff;border:1px solid rgba(17,17,17,0.1);border-radius:14px;padding:6mm;box-shadow:0 8px 24px rgba(17,17,17,0.06);display:flex;align-items:center;justify-content:center">
+        <svg viewBox="0 0 29 29" width="100%" height="100%" shape-rendering="crispEdges" style="display:block">
+          <rect width="29" height="29" fill="#fff"/>
+          <g fill="#111">
+            <!-- finder patterns -->
+            <rect x="0" y="0" width="7" height="7"/><rect x="1" y="1" width="5" height="5" fill="#fff"/><rect x="2" y="2" width="3" height="3"/>
+            <rect x="22" y="0" width="7" height="7"/><rect x="23" y="1" width="5" height="5" fill="#fff"/><rect x="24" y="2" width="3" height="3"/>
+            <rect x="0" y="22" width="7" height="7"/><rect x="1" y="23" width="5" height="5" fill="#fff"/><rect x="2" y="24" width="3" height="3"/>
+            <!-- alignment -->
+            <rect x="20" y="20" width="5" height="5"/><rect x="21" y="21" width="3" height="3" fill="#fff"/><rect x="22" y="22" width="1" height="1"/>
+            <!-- timing -->
+            <rect x="8" y="6" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="12" y="6" width="1" height="1"/><rect x="14" y="6" width="1" height="1"/><rect x="16" y="6" width="1" height="1"/><rect x="18" y="6" width="1" height="1"/><rect x="20" y="6" width="1" height="1"/>
+            <rect x="6" y="8" width="1" height="1"/><rect x="6" y="10" width="1" height="1"/><rect x="6" y="12" width="1" height="1"/><rect x="6" y="14" width="1" height="1"/><rect x="6" y="16" width="1" height="1"/><rect x="6" y="18" width="1" height="1"/><rect x="6" y="20" width="1" height="1"/>
+            <!-- data-ish scatter -->
+            <rect x="8" y="8" width="1" height="1"/><rect x="9" y="9" width="1" height="1"/><rect x="10" y="8" width="1" height="1"/><rect x="12" y="9" width="2" height="1"/><rect x="15" y="8" width="1" height="2"/><rect x="17" y="8" width="1" height="1"/><rect x="19" y="9" width="1" height="2"/>
+            <rect x="8" y="10" width="2" height="1"/><rect x="11" y="11" width="1" height="1"/><rect x="13" y="10" width="1" height="2"/><rect x="15" y="11" width="2" height="1"/><rect x="18" y="10" width="1" height="1"/><rect x="20" y="11" width="1" height="1"/>
+            <rect x="9" y="12" width="1" height="2"/><rect x="11" y="13" width="1" height="1"/><rect x="12" y="14" width="1" height="1"/><rect x="14" y="12" width="1" height="1"/><rect x="16" y="13" width="1" height="2"/><rect x="18" y="12" width="1" height="1"/><rect x="20" y="13" width="1" height="2"/>
+            <rect x="8" y="14" width="1" height="1"/><rect x="10" y="14" width="1" height="2"/><rect x="13" y="15" width="2" height="1"/><rect x="15" y="16" width="1" height="1"/><rect x="17" y="14" width="1" height="1"/><rect x="19" y="15" width="1" height="1"/>
+            <rect x="9" y="16" width="1" height="1"/><rect x="11" y="17" width="2" height="1"/><rect x="14" y="17" width="1" height="2"/><rect x="16" y="18" width="1" height="1"/><rect x="18" y="17" width="1" height="1"/><rect x="20" y="17" width="1" height="1"/>
+            <rect x="8" y="18" width="1" height="2"/><rect x="10" y="19" width="1" height="1"/><rect x="12" y="20" width="1" height="1"/><rect x="15" y="20" width="1" height="1"/><rect x="17" y="19" width="1" height="2"/><rect x="19" y="20" width="1" height="1"/>
+            <rect x="9" y="21" width="2" height="1"/><rect x="12" y="22" width="1" height="1"/><rect x="14" y="22" width="1" height="1"/><rect x="16" y="22" width="1" height="1"/>
+            <rect x="8" y="23" width="1" height="1"/><rect x="10" y="24" width="1" height="1"/><rect x="12" y="24" width="1" height="1"/><rect x="14" y="24" width="1" height="1"/><rect x="16" y="24" width="1" height="1"/><rect x="18" y="24" width="1" height="1"/>
+            <rect x="9" y="26" width="1" height="1"/><rect x="11" y="26" width="2" height="1"/><rect x="14" y="26" width="1" height="1"/><rect x="16" y="26" width="1" height="1"/><rect x="18" y="26" width="1" height="1"/>
+            <rect x="8" y="27" width="1" height="1"/><rect x="11" y="28" width="1" height="1"/><rect x="13" y="27" width="1" height="1"/><rect x="15" y="28" width="1" height="1"/><rect x="17" y="28" width="1" height="1"/>
+          </g>
+        </svg>
+      </div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em;text-transform:uppercase;text-align:center">Scan to schedule<br>a live demo</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 23 · REAINMAKER AI ============================ -->
+<section class="page" id="p22" style="padding:22mm 20mm;background:#FFFFFF;color:#111;font-family:'Inter',sans-serif;display:flex;flex-direction:column;gap:10mm;position:relative;overflow:hidden">
+  <div style="position:absolute;top:0;left:0;width:100%;height:30mm;background:linear-gradient(180deg,rgba(125,0,204,0.05),rgba(255,255,255,0));pointer-events:none"></div>
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;position:relative">
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">reAInmaker AI</div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#6B6B6B;letter-spacing:0.16em">22 / 23</div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:6mm;margin-top:4mm">
+    <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(from 220deg,#7D00CC,#A100FF,#FF8C1A,#FFA93A,#7D00CC);box-shadow:0 6px 22px rgba(125,0,204,0.25)"></div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.24em;text-transform:uppercase">The company behind</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:28pt;line-height:1;margin-top:2mm">e<span style="background:linear-gradient(120deg,#7D00CC,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">AI</span>gleye</div>
+    </div>
+  </div>
+
+  <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:14pt;line-height:1.55;color:#333;max-width:150mm;text-wrap:pretty">reAInmaker AI builds edge-first intelligence systems for the environments where safety and privacy are non-negotiable. Our platform runs entirely on-premise — from the models to the storage to the mobile experience — so decisions are fast, data stays local, and operators stay in control.</p>
+
+  <div style="height:1px;background:linear-gradient(90deg,#7D00CC,#FF8C1A,rgba(255,140,26,0));width:80mm"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6mm;margin-top:4mm">
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase">Focus</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:2mm">Edge AI &amp; safety intelligence</div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#A100FF;letter-spacing:0.2em;text-transform:uppercase">Reach</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:2mm">Multi-country deployments</div>
+    </div>
+    <div>
+      <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#FF8C1A;letter-spacing:0.2em;text-transform:uppercase">Model</div>
+      <div style="font-family:'Montserrat',sans-serif;font-weight:600;font-size:12pt;margin-top:2mm">Appliance + platform</div>
+    </div>
+  </div>
+
+  <div style="flex:1"></div>
+
+  <blockquote style="margin:0;padding:8mm;background:linear-gradient(135deg,rgba(125,0,204,0.06),rgba(255,140,26,0.06));border-left:3px solid #A100FF;border-radius:0 12px 12px 0">
+    <p style="font-family:'Montserrat',sans-serif;font-weight:500;font-size:15pt;line-height:1.35;color:#111;max-width:140mm">"Real safety is measured in milliseconds, and it happens where the incident happens — not in a server on another continent."</p>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8.5pt;color:#7D00CC;letter-spacing:0.2em;text-transform:uppercase;margin-top:4mm">reAInmaker AI · Design principle</div>
+  </blockquote>
+</section>
+
+<!-- ============================ PAGE 24 · BACK COVER ============================ -->
+<section class="page" id="p23" style="padding:0;background:#0B0B12;color:#fff;font-family:'Inter',sans-serif;position:relative;display:flex;flex-direction:column;overflow:hidden">
+  <div style="position:absolute;top:-100mm;left:-80mm;width:260mm;height:260mm;border-radius:50%;background:radial-gradient(circle,rgba(125,0,204,0.28),rgba(11,11,18,0) 65%);pointer-events:none"></div>
+  <div style="position:absolute;bottom:-120mm;right:-100mm;width:280mm;height:280mm;border-radius:50%;background:radial-gradient(circle,rgba(255,140,26,0.2),rgba(11,11,18,0) 65%);pointer-events:none"></div>
+
+  <div style="padding:24mm 20mm 0 20mm;display:flex;align-items:center;gap:8px;position:relative;z-index:2">
+    <div style="width:26px;height:26px;border-radius:50%;background:conic-gradient(from 220deg,#7D00CC,#A100FF,#FF8C1A,#FFA93A,#7D00CC);box-shadow:0 4px 16px rgba(125,0,204,0.35)"></div>
+    <div style="font-family:'Montserrat',sans-serif;font-weight:800;letter-spacing:0.02em;font-size:16pt">e<span style="background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">AI</span>gleye</div>
+  </div>
+
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 20mm;position:relative;z-index:2">
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#A100FF;letter-spacing:0.28em;text-transform:uppercase;margin-bottom:8mm">Tagline</div>
+    <h1 style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:52pt;line-height:1;letter-spacing:-0.03em;color:#fff">
+      See more.<br>
+      Know more.<br>
+      <span style="background:linear-gradient(120deg,#A100FF,#FF8C1A);-webkit-background-clip:text;background-clip:text;color:transparent">Protect more.</span>
+    </h1>
+    <div style="height:1px;background:linear-gradient(90deg,#A100FF,#FF8C1A,rgba(255,140,26,0));width:80mm;margin-top:14mm"></div>
+    <p style="font-family:'Inter',sans-serif;font-weight:300;font-size:14pt;line-height:1.5;color:#C8C8D6;margin-top:8mm;max-width:120mm">Enterprise AI appliances, built at the edge. By reAInmaker AI.</p>
+  </div>
+
+  <div style="padding:0 20mm 22mm 20mm;position:relative;z-index:2;display:flex;justify-content:space-between;align-items:end;gap:10mm">
+    <div style="font-family:'Space Grotesk',monospace;font-size:9pt;color:#B8B8C8;letter-spacing:0.14em;line-height:1.8">
+      <div>reainmaker.ai</div>
+      <div>info@reainmaker.ai</div>
+    </div>
+    <div style="font-family:'Space Grotesk',monospace;font-size:8pt;color:#8A8A9A;letter-spacing:0.16em;text-transform:uppercase;text-align:right;line-height:1.6">
+      reAInmaker AI · 2026<br>
+      eAIgleye Portfolio · Vol. 01<br>
+      © All rights reserved
+    </div>
+  </div>
+</section>
+
+</doc-page>
+</x-dc>
+</body>
+</html>

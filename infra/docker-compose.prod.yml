@@ -212,6 +212,8 @@ services:
       POSTGRES_API_PASSWORD: ${POSTGRES_API_PASSWORD}
       POSTGRES_PLATFORM_API_USER: ${POSTGRES_PLATFORM_API_USER:-csense_platform_api}
       POSTGRES_PLATFORM_API_PASSWORD: ${POSTGRES_PLATFORM_API_PASSWORD}
+      POSTGRES_DEMO_API_USER: ${POSTGRES_DEMO_API_USER:-csense_demo_api}
+      POSTGRES_DEMO_API_PASSWORD: ${POSTGRES_DEMO_API_PASSWORD}
     secrets: *backend-secrets
     depends_on:
       postgres:
@@ -378,6 +380,12 @@ services:
       DATABASE_SAVE_MESSAGES: "false"
       CONNECT_ON_STARTUP: "true"
       LOGTYPE: console
+      # Left unset by default (README.md's own "Licence auto-activation" section) so this
+      # service does not phone home to evolutionapi.com from an on-prem/air-gapped
+      # deployment. Every instance-management endpoint (connect/qr/send) 503s with
+      # LICENSE_REQUIRED without it - set deliberately, per tenant deployment, not as a
+      # blanket default.
+      EVOLUTION_OPERATOR_EMAIL: ${EVOLUTION_OPERATOR_EMAIL:-}
     depends_on:
       postgres: { condition: service_healthy }
     volumes:
@@ -417,6 +425,53 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 128M }
+
+  # Public detection demo (demo.3rdi.in/api/v1/demo/*) for the marketing app and site.
+  # Deliberately NOT given `env_file`, `backend-env` or the secrets mount: this is the one
+  # unauthenticated service, so it holds no database, JWT or storage credentials - only
+  # Redis (for the per-IP limiter) and placeholders for the shared Settings fields it never
+  # uses. It reaches ai-runtime over the internal network; ai-runtime itself stays unrouted.
+  demo-api:
+    build:
+      context: ../backend
+      dockerfile: demo_api/Dockerfile
+    <<: *default-restart
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI_RUNTIME_BASE_URL: http://ai-runtime:8000
+      DEMO_CORS_ORIGINS: ${DEMO_CORS_ORIGINS:-https://demo.3rdi.in}
+      # A dedicated, tightly-scoped role - NOT csense_api. Migration 0066 grants it
+      # INSERT/SELECT on exactly one table (demo_login_audit); it has no business
+      # touching anything else in this database, unlike the tenant/platform API roles
+      # that share backend-env's POSTGRES_USER above.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-csense}
+      POSTGRES_USER: ${POSTGRES_DEMO_API_USER:-csense_demo_api}
+      POSTGRES_PASSWORD: ${POSTGRES_DEMO_API_PASSWORD}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_USE_TLS: ${MINIO_USE_TLS:-false}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-}
+      JWT_PRIVATE_KEY_PATH: /dev/null
+      JWT_PUBLIC_KEY_PATH: /dev/null
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ai-runtime: { condition: service_started }
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    networks: [csense]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
 
   demo-site:
     build:

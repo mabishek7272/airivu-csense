@@ -2,8 +2,8 @@
 # stays as the local-dev, plain-HTTP config; this file is not used by the default
 # `docker-compose.yml`, only by `docker-compose.prod.yml`).
 #
-# **Before first deploy, replace every `app.example.com` / `console.example.com` /
-# `demo.example.com` / `storage.example.com` / bare `example.com` placeholder below
+# **Before first deploy, replace every `app.3rdi.in` / `console.3rdi.in` /
+# `demo.3rdi.in` / `storage.3rdi.in` / bare `example.com` placeholder below
 # with your real domains** (a `sed` one-liner is in docs/10_PRODUCTION_DEPLOYMENT_GUIDE.md)
 # - Traefik's file provider does not do environment-variable substitution the way
 # docker-compose.yml itself does, so this file needs a real edit, not an env var, to
@@ -14,6 +14,31 @@
 # router) actually differ. Keep the two files in sync when you change routing.
 http:
   routers:
+    beaive-backend:
+      rule: "Host(`beaive.3rdi.in`) || Host(`api.3rdi.in`)"
+      service: beaive-backend
+      priority: 200
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers, beaive-cors]
+
+    apti-demo-hls-redirect:
+      # MediaMTX's HLS cookie-check redirect always drops the /media/hls prefix
+      # Traefik strips - this catches the browser's follow-up request at the bare
+      # path MediaMTX itself generated. Temporary, camera-specific; generalize later.
+      rule: "PathPrefix(`/cd89a9be-e254-4e44-a004-bea02fd6c2b3-hls`)"
+      service: media-hls
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      priority: 100
+      middlewares: [security-headers]
+    apti-demo-webrtc-redirect:
+      rule: "PathPrefix(`/cd89a9be-e254-4e44-a004-bea02fd6c2b3-webrtc`)"
+      service: media-webrtc
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      priority: 100
+      middlewares: [security-headers]
     tenant-api:
       rule: "PathPrefix(`/api/v1/tenant`) || PathPrefix(`/api/v1/auth`) || PathPrefix(`/ws/v1/tenant`) || PathPrefix(`/api/v1/public`)"
       service: tenant-api
@@ -43,7 +68,7 @@ http:
       middlewares: [security-headers, media-strip-webrtc]
 
     customer-crm:
-      rule: "Host(`app.example.com`)"
+      rule: "Host(`app.3rdi.in`)"
       service: customer-crm
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
@@ -56,22 +81,32 @@ http:
     # apex itself is meant to be reachable directly (as opposed to only app.*) - added
     # once a real DNS record for the bare domain existed, not speculatively.
     customer-crm-apex:
-      rule: "Host(`example.com`)"
+      rule: "Host(`3rdi.in`)"
       service: customer-crm
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
     developer-console:
-      rule: "Host(`console.example.com`)"
+      rule: "Host(`console.3rdi.in`)"
       service: developer-console
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
     demo-site:
-      rule: "Host(`demo.example.com`)"
+      rule: "Host(`demo.3rdi.in`)"
       service: demo-site
+      entryPoints: [websecure]
+      tls: { certResolver: letsencrypt }
+      middlewares: [security-headers]
+
+    # Detection demo API on the demo host; the longer rule and explicit priority make it
+    # win over demo-site for /api/v1/demo/* only.
+    demo-api:
+      rule: "(Host(`demo.3rdi.in`)) && PathPrefix(`/api/v1/demo`)"
+      service: demo-api
+      priority: 100
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
@@ -80,7 +115,7 @@ http:
     # infra/edge-site/nginx.conf's own comment for what it is and why it isn't a build
     # target of this repo.
     edge-site:
-      rule: "Host(`edge.example.com`)"
+      rule: "Host(`edge.3rdi.in`)"
       service: edge-site
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
@@ -97,13 +132,18 @@ http:
     # csense_shared/storage/objects.py's own module docstring) do the real access
     # control; this router is a TLS-terminating pass-through, not a second auth layer.
     storage:
-      rule: "Host(`storage.example.com`)"
+      rule: "Host(`storage.3rdi.in`)"
       service: minio-storage
       entryPoints: [websecure]
       tls: { certResolver: letsencrypt }
       middlewares: [security-headers]
 
   services:
+    beaive-backend:
+      loadBalancer:
+        servers:
+          - url: "http://beaive-backend:8000"
+
     tenant-api:
       loadBalancer:
         servers:
@@ -124,6 +164,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://demo-site:8080"
+    demo-api:
+      loadBalancer:
+        servers:
+          - url: "http://demo-api:8000"
     edge-site:
       loadBalancer:
         servers:
@@ -142,6 +186,15 @@ http:
           - url: "http://minio:9000"
 
   middlewares:
+    beaive-cors:
+      headers:
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
+        accessControlAllowOriginList:
+          - "*"
+        accessControlAllowCredentials: false
+        accessControlMaxAge: 600
+
     security-headers:
       headers:
         frameDeny: true
@@ -158,7 +211,7 @@ http:
         accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
         accessControlAllowOriginList:
-          - "https://app.example.com"
+          - "https://app.3rdi.in"
         accessControlAllowCredentials: true
         accessControlMaxAge: 600
 
@@ -167,7 +220,7 @@ http:
         accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
         accessControlAllowOriginList:
-          - "https://console.example.com"
+          - "https://console.3rdi.in"
         accessControlAllowCredentials: true
         accessControlMaxAge: 600
 

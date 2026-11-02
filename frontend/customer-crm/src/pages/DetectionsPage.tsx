@@ -93,7 +93,7 @@ function DetectionCard({ detection }: { detection: Detection }) {
           <ul className="boundary-list">
             {detection.objects.map((object, index) => (
               <li key={`${object.track_id ?? index}`}>
-                <span className="badge badge-neutral">{object.class_name}</span>
+                <span className="badge badge-neutral">{object.attributes?.name ?? object.class_name}</span>
                 <span>{(object.confidence * 100).toFixed(0)}%</span>
                 <span>
                   x {object.bbox.x1.toFixed(3)}–{object.bbox.x2.toFixed(3)} · y{" "}

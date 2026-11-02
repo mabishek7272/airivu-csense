@@ -19,6 +19,13 @@ Three database identities:
                               csense_platform, which the RLS policies require for the
                               cross-tenant bypass (see migration 0005).
 
+  csense_demo_api             Public demo API. NOSUPERUSER/NOBYPASSRLS like the others,
+                              and scoped tighter still: migration 0066 grants it INSERT +
+                              SELECT on exactly one table (demo_login_audit), nothing else
+                              in the schema - this role has no business touching tenant
+                              data, and the grant makes that a database-level fact rather
+                              than an application-code convention.
+
   csense_platform             NOLOGIN group role. Membership in it is what the policies
                               actually test.
 
@@ -88,12 +95,15 @@ def main() -> None:
     api_password = os.environ.get("POSTGRES_API_PASSWORD")
     platform_user = os.environ.get("POSTGRES_PLATFORM_API_USER", "csense_platform_api")
     platform_password = os.environ.get("POSTGRES_PLATFORM_API_PASSWORD")
+    demo_user = os.environ.get("POSTGRES_DEMO_API_USER", "csense_demo_api")
+    demo_password = os.environ.get("POSTGRES_DEMO_API_PASSWORD")
 
     missing = [
         name
         for name, value in (
             ("POSTGRES_API_PASSWORD", api_password),
             ("POSTGRES_PLATFORM_API_PASSWORD", platform_password),
+            ("POSTGRES_DEMO_API_PASSWORD", demo_password),
         )
         if not value
     ]
@@ -109,6 +119,16 @@ def main() -> None:
 
         _ensure_login_role(cur, api_user, api_password)
         _ensure_login_role(cur, platform_user, platform_password)
+        _ensure_login_role(cur, demo_user, demo_password)
+
+        # Defensive, same reasoning as the tenant role's revoke below: the demo role must
+        # never end up in the platform group, which would let it bypass RLS on every
+        # tenant-isolation policy that tests for membership in it.
+        cur.execute(
+            sql.SQL("REVOKE {} FROM {}").format(
+                sql.Identifier(PLATFORM_GROUP_ROLE), sql.Identifier(demo_user)
+            )
+        )
 
         # Only the Admin API's role joins the platform group.
         cur.execute(
@@ -126,17 +146,26 @@ def main() -> None:
         for database in WHATSAPP_DATABASES:
             _ensure_database(cur, database)
 
-        for role in (api_user, platform_user):
+        for role in (api_user, platform_user, demo_user):
             _assert_cannot_bypass_rls(cur, role)
 
         cur.execute(
-            "SELECT pg_has_role(%s, %s, 'MEMBER'), pg_has_role(%s, %s, 'MEMBER')",
-            (api_user, PLATFORM_GROUP_ROLE, platform_user, PLATFORM_GROUP_ROLE),
+            "SELECT pg_has_role(%s, %s, 'MEMBER'), pg_has_role(%s, %s, 'MEMBER'), "
+            "pg_has_role(%s, %s, 'MEMBER')",
+            (api_user, PLATFORM_GROUP_ROLE, platform_user, PLATFORM_GROUP_ROLE,
+             demo_user, PLATFORM_GROUP_ROLE),
         )
-        tenant_in_group, platform_in_group = cur.fetchone()
+        tenant_in_group, platform_in_group, demo_in_group = cur.fetchone()
         if tenant_in_group:
             print(
                 f"Refusing to continue: tenant role {api_user!r} is a member of "
+                f"{PLATFORM_GROUP_ROLE!r} and could bypass tenant isolation.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if demo_in_group:
+            print(
+                f"Refusing to continue: demo role {demo_user!r} is a member of "
                 f"{PLATFORM_GROUP_ROLE!r} and could bypass tenant isolation.",
                 file=sys.stderr,
             )

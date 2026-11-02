@@ -366,7 +366,10 @@ async def test_a_changed_assignment_restarts_the_cameras_task_with_the_new_confi
     tenant_id = uuid.uuid4()
     site_id = uuid.uuid4()
     original = _assignment(camera_id=camera_id, tenant_id=tenant_id, site_id=site_id, confidence=0.5)
-    updated = _assignment(camera_id=camera_id, tenant_id=tenant_id, site_id=site_id, confidence=0.9)
+    updated = _assignment(
+        assignment_id=original.assignment_id, camera_id=camera_id, tenant_id=tenant_id,
+        site_id=site_id, confidence=0.9,
+    )
 
     seen_confidences: list[float] = []
 
@@ -390,6 +393,31 @@ async def test_a_changed_assignment_restarts_the_cameras_task_with_the_new_confi
         while 0.9 not in seen_confidences and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
         assert 0.9 in seen_confidences, "the changed assignment's task never started"
+
+
+async def test_one_camera_can_run_two_pipelines_at_once():
+    """A camera with two active assignments (fire/smoke and face recognition, say) runs
+    both. Keying tasks by camera_id used to let the last assignment silently replace the
+    other."""
+    camera_id, tenant_id, site_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    fire = _assignment(camera_id=camera_id, tenant_id=tenant_id, site_id=site_id, model_name="fire")
+    face = _assignment(camera_id=camera_id, tenant_id=tenant_id, site_id=site_id, model_name="face")
+    seen: set[str] = set()
+
+    class _Harness(_DiscoveryHarness):
+        def build_run_cycle(self, assignment: Assignment):
+            async def _run_cycle(a: Assignment, now: dt.datetime) -> str:
+                seen.add(a.model_name)
+                return "clean"
+
+            return _run_cycle
+
+    async with _Harness(discovery_interval_seconds=0.03) as harness:
+        harness.active = [fire, face]
+        deadline = time.monotonic() + 2.0
+        while seen != {"fire", "face"} and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+        assert seen == {"fire", "face"}
 
 
 async def test_one_cameras_exception_never_stops_its_own_or_another_cameras_task():

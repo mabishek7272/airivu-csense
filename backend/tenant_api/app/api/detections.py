@@ -56,6 +56,7 @@ class DetectedObjectOut(BaseModel):
     confidence: float
     bbox: BoundingBox
     track_id: str | None = None
+    attributes: dict | None = None
 
 
 class LocationOut(BaseModel):
@@ -151,6 +152,7 @@ def _row_to_detection(row, evidence: list[EvidenceOut]) -> DetectionOut:
                 confidence=float(item.get("confidence", row[3])),
                 bbox=BoundingBox(x1=bbox[0], y1=bbox[1], x2=bbox[2], y2=bbox[3]),
                 track_id=item.get("track_id"),
+                attributes=item.get("attributes"),
             )
         )
 

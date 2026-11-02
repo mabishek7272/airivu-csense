@@ -64,7 +64,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       ...init,
       credentials: "include",
       headers: {
-        "Content-Type": "application/json",
+        // A FormData body needs the browser to set its own multipart boundary.
+        ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...init.headers,
       },

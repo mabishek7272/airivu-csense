@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/auth/AuthContext";
 import type { CreatedOrganization } from "@/api/organizations";
@@ -111,6 +112,7 @@ export default function DashboardPage() {
                 <th scope="col">Type</th>
                 <th scope="col">Status</th>
                 <th scope="col">Tenant</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -122,6 +124,9 @@ export default function DashboardPage() {
                     <span className="pill">{org.status}</span>
                   </td>
                   <td className="mono">{org.tenant_id ? `${org.tenant_id.slice(0, 8)}…` : "—"}</td>
+                  <td className="row-actions">
+                    {org.tenant_id && <Link href={`/tenants/${org.tenant_id}/sites`}>Manage</Link>}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -39,6 +39,7 @@ import contextlib
 import datetime as dt
 import functools
 import signal
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from urllib.parse import quote
@@ -53,6 +54,7 @@ from csense_shared.cameras.connection import resolve_camera_endpoint
 from csense_shared.cameras.frame_grab import grab_frame
 from csense_shared.config import Settings, get_settings
 from csense_shared.db.postgres import create_engine, create_session_factory, platform_session, tenant_session
+from csense_shared.faces.matching import DEFAULT_THRESHOLD, GalleryEntry, TemplateError, classify, decode_template
 from csense_shared.logging import configure_logging, get_logger
 from csense_shared.pipeline.ingest import ingest_detection
 from csense_shared.pipeline.rules import DetectedObject
@@ -295,6 +297,108 @@ async def infer_via_ai_runtime(
     ]
 
 
+# --- Face recognition: gallery + live matching ------------------------------------------
+
+FACE_RECOGNITION_MODEL = "insightface-buffalo-l-recognition"
+FACE_TEMPLATE_PURPOSE = "face.template"
+# Long enough that decrypting a gallery is never per-frame work, short enough that a
+# newly registered (or just deleted) person takes effect within about a minute.
+GALLERY_TTL_SECONDS = 60.0
+
+_gallery_cache: dict[uuid.UUID, tuple[float, list[GalleryEntry]]] = {}
+
+_GALLERY_QUERY = text(
+    """
+    SELECT i.id, i.display_name, i.list_type, t.secret_id
+    FROM face_identities i
+    JOIN face_templates t ON t.identity_id = i.id
+    WHERE i.status = 'active'
+    """
+)
+
+
+async def load_face_gallery(
+    session_factory: async_sessionmaker, settings: Settings, tenant_id: uuid.UUID
+) -> list[GalleryEntry]:
+    """The tenant's registered faces, decrypted, cached for `GALLERY_TTL_SECONDS`.
+
+    A template that cannot be decrypted or decoded is skipped and logged, never fatal: one
+    corrupt row must not stop recognition for everyone else. Decrypted vectors live only in
+    this process's memory.
+    """
+    cached = _gallery_cache.get(tenant_id)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < GALLERY_TTL_SECONDS:
+        return cached[1]
+
+    keyring = keyring_from_settings(settings)
+    gallery: list[GalleryEntry] = []
+    async with tenant_session(session_factory, tenant_id) as session:
+        rows = (await session.execute(_GALLERY_QUERY)).all()
+        for identity_id, name, list_type, secret_id in rows:
+            try:
+                plaintext = await read_secret(
+                    session, keyring, secret_id=secret_id, tenant_id=tenant_id,
+                    purpose=FACE_TEMPLATE_PURPOSE, touch=False,
+                )
+                gallery.append(
+                    GalleryEntry(str(identity_id), name, list_type, decode_template(plaintext))
+                )
+            except (EnvelopeError, TemplateError):
+                logger.warning(
+                    "face_template_unreadable",
+                    extra={"tenant_id": str(tenant_id), "identity_id": str(identity_id)},
+                )
+    _gallery_cache[tenant_id] = (now, gallery)
+    return gallery
+
+
+async def infer_faces_via_ai_runtime(
+    http_client: httpx.AsyncClient,
+    frame: np.ndarray,
+    gallery: list[GalleryEntry],
+    *,
+    confidence: float,
+    threshold: float = DEFAULT_THRESHOLD,
+) -> list[DetectedObject]:
+    """Detects every face in the frame (ai-runtime `/internal/v1/infer-face`) and labels
+    each `face:known` / `face:watchlist` / `face:unknown` against the tenant's gallery.
+
+    `confidence` on the returned object is the *detector's* confidence that this is a face,
+    so rule `min_confidence` keeps meaning "how sure are we a face is there"; how sure we are
+    of *who* it is travels in `attributes["similarity"]`.
+    """
+    ok, encoded = cv2.imencode(".jpg", frame)
+    if not ok:
+        logger.warning("frame_encode_failed", extra={"model_name": FACE_RECOGNITION_MODEL})
+        return []
+
+    response = await http_client.post(
+        "/internal/v1/infer-face",
+        data={"confidence": str(confidence)},
+        files={"frame": ("frame.jpg", encoded.tobytes(), "image/jpeg")},
+    )
+    response.raise_for_status()
+
+    objects: list[DetectedObject] = []
+    for face in response.json().get("faces", []):
+        try:
+            class_name, attributes = classify(
+                np.asarray(face["embedding"], dtype=np.float32), gallery, threshold
+            )
+        except TemplateError:
+            continue
+        objects.append(
+            DetectedObject(
+                class_name=class_name,
+                confidence=float(face["detector_confidence"]),
+                bbox=tuple(face["bbox"]),
+                attributes=attributes,
+            )
+        )
+    return objects
+
+
 # --- Production per-camera cycle: wires grab/infer/ingest into run_one_cycle -----------
 
 
@@ -319,6 +423,9 @@ async def run_one_camera_cycle(
     )
 
     async def _http_infer_fn(model_name: str, image: np.ndarray, *, confidence: float) -> list[DetectedObject]:
+        if model_name == FACE_RECOGNITION_MODEL:
+            gallery = await load_face_gallery(session_factory, settings, assignment.tenant_id)
+            return await infer_faces_via_ai_runtime(http_client, image, gallery, confidence=confidence)
         return await infer_via_ai_runtime(http_client, model_name, image, confidence=confidence)
 
     async def _ingest_fn(**kwargs):
@@ -486,18 +593,21 @@ async def run_discovery_loop(
                 assignments = None
 
             if assignments is not None:
-                current = {a.camera_id: a for a in assignments}
+                # One task per *assignment*, not per camera: a camera can run several pipelines
+                # at once (fire/smoke and face recognition, say). Keying by camera_id made the
+                # last assignment silently replace the others.
+                current = {a.assignment_id: a for a in assignments}
 
-                for camera_id in list(tasks):
-                    if current.get(camera_id) != live_assignments.get(camera_id):
-                        await _stop_camera_task(tasks.pop(camera_id))
-                        live_assignments.pop(camera_id, None)
+                for key in list(tasks):
+                    if current.get(key) != live_assignments.get(key):
+                        await _stop_camera_task(tasks.pop(key))
+                        live_assignments.pop(key, None)
 
-                candidates = [camera_id for camera_id in current if camera_id not in tasks]
-                refused_camera_ids: list[uuid.UUID] = []
-                for camera_id in rotate_for_admission(candidates, admission_round):
+                candidates = [key for key in current if key not in tasks]
+                refused_keys: list[uuid.UUID] = []
+                for key in rotate_for_admission(candidates, admission_round):
                     if len(tasks) >= max_concurrent_cameras:
-                        refused_camera_ids.append(camera_id)
+                        refused_keys.append(key)
                         # Per-camera detail at DEBUG only - at INFO this would be one line
                         # per refused candidate, per discovery poll (a saturated cap with a
                         # large candidate pool floods the very logs an overloaded operator
@@ -506,23 +616,24 @@ async def run_discovery_loop(
                         logger.debug(
                             "camera_admission_refused_capacity",
                             extra={
-                                "camera_id": str(camera_id),
+                                "camera_id": str(current[key].camera_id),
+                                "assignment_id": str(key),
                                 "running_count": len(tasks),
                                 "max_concurrent_cameras": max_concurrent_cameras,
                             },
                         )
                         continue
-                    assignment = current[camera_id]
-                    tasks[camera_id] = asyncio.create_task(
+                    assignment = current[key]
+                    tasks[key] = asyncio.create_task(
                         _isolated_camera_loop(assignment, run_cycle=build_run_cycle(assignment), stop=stop),
-                        name=f"pipeline-camera-{camera_id}",
+                        name=f"pipeline-camera-{key}",
                     )
-                    live_assignments[camera_id] = assignment
-                if refused_camera_ids:
+                    live_assignments[key] = assignment
+                if refused_keys:
                     logger.info(
                         "camera_admission_refused_capacity_summary",
                         extra={
-                            "refused_count": len(refused_camera_ids),
+                            "refused_count": len(refused_keys),
                             "running_count": len(tasks),
                             "max_concurrent_cameras": max_concurrent_cameras,
                         },

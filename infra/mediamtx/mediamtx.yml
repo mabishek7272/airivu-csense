@@ -6,12 +6,13 @@ logLevel: info
 rtspAddress: :8554
 webrtcAddress: :8889
 hlsAddress: :8888
+hlsVariant: mpegts
 
 # Local-dev topology only: a browser on the host reaches this container via `localhost`
 # (Traefik/published ports), but MediaMTX's own ICE candidate gathering only knows its
 # container-internal address by default - without this, WebRTC negotiates successfully but
 # no media ever arrives. A real deployment needs the real external host/IP here instead.
-webrtcAdditionalHosts: [localhost]
+webrtcAdditionalHosts: [app.3rdi.in, 101.44.161.202]
 
 # Control API (backend/tenant_api/app/api/media.py creates/replaces paths through this) -
 # reached container-to-container only, never exposed to a browser or through Traefik.

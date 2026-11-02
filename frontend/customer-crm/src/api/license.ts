@@ -38,3 +38,27 @@ export interface License {
 export function getOwnLicense() {
   return apiFetch<License | null>("/api/v1/tenant/license");
 }
+
+/** Phones/tablets signed in to this tenant, and the plan's limits on them and on
+ *  concurrent browsers. Mirrors backend/tenant_api/app/api/devices.py. `null` = no limit. */
+export interface SignedInDevice {
+  id: string;
+  name: string | null;
+  platform: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface DevicesSummary {
+  device_limit: number | null;
+  web_session_limit: number | null;
+  devices: SignedInDevice[];
+}
+
+export function listDevices(): Promise<DevicesSummary> {
+  return apiFetch<DevicesSummary>("/api/v1/tenant/devices");
+}
+
+export function removeDevice(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/tenant/devices/${id}`, { method: "DELETE" });
+}

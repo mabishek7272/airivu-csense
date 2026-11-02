@@ -57,3 +57,4 @@ artifacts/
 
 # scripts/dast_baseline.py's own output - point-in-time scan artifacts, not source.
 /reports/
+*.bak*
