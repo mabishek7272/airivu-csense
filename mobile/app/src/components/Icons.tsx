@@ -97,10 +97,10 @@ export function SearchIcon({ size = 22, color = '#F5EDF0' }: IconProps) {
 export function LogoMark({ size = 26 }: { size?: number }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Z" stroke="#98134E" strokeWidth="1.4" fill="rgba(152,19,78,0.18)" />
-      <Circle cx="12" cy="12" r="3.4" stroke="#FF8ABB" strokeWidth="1.4" />
-      <Circle cx="12" cy="12" r="1.1" fill="#FF8ABB" />
-      <Path d="M12 5.6v2.4M12 16v2.4M6.6 9v6M17.4 9v6" stroke="#98134E" strokeWidth="1.2" strokeLinecap="round" />
+      <Path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7L12 2.5Z" stroke="#7A0B30" strokeWidth="1.4" fill="rgba(122,11,48,0.18)" />
+      <Circle cx="12" cy="12" r="3.4" stroke="#FF1F5C" strokeWidth="1.4" />
+      <Circle cx="12" cy="12" r="1.1" fill="#FF1F5C" />
+      <Path d="M12 5.6v2.4M12 16v2.4M6.6 9v6M17.4 9v6" stroke="#7A0B30" strokeWidth="1.2" strokeLinecap="round" />
     </Svg>
   );
 }

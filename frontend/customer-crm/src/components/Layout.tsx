@@ -146,7 +146,7 @@ export function Layout({ children }: { children: ReactNode }) {
               alignItems: "center",
               gap: 9,
               padding: "7px 11px",
-              background: "#181215",
+              background: "var(--raised)",
             }}
           >
             <SearchIcon size={14} style={{ color: "var(--faint)" }} />

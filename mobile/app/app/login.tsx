@@ -29,9 +29,17 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.surface }]}
+      style={[styles.container, { backgroundColor: colors.canvas }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <View
+        pointerEvents="none"
+        style={[styles.glow, styles.glowViolet, { backgroundColor: colors.violetGlow }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.glow, styles.glowAccent, { backgroundColor: colors.accent }]}
+      />
       <View style={styles.form}>
         <Text style={[styles.title, { color: colors.text }]}>CSense</Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>Sign in to your account</Text>
@@ -86,6 +94,11 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center' },
+  // Approximates the mockup's two-layer radial glow behind the login card - RN has no
+  // CSS radial-gradient, so this is a soft, low-opacity circle rather than a true fade.
+  glow: { position: 'absolute', width: 420, height: 420, borderRadius: 210, opacity: 0.12 },
+  glowViolet: { top: -140, left: -140 },
+  glowAccent: { top: -80, right: -160, opacity: 0.08 },
   form: { padding: 24, gap: 12 },
   title: { fontSize: 28, fontWeight: '700' },
   subtitle: { fontSize: 15, marginBottom: 16 },

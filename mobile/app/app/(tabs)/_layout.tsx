@@ -24,10 +24,10 @@ export default function TabsLayout() {
     <Tabs
       initialRouteName="dashboard"
       screenOptions={{
-        tabBarActiveTintColor: colors.rose,
+        tabBarActiveTintColor: colors.accentHover,
         tabBarInactiveTintColor: colors.faint,
-        tabBarStyle: { backgroundColor: colors.well, borderTopColor: colors.hair },
-        headerStyle: { backgroundColor: colors.well },
+        tabBarStyle: { backgroundColor: colors.canvas, borderTopColor: colors.hair },
+        headerStyle: { backgroundColor: colors.canvas },
         headerTintColor: colors.text,
       }}
     >

@@ -1,18 +1,19 @@
 /* Design tokens and base styles for the Customer CRM.
  *
- * "Technical Atmosphere" — a warm-black instrument aesthetic for continuous surveillance
- * work, from the design system canvas (design/csense-ui/System.dc.html). Tokens rather
- * than hardcoded values throughout, so applying it is a variable swap under the *same*
- * names every page/component already uses, not a second stylesheet or a page-by-page
- * rewrite. One theme, deliberately — this palette was specified as the product's own
- * identity, not a dark-mode variant of a light default, so there is no
- * prefers-color-scheme branch here.
+ * Reskinned from "Technical Atmosphere" per the Claude Design handoff bundle
+ * (`CSense CRM Reskin.dc.html`) — same warm-black instrument aesthetic, pushed darker and
+ * cooler: a near-black canvas, a crimson/magenta accent, and a violet glow layered behind
+ * the app shell. Tokens rather than hardcoded values throughout, so applying it is a
+ * variable swap under the *same* names every page/component already uses, not a second
+ * stylesheet or a page-by-page rewrite. One theme, deliberately — this palette was
+ * specified as the product's own identity, not a dark-mode variant of a light default, so
+ * there is no prefers-color-scheme branch here.
  *
  * The UX brief requires WCAG 2.2 AA; every foreground/background pair below clears 4.5:1
- * for body text and 3:1 for large text and UI boundaries. Crimson (#98134E) is a fill
- * colour only — it fails contrast as body text at this lightness on this canvas — so
- * severity/status foregrounds use rose (#FF8ABB) or emerald (#10B981) instead, exactly as
- * the system sheet's own usage rule states.
+ * for body text and 3:1 for large text and UI boundaries. Crimson is a fill colour only —
+ * it fails contrast as body text at this lightness on this canvas — so severity/status
+ * foregrounds use rose or emerald instead, exactly as the system sheet's own usage rule
+ * states.
  *
  * Severity colours are deliberately paired with a text label everywhere they appear.
  * Colour alone cannot carry meaning in an operations tool - roughly 1 in 12 men has a
@@ -20,19 +21,23 @@
  */
 
 :root {
-  --canvas: #241c21;
-  --well: #1a1418;
-  --raised: #2a2026;
-  --hair: #362a31;
-  --hair-strong: #4a3b43;
-  --emerald: #10b981;
-  --rose: #ff8abb;
-  --crimson: #98134e;
-  --ink: #f5edf0;
-  --dim: #a2929a;
-  --faint: #6e5f67;
+  --canvas: #0a0709;
+  --well: #130b0f;
+  --raised: #0d070a;
+  --hair: #2c141c;
+  --hair-strong: #43202b;
+  --emerald: #22e3a0;
+  --rose: #ff1f5c;
+  --crimson: #7a0b30;
+  --crimson-deep: #3a0a1c;
+  --violet-glow: #6d28d7;
+  --ink: #f6eef1;
+  --dim: #ad8d98;
+  --faint: #6e4e58;
 
   --bg: var(--canvas);
+  --bg-glow: radial-gradient(900px 600px at -10% -10%, rgb(109 40 217 / 16%), transparent 60%),
+    radial-gradient(900px 700px at 110% 10%, rgb(255 31 92 / 10%), transparent 55%);
   --surface: var(--well);
   --surface-sunken: var(--raised);
   --border: var(--hair);
@@ -40,26 +45,26 @@
 
   --text: var(--ink);
   --text-muted: var(--dim);
-  --text-inverse: #fff0f6;
+  --text-inverse: #fff4f7;
 
   --accent: var(--rose);
-  --accent-hover: #ffb3d2;
-  --accent-subtle: rgb(255 138 187 / 12%);
+  --accent-hover: #ff6b93;
+  --accent-subtle: rgb(255 31 92 / 12%);
 
-  --critical: #ff6b9d;
-  --critical-subtle: rgb(152 19 78 / 28%);
-  --high: #f0a87e;
-  --high-subtle: rgb(194 96 58 / 20%);
-  --medium: #e0be72;
-  --medium-subtle: rgb(138 106 46 / 20%);
+  --critical: #ff9db8;
+  --critical-subtle: rgb(255 45 94 / 14%);
+  --high: #ff9d5c;
+  --high-subtle: rgb(255 157 92 / 14%);
+  --medium: #e8c072;
+  --medium-subtle: rgb(232 192 114 / 14%);
   --low: var(--emerald);
-  --low-subtle: rgb(16 185 129 / 12%);
+  --low-subtle: rgb(34 227 160 / 14%);
   --info: var(--dim);
   --info-subtle: var(--raised);
 
   --radius: 8px;
   --radius-sm: 6px;
-  --shadow: 0 8px 22px rgb(0 0 0 / 32%);
+  --shadow: 0 20px 60px rgb(0 0 0 / 55%), 0 0 40px rgb(109 40 217 / 8%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -83,6 +88,7 @@
 body {
   margin: 0;
   background: var(--bg);
+  background-image: var(--bg-glow);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
@@ -177,7 +183,7 @@ body {
 }
 .app-nav a.nav-item:hover { background: var(--raised); color: var(--ink); }
 .app-nav a.nav-item[aria-current="page"] {
-  background: linear-gradient(90deg, rgb(152 19 78 / 34%), rgb(152 19 78 / 6%));
+  background: linear-gradient(90deg, rgb(122 11 48 / 34%), rgb(122 11 48 / 6%));
   color: var(--ink);
   box-shadow: inset 2px 0 0 var(--rose);
 }
@@ -248,7 +254,7 @@ select, input[type="search"], input[type="text"], input[type="email"], input[typ
 }
 select:focus, input:focus {
   border-color: var(--rose);
-  box-shadow: 0 0 0 3px rgb(255 138 187 / 14%);
+  box-shadow: 0 0 0 3px rgb(255 31 92 / 14%);
 }
 
 button {
@@ -452,10 +458,10 @@ button.link {
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.badge-critical { background: var(--critical-subtle); color: #ffc2dc; border-color: var(--crimson); }
+.badge-critical { background: var(--critical-subtle); color: var(--critical); border-color: #ff2d5e; }
 .badge-high     { background: var(--high-subtle);     color: var(--high);     border-color: #c2603a; }
 .badge-medium   { background: var(--medium-subtle);   color: var(--medium);   border-color: #8a6a2e; }
-.badge-low      { background: var(--low-subtle);      color: var(--low);      border-color: rgb(16 185 129 / 50%); }
+.badge-low      { background: var(--low-subtle);      color: var(--low);      border-color: rgb(34 227 160 / 50%); }
 .badge-info     { background: var(--info-subtle);     color: var(--info);     border-color: var(--hair); }
 .badge-neutral  { background: var(--raised);  color: var(--text-muted); border-color: var(--hair); }
 
@@ -934,7 +940,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   left: 0;
   right: 0;
   height: 34%;
-  background: linear-gradient(180deg, transparent, rgb(255 138 187 / 16%), transparent);
+  background: linear-gradient(180deg, transparent, rgb(255 31 92 / 16%), transparent);
   animation: scan-sweep 3.6s linear infinite;
 }
 @keyframes scan-sweep {

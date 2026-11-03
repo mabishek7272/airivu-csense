@@ -197,9 +197,9 @@ export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M4 6h12M4 10h12M4 14h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <circle cx="8" cy="6" r="1.8" fill="#1A1418" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="13" cy="10" r="1.8" fill="#1A1418" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="7" cy="14" r="1.8" fill="#1A1418" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="8" cy="6" r="1.8" fill="var(--well)" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="13" cy="10" r="1.8" fill="var(--well)" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="7" cy="14" r="1.8" fill="var(--well)" stroke="currentColor" strokeWidth="1.4" />
     </Icon>
   );
 }

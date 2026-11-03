@@ -1,28 +1,34 @@
 /* Design tokens and base styles for the Developer Console.
  *
- * Real port of the Customer CRM's "Technical Atmosphere" stylesheet
- * (frontend/customer-crm/src/styles.css) - same token names AND the same values this
- * time, so the two apps actually read as one family instead of only claiming to. One
- * theme, deliberately, matching the CRM's own decision: this is the product's identity,
- * not a dark-mode variant of a light default - no prefers-color-scheme branch.
+ * Reskinned from "Technical Atmosphere" per the Claude Design handoff bundle
+ * (`CSense Developer Console Reskin.dc.html`), mirroring the Customer CRM's own reskin
+ * (frontend/customer-crm/src/styles.css) - same token names AND the same values, so the
+ * two apps still read as one family. One theme, deliberately, matching the CRM's own
+ * decision: this is the product's identity, not a dark-mode variant of a light default -
+ * no prefers-color-scheme branch.
  *
  * Severity/state colours are always paired with a text label - colour alone cannot carry
  * meaning here either, same reasoning as the CRM.
  */
 
 :root {
-  --canvas: #241c21;
-  --well: #1a1418;
-  --raised: #2a2026;
-  --hair: #362a31;
-  --hair-strong: #4a3b43;
-  --emerald: #10b981;
-  --rose: #ff8abb;
-  --crimson: #98134e;
-  --ink: #f5edf0;
-  --dim: #a2929a;
+  --canvas: #0a0709;
+  --well: #130b0f;
+  --raised: #0d070a;
+  --hair: #2c141c;
+  --hair-strong: #43202b;
+  --emerald: #22e3a0;
+  --rose: #ff1f5c;
+  --crimson: #7a0b30;
+  --crimson-deep: #3a0a1c;
+  --violet-glow: #6d28d7;
+  --ink: #f6eef1;
+  --dim: #ad8d98;
+  --faint: #6e4e58;
 
   --bg: var(--canvas);
+  --bg-glow: radial-gradient(900px 600px at -10% -10%, rgb(109 40 217 / 16%), transparent 60%),
+    radial-gradient(900px 700px at 110% 10%, rgb(255 31 92 / 10%), transparent 55%);
   --surface: var(--well);
   --surface-sunken: var(--raised);
   --border: var(--hair);
@@ -30,26 +36,26 @@
 
   --text: var(--ink);
   --text-muted: var(--dim);
-  --text-inverse: #fff0f6;
+  --text-inverse: #fff4f7;
 
   --accent: var(--rose);
-  --accent-hover: #ffb3d2;
-  --accent-subtle: rgb(255 138 187 / 12%);
+  --accent-hover: #ff6b93;
+  --accent-subtle: rgb(255 31 92 / 12%);
 
-  --critical: #ff6b9d;
-  --critical-subtle: rgb(152 19 78 / 28%);
-  --high: #f0a87e;
-  --high-subtle: rgb(194 96 58 / 20%);
-  --medium: #e0be72;
-  --medium-subtle: rgb(138 106 46 / 20%);
+  --critical: #ff9db8;
+  --critical-subtle: rgb(255 45 94 / 14%);
+  --high: #ff9d5c;
+  --high-subtle: rgb(255 157 92 / 14%);
+  --medium: #e8c072;
+  --medium-subtle: rgb(232 192 114 / 14%);
   --low: var(--emerald);
-  --low-subtle: rgb(16 185 129 / 12%);
+  --low-subtle: rgb(34 227 160 / 14%);
   --info: var(--dim);
   --info-subtle: var(--raised);
 
   --radius: 8px;
   --radius-sm: 6px;
-  --shadow: 0 8px 22px rgb(0 0 0 / 32%);
+  --shadow: 0 20px 60px rgb(0 0 0 / 55%), 0 0 40px rgb(109 40 217 / 8%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -67,6 +73,7 @@
 body {
   margin: 0;
   background: var(--bg);
+  background-image: var(--bg-glow);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
