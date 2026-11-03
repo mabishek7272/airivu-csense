@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ai.airivu.csense"
+      "bundleIdentifier": "ai.airivu.csense",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "ai.airivu.csense",
@@ -28,6 +31,19 @@
     "plugins": [
       "expo-router",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "dd2ad55a-e869-4139-b75a-c033ec5c24be"
+      }
+    },
+    "owner": "airivuinnovationmachina",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/dd2ad55a-e869-4139-b75a-c033ec5c24be"
+    }
   }
 }
