@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { lazy, Suspense, type JSX } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { BrandProvider } from "./branding/BrandProvider";
@@ -9,7 +9,6 @@ import { RecipientGroupsPage } from "./pages/RecipientGroupsPage";
 import { DetectionsPage } from "./pages/DetectionsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
-import { Landing3rdiPage } from "./pages/Landing3rdiPage";
 import { LoginPage } from "./pages/LoginPage";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage";
 import { TeamPage } from "./pages/TeamPage";
@@ -19,6 +18,11 @@ import { FacesPage } from "./pages/FacesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WebhooksPage } from "./pages/WebhooksPage";
+
+// Lazy: pulls in `three` for the particle field, ~1MB+ that every other route (login,
+// dashboard, ...) would otherwise pay for on every visit just for this one rarely-hit
+// marketing splash - see Landing3rdiPage.tsx's own docs.
+const Landing3rdiPage = lazy(() => import("./pages/Landing3rdiPage").then((m) => ({ default: m.Landing3rdiPage })));
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -47,7 +51,18 @@ function AppRoutes({ brandSlug, isApex }: { brandSlug: string | null; isApex: bo
           3rdi.in/eaigleye/ with nothing after it), this same "/" instead means that
           brand's own bare root, which keeps its normal behavior (redirect into the app
           via the catch-all below). */}
-      <Route path="/" element={!brandSlug && isApex ? <Landing3rdiPage /> : <Navigate to="/dashboard" replace />} />
+      <Route
+        path="/"
+        element={
+          !brandSlug && isApex ? (
+            <Suspense fallback={null}>
+              <Landing3rdiPage />
+            </Suspense>
+          ) : (
+            <Navigate to="/dashboard" replace />
+          )
+        }
+      />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
       <Route
