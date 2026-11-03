@@ -528,7 +528,43 @@ button.link {
   display: grid;
   place-items: center;
   padding: var(--space-5);
+  position: relative;
+  overflow: hidden;
+  perspective: 1200px;
 }
+/* Two independently-drifting ambient blobs behind the card - one on --accent (brand-
+ * aware, repoints to a white-labeled tenant's own colour via BrandProvider), one on the
+ * fixed --violet-glow ambient (same colour the rest of the reskin's background uses,
+ * never brand-overridden - see BrandProvider.tsx's own list of what it does and doesn't
+ * touch). Pure decoration behind the card, never enough contrast to fight the form. */
+.auth-blob {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  filter: blur(40px);
+  pointer-events: none;
+  animation: auth-drift 10s ease-in-out infinite;
+}
+.auth-blob-accent { top: 8%; left: 10%; background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity: 0.16; }
+.auth-blob-violet { bottom: 8%; right: 10%; background: radial-gradient(circle, var(--violet-glow) 0%, transparent 70%); opacity: 0.2; animation-delay: -4s; }
+@keyframes auth-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, -18px, 0) scale(1.06); }
+}
+
+.auth-card-stage { position: relative; transform-style: preserve-3d; transition: transform 0.15s ease-out; animation: auth-card-in 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes auth-card-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.auth-card-shine {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
 .auth-card { width: 100%; max-width: 380px; padding: var(--space-5); }
 .auth-card h1 { font-size: 18px; margin: 0 0 var(--space-1); }
 .auth-card > p { margin: 0 0 var(--space-5); color: var(--text-muted); }

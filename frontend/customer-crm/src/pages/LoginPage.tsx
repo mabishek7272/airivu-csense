@@ -1,13 +1,54 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiRequestError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useBrand } from "../branding/BrandProvider";
 
+/** Subtle pointer-tilt + shine on the auth card, same technique (and same reasoning for
+ *  mutating style via refs instead of React state) as the apex splash's own 3D tilt -
+ *  see landing3rdi/useTiltGlare.ts and Landing3rdiPage's docstring. Scaled down (6deg vs
+ *  the splash's bigger tilt) since this is a form people are trying to use quickly, not
+ *  a one-off marketing moment. */
+function useAuthCardTilt() {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const shineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    const card = cardRef.current;
+    const shine = shineRef.current;
+    if (!stage || !card || !shine) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const onMove = (e: PointerEvent) => {
+      const rect = stage.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+      const maxTilt = 6;
+      card.style.transform = `rotateX(${(-y * maxTilt).toFixed(2)}deg) rotateY(${(x * maxTilt).toFixed(2)}deg)`;
+      shine.style.background = `radial-gradient(circle at ${50 + x * 40}% ${50 + y * 40}%, rgb(255 255 255 / 8%), transparent 55%)`;
+    };
+    const onLeave = () => {
+      card.style.transform = "rotateX(0deg) rotateY(0deg)";
+      shine.style.background = "none";
+    };
+    stage.addEventListener("pointermove", onMove);
+    stage.addEventListener("pointerleave", onLeave);
+    return () => {
+      stage.removeEventListener("pointermove", onMove);
+      stage.removeEventListener("pointerleave", onLeave);
+    };
+  }, []);
+
+  return { stageRef, cardRef, shineRef };
+}
+
 export function LoginPage() {
   const { login, register } = useAuth();
   const brand = useBrand();
   const navigate = useNavigate();
+  const { stageRef, cardRef, shineRef } = useAuthCardTilt();
   // A URL that resolves to (or was clearly meant to look like) a specific brand's own
   // private login page must never offer "create a brand-new, unrelated organization"
   // — that's a real security-relevant surface, not just a visual leak, so this checks
@@ -43,8 +84,12 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-shell">
+    <main className="auth-shell" ref={stageRef}>
+      <div className="auth-blob auth-blob-accent" />
+      <div className="auth-blob auth-blob-violet" />
+      <div className="auth-card-stage" ref={cardRef}>
       <div className="card auth-card">
+        <div className="auth-card-shine" ref={shineRef} />
         {/* The default (unbranded) login is 3RDI's own identity - the parent company
             operating every white-label brand on this platform (Airivu CSense, eAIgleye,
             Apti SafeGuard), not any one of them. It must never reuse a specific brand's
@@ -149,6 +194,7 @@ export function LoginPage() {
             : "Already have an account? Sign in"}
         </button>
         )}
+      </div>
       </div>
     </main>
   );
