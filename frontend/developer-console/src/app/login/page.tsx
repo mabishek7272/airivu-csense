@@ -34,14 +34,14 @@ export default function LoginPage() {
         <p>Developer Console — platform operator sign-in</p>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <label>
-            Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          </label>
+          <div className="field">
+            <label htmlFor="login-email">Email</label>
+            <input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          </div>
+          <div className="field">
+            <label htmlFor="login-password">Password</label>
+            <input id="login-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </div>
           {error && (
             <p role="alert" className="field-error">
               {error}
