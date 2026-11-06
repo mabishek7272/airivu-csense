@@ -7,7 +7,7 @@
 # No apt-get, no gcc, no libpq-dev either. httpx is pure Python and cryptography ships
 # prebuilt manylinux/musllinux wheels for aarch64 — this image builds on ARM (Pi/Jetson-
 # class edge hardware, this agent's actual target per the plan) with nothing to compile.
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 RUN addgroup --system csense && adduser --system --ingroup csense csense
 
