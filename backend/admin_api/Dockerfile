@@ -1,5 +1,5 @@
 # Build context: backend/  (needs access to ../shared)
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/* \
